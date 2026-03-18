@@ -1,0 +1,85 @@
+version: "3.9"
+
+services:
+
+  api:
+    build: .
+    container_name: peped-api
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+    restart: unless-stopped
+    volumes:
+      - .:/app
+      - /app/.venv
+      - ./logs:/app/logs
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  postgres:
+    image: postgres:16
+    container_name: peped-postgres
+    environment:
+      POSTGRES_DB: lms_ai
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5433:5432"
+    volumes:
+      - peped_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d lms_ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: peped-redis
+    ports:
+      - "6381:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: peped-qdrant
+    ports:
+      - "6335:6333"
+      - "6336:6334"
+    volumes:
+      - peped_qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    container_name: peped-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5051:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  peped_postgres_data:
+  peped_qdrant_storage:
