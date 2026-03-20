@@ -155,7 +155,7 @@ async function send() {
     showTyping();
 
     try {
-        const res = await fetch("/api/v1/chat", {
+        const res = await fetch(`${API_BASE_URL}/api/v1/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
