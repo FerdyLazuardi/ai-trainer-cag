@@ -1,3 +1,45 @@
+// ============================================================
+// AUTO INJECT HTML ke body (untuk Moodle integration)
+// ============================================================
+(function injectChatWidget() {
+    // Cek apakah sudah ada (hindari duplikat)
+    if (document.getElementById("chat-toggle")) return;
+
+    const html = `
+        <button id="chat-toggle">
+            <i id="chat-icon" class="fas fa-comment-dots"></i>
+            <span id="chat-badge">1</span>
+        </button>
+
+        <div id="chat-box" class="animate__animated">
+            <div id="chat-header">
+                <div class="header-info">
+                    <div class="online-dot"></div>
+                    <div style="display:flex; flex-direction:column;">
+                        <span>Peped AI Trainer</span>
+                        <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
+                    </div>
+                </div>
+                <i class="fas fa-times" style="cursor:pointer" onclick="toggleChat()"></i>
+            </div>
+            <div id="chat-messages"></div>
+            <div id="chat-input">
+                <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
+                <button class="send-btn" onclick="send()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    `;
+
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper);
+})();
+
+// ============================================================
+// INIT — tunggu DOM siap
+// ============================================================
 const chatBox = document.getElementById("chat-box");
 const messages = document.getElementById("chat-messages");
 const textarea = document.getElementById("prompt");
@@ -5,9 +47,11 @@ let introduced = false;
 
 /* AKTIFKAN PULSE */
 document.getElementById("chat-toggle").classList.add("pulse");
-
 document.getElementById("chat-toggle").onclick = toggleChat;
 
+// ============================================================
+// TOGGLE CHAT
+// ============================================================
 function toggleChat() {
     const icon = document.getElementById("chat-icon");
     const toggleBtn = document.getElementById("chat-toggle");
@@ -24,7 +68,6 @@ function toggleChat() {
             icon.classList.remove("fa-comment-dots");
             icon.classList.add("fa-times");
 
-            // ❌ matikan pulse
             toggleBtn.classList.remove("pulse");
 
             const badge = document.getElementById("chat-badge");
@@ -44,7 +87,6 @@ function toggleChat() {
             icon.classList.remove("fa-times");
             icon.classList.add("fa-comment-dots");
 
-            // 💬 hidupkan pulse lagi
             toggleBtn.classList.add("pulse");
         }
 
@@ -52,6 +94,9 @@ function toggleChat() {
     }, 200);
 }
 
+// ============================================================
+// INTRO — sapa user pakai nama Moodle
+// ============================================================
 function showIntro() {
     const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
         ? MOODLE_USER_NAME.split(' ')[0]
@@ -63,6 +108,9 @@ function showIntro() {
     );
 }
 
+// ============================================================
+// HELPERS
+// ============================================================
 function getTime() {
     return new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 }
@@ -76,20 +124,15 @@ function addMessage(text, type) {
 
     const formattedText = marked.parse(text);
 
-    // paksa semua link buka tab baru
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = formattedText;
-
     tempDiv.querySelectorAll("a").forEach(link => {
         link.setAttribute("target", "_blank");
         link.setAttribute("rel", "noopener noreferrer");
     });
 
-    const finalHTML = tempDiv.innerHTML;
-
-
     bubble.innerHTML = `
-        <div class="content">${finalHTML}</div>
+        <div class="content">${tempDiv.innerHTML}</div>
         <span class="time">${getTime()}</span>
     `;
 
@@ -118,19 +161,16 @@ function removeTyping() {
     if (el) el.remove();
 }
 
-// Configure marked options once
-marked.setOptions({
-    breaks: true,
-    gfm: true
-});
+// Configure marked
+marked.setOptions({ breaks: true, gfm: true });
 
-// Manage Session ID
+// ============================================================
+// SESSION ID — pakai Moodle User ID kalau tersedia
+// ============================================================
 function getSessionId() {
-    // Pakai Moodle User ID kalau tersedia
     if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
         return "moodle_" + MOODLE_USER_ID.toString();
     }
-    // Fallback untuk testing di luar Moodle
     let sid = sessionStorage.getItem("peped_sid");
     if (!sid) {
         sid = "sid-" + Math.random().toString(36).substring(2, 9);
@@ -144,6 +184,9 @@ function resetChat() {
     window.location.reload();
 }
 
+// ============================================================
+// SEND MESSAGE
+// ============================================================
 async function send() {
     const text = textarea.value.trim();
     if (!text) return;
@@ -154,8 +197,14 @@ async function send() {
 
     showTyping();
 
+    // Tentukan base URL — pakai API_BASE_URL kalau di Moodle,
+    // fallback ke "" (relative) kalau di test-ui
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
+        ? API_BASE_URL
+        : "";
+
     try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/chat`, {
+        const res = await fetch(`${baseUrl}/api/v1/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -164,15 +213,14 @@ async function send() {
             })
         });
 
-        if (!res.ok) {
-            throw new Error(`Server returned ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
 
         const data = await res.json();
         removeTyping();
 
         const reply = data?.answer || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
         addAIResponse(reply);
+
     } catch (err) {
         console.error("Chat Error:", err);
         removeTyping();
@@ -191,7 +239,8 @@ function handleKey(e) {
     }
 }
 
-textarea.addEventListener("input", function () {
+// Auto resize textarea
+document.getElementById("prompt").addEventListener("input", function () {
     this.style.height = "auto";
     this.style.height = (this.scrollHeight) + "px";
 });
