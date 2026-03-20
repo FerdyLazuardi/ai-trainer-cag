@@ -31,14 +31,18 @@ async def search_company_knowledge(query: str) -> str:
     # 2. Rerank and deduplicate
     reranked = rerank(docs)
     
-    # 3. Format strictly for the LLM to read
+    # 3. Format MINIMAL output for the LLM — only what it needs to answer.
+    #    Fewer fields = fewer tokens = less hallucination surface.
     results = []
     for d in reranked:
+        m = d.metadata or {}
         results.append({
             "text": d.text,
-            "title": d.title,
-            "source": d.source,
-            "chunk_id": d.chunk_id
+            "course_id": m.get("course_id", ""),
+            "course_name": m.get("course_name", d.title),
+            "score": round(d.score, 4) if getattr(d, 'score', None) is not None else 0.0,
+            "source": getattr(d, 'source', None) or m.get("source", "Unknown"),
+            "document_id": getattr(d, 'document_id', None) or m.get("document_id", "Unknown"),
         })
         
-    return json.dumps(results)
+    return json.dumps(results, ensure_ascii=False)

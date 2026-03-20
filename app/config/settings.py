@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
 
+    # ─── Langfuse (Observability) ───────────────────────────────────────────
+    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
+    langfuse_host: str = "https://cloud.langfuse.com"
+
     # ─── Context Engineering ────────────────────────────────────────────────
     max_context_tokens: int = 6000
     retrieval_top_k: int = 20

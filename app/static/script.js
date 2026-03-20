@@ -29,7 +29,7 @@ function toggleChat() {
 
             const badge = document.getElementById("chat-badge");
             if (badge) badge.style.display = "none";
-            
+
             if (!introduced) {
                 setTimeout(showIntro, 500);
                 introduced = true;
@@ -66,7 +66,7 @@ function addMessage(text, type) {
 
     const bubble = document.createElement("div");
     bubble.className = `bubble ${type}`;
-    
+
     const formattedText = marked.parse(text);
 
     // paksa semua link buka tab baru
@@ -117,6 +117,21 @@ marked.setOptions({
     gfm: true
 });
 
+// Manage Session ID
+function getSessionId() {
+    let sid = sessionStorage.getItem("peped_sid");
+    if (!sid) {
+        sid = "sid-" + Math.random().toString(36).substring(2, 9);
+        sessionStorage.setItem("peped_sid", sid);
+    }
+    return sid;
+}
+
+function resetChat() {
+    sessionStorage.removeItem("peped_sid");
+    window.location.reload();
+}
+
 async function send() {
     const text = textarea.value.trim();
     if (!text) return;
@@ -131,7 +146,10 @@ async function send() {
         const res = await fetch("/api/v1/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: text, conversation_id: "user-demo" })
+            body: JSON.stringify({
+                query: text,
+                conversation_id: getSessionId()
+            })
         });
 
         if (!res.ok) {
@@ -140,7 +158,7 @@ async function send() {
 
         const data = await res.json();
         removeTyping();
-        
+
         const reply = data?.answer || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
         addAIResponse(reply);
     } catch (err) {
@@ -161,7 +179,7 @@ function handleKey(e) {
     }
 }
 
-textarea.addEventListener("input", function() {
+textarea.addEventListener("input", function () {
     this.style.height = "auto";
     this.style.height = (this.scrollHeight) + "px";
 });

@@ -14,6 +14,7 @@ from loguru import logger
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.api.routes import chat, ingest
+from app.observability import set_langfuse_client, get_langfuse_client
 
 settings = get_settings()
 
@@ -29,6 +30,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.database.qdrant_client import get_qdrant_client
 
     logger.info("Starting application", env=settings.app_env)
+
+    # ── Langfuse v4 Observability (MUST init first, before any LLM calls) ──
+    print(f"[STARTUP] Langfuse keys: PUB={bool(settings.langfuse_public_key)}, SEC={bool(settings.langfuse_secret_key)}", flush=True)
+    if settings.langfuse_public_key and settings.langfuse_secret_key:
+        try:
+            import os
+            os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+            os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+            os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+
+            from langfuse import Langfuse
+            lf = Langfuse(
+                public_key=settings.langfuse_public_key,
+                secret_key=settings.langfuse_secret_key,
+                host=settings.langfuse_host,
+                debug=settings.app_debug,
+            )
+            set_langfuse_client(lf)
+            print(f"[STARTUP] Langfuse v4 initialized OK", flush=True)
+            logger.info("Langfuse v4 initialized (OTEL auto-instrumentation active)")
+        except Exception as e:
+            print(f"[STARTUP] Langfuse init FAILED: {e}", flush=True)
+            logger.warning(f"Langfuse init failed (tracing disabled): {e}")
+    else:
+        print("[STARTUP] Langfuse keys missing — tracing disabled", flush=True)
+        logger.warning("Langfuse keys not set — tracing disabled")
 
     # Initialize PostgreSQL tables
     await init_db()
@@ -52,6 +79,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down application")
+    if get_langfuse_client():
+        get_langfuse_client().flush()
     await redis.aclose()
 
 
