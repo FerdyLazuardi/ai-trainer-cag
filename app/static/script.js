@@ -169,7 +169,13 @@ marked.setOptions({ breaks: true, gfm: true });
 // ============================================================
 function getSessionId() {
     if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
-        return "moodle_" + MOODLE_USER_ID.toString();
+        const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
+            ? MOODLE_USER_NAME.replace(/\s+/g, '_').toLowerCase()
+            : "user";
+        const dept = (typeof MOODLE_DEPT !== 'undefined' && MOODLE_DEPT)
+            ? MOODLE_DEPT.toLowerCase()
+            : "general";
+        return `${nama}_${MOODLE_USER_ID}_${dept}`;
     }
     let sid = sessionStorage.getItem("peped_sid");
     if (!sid) {
