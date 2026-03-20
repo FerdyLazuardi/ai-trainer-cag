@@ -53,7 +53,14 @@ function toggleChat() {
 }
 
 function showIntro() {
-    addAIResponse("Hi A-Team! Aku **Peped**. Ada yang bisa aku bantu hari ini terkait materi Amarthapedia? 😊");
+    const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
+        ? MOODLE_USER_NAME.split(' ')[0]
+        : 'A-Team';
+
+    addAIResponse(
+        `Hi **${nama}**! Aku **Peped**. ` +
+        `Ada yang bisa aku bantu hari ini terkait materi Amarthapedia? 😊`
+    );
 }
 
 function getTime() {
@@ -119,6 +126,11 @@ marked.setOptions({
 
 // Manage Session ID
 function getSessionId() {
+    // Pakai Moodle User ID kalau tersedia
+    if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
+        return "moodle_" + MOODLE_USER_ID.toString();
+    }
+    // Fallback untuk testing di luar Moodle
     let sid = sessionStorage.getItem("peped_sid");
     if (!sid) {
         sid = "sid-" + Math.random().toString(36).substring(2, 9);
