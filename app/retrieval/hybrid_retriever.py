@@ -4,37 +4,15 @@ Merges dense vector results and Sparse BM25 results natively via LlamaIndex conf
 """
 from loguru import logger
 
-from llama_index.core import VectorStoreIndex, Settings
+from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.openai import OpenAIEmbedding
 
 from app.config.settings import get_settings
+from app.config.embedding_config import ensure_llamaindex_configured
 from app.database.qdrant_client import get_qdrant_client
 from app.retrieval.schemas import RetrievedChunk
 
 settings = get_settings()
-
-
-def _ensure_llamaindex_settings() -> None:
-    """Ensure LlamaIndex settings are initialized for retrieval."""
-    if getattr(Settings, "_retrieval_initialized", False):
-        return
-        
-    kwargs = {
-        "model": settings.embedding_model,
-        "api_key": settings.openrouter_api_key,
-    }
-    if settings.openrouter_embedding_url:
-        base = settings.openrouter_embedding_url
-        if base.endswith("/embeddings"):
-            base = base[:-11]
-        kwargs["api_base"] = base
-        
-    if "text-embedding-3" in settings.embedding_model and settings.embedding_dim:
-        kwargs["dimensions"] = settings.embedding_dim
-
-    Settings.embed_model = OpenAIEmbedding(**kwargs)
-    Settings._retrieval_initialized = True
 
 
 async def hybrid_search(
@@ -57,7 +35,7 @@ async def hybrid_search(
     Returns:
         Fused list of RetrievedChunk natively via LlamaIndex.
     """
-    _ensure_llamaindex_settings()
+    ensure_llamaindex_configured()
     k = top_k or settings.retrieval_top_k
     qdrant = get_qdrant_client()
 

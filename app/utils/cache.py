@@ -1,73 +1,290 @@
 """
-Redis query cache decorator.
-Caches RAG pipeline results by query hash to avoid repeated LLM calls.
+Hybrid query cache decorator.
+Caches RAG pipeline results first using Redis (exact match), 
+then using Qdrant (semantic similarity match) to catch variations of the same query.
 """
 import hashlib
 import json
-from functools import wraps
-from typing import Any, Callable
+import uuid
 
 from loguru import logger
+from qdrant_client import models as qdrant_models
+from llama_index.core import Settings
 
 from app.config.settings import get_settings
 from app.database.redis_client import get_redis_client
+from app.database.qdrant_client import get_qdrant_client
+from app.config.embedding_config import ensure_llamaindex_configured
+from app.observability import get_langfuse_client
 
 settings = get_settings()
 
 _PREFIX = "rag:cache:"
+_SEMANTIC_THRESHOLD = 0.88  # 92% cosine similarity threshold
+_semantic_collection_ready = False
 
 
-def _cache_key(query: str) -> str:
-    """Generate a deterministic Redis key from the query string."""
+def _cache_key(query: str, course_id: int | None = None) -> str:
+    """Generate a deterministic Redis key from the query string and course_id."""
     query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()[:16]
-    return f"{_PREFIX}{query_hash}"
+    cid_str = str(course_id) if course_id and course_id > 0 else 'global'
+    return f"{_PREFIX}{cid_str}:{query_hash}"
 
 
-async def get_cached_response(query: str) -> dict | None:
+async def _ensure_semantic_collection() -> None:
+    """Ensure the semantic_cache collection exists in Qdrant with course_id index."""
+    global _semantic_collection_ready
+    if _semantic_collection_ready:
+        return
+
+    qdrant = get_qdrant_client()
+    collections = await qdrant.client.get_collections()
+    existing = {c.name for c in collections.collections}
+    if "semantic_cache" not in existing:
+        await qdrant.client.create_collection(
+            collection_name="semantic_cache",
+            vectors_config=qdrant_models.VectorParams(
+                size=settings.embedding_dim,
+                distance=qdrant_models.Distance.COSINE,
+            )
+        )
+        logger.info("semantic_cache collection created")
+
+    # Always ensure course_id index exists (idempotent — Qdrant ignores if already present)
+    try:
+        await qdrant.client.create_payload_index(
+            collection_name="semantic_cache",
+            field_name="course_id",
+            field_schema=qdrant_models.PayloadSchemaType.INTEGER,
+        )
+    except Exception:
+        pass  # Index already exists
+
+    _semantic_collection_ready = True
+
+
+def _log_cache_event(hit: bool, course_id: int | None, score: float | None = None):
+    """Log cache lookup event to Langfuse."""
+    try:
+        lf = get_langfuse_client()
+        if lf:
+            # Treat 0 as None for logging consistency
+            cid = course_id if course_id and course_id > 0 else None
+            metadata = {"course_id": cid, "cache_hit": 1 if hit else 0}
+            if score is not None:
+                metadata["similarity_score"] = round(score, 4)
+            lf.trace(
+                name="cache_lookup",
+                metadata=metadata,
+                tags=["cache_hit" if hit else "cache_miss"]
+            )
+    except Exception as e:
+        logger.warning("Failed to log cache event to langfuse", error=str(e))
+
+
+async def get_cached_response(query: str, course_id: int | None = None) -> dict | None:
     """
     Retrieve a cached RAG response for the given query.
-
-    Returns:
-        Cached dict with 'answer' and 'sources', or None on miss.
+    1. Checks Redis for an exact string match.
+    2. Checks Qdrant for a semantic match (e.g. "what is X" vs "explain X").
     """
+    # Normalize 0 to None
+    if course_id == 0:
+        course_id = None
+        
+    # 1. Exact match (Redis)
     redis = get_redis_client()
-    key = _cache_key(query)
-
+    key = _cache_key(query, course_id)
     try:
         raw = await redis.get(key)
         if raw:
             data = json.loads(raw)
-            logger.info("Cache HIT", query=query[:60], key=key)
+            logger.info("Redis Exact Cache HIT", query=query[:60], course_id=course_id)
+            _log_cache_event(hit=True, course_id=course_id, score=1.0)
             return data
-        logger.debug("Cache MISS", query=query[:60])
-        return None
     except Exception as exc:
         logger.warning("Redis cache GET failed", error=str(exc))
-        return None
+
+    # 2. Semantic match (Qdrant)
+    try:
+        await _ensure_semantic_collection()
+        ensure_llamaindex_configured()
+        
+        # Embed the incoming query
+        query_embedding = await Settings.embed_model.aget_query_embedding(query)
+        qdrant = get_qdrant_client()
+        
+        query_filter = None
+        if course_id is not None and course_id > 0:
+            # Strict: only match cached answers for this specific course
+            query_filter = qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="course_id",
+                        match=qdrant_models.MatchValue(value=course_id)
+                    )
+                ]
+            )
+        # When course_id is None, search ALL cached responses (no filter).
+        # The similarity threshold ensures only semantically relevant matches return.
+
+        search_result = await qdrant.client.query_points(
+            collection_name="semantic_cache",
+            query=query_embedding,
+            limit=1,
+            with_payload=True,
+            score_threshold=_SEMANTIC_THRESHOLD,
+            query_filter=query_filter
+        )
+        
+        if search_result.points:
+            best_hit = search_result.points[0]
+            logger.info("Qdrant Semantic Cache HIT", query=query[:60], score=round(best_hit.score, 4), course_id=course_id)
+            _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
+            return best_hit.payload
+            
+    except Exception as exc:
+        logger.warning("Semantic cache GET failed", error=str(exc))
+
+    logger.debug("Cache MISS", query=query[:60], course_id=course_id)
+    _log_cache_event(hit=False, course_id=course_id)
+    return None
 
 
 async def set_cached_response(
     query: str,
     answer: str,
     sources: list[dict],
+    course_id: int | None = None,
     ttl: int | None = None,
 ) -> None:
     """
-    Store a RAG response in Redis cache.
-
-    Args:
-        query: The user query (used as cache key input).
-        answer: The generated answer.
-        sources: List of source references.
-        ttl: Optional TTL override in seconds.
+    Store a RAG response in both Redis (with TTL) and Qdrant caches.
     """
-    redis = get_redis_client()
-    key = _cache_key(query)
-    ttl_ = ttl or settings.cache_query_ttl_seconds
+    # Normalize 0 to None
+    if course_id == 0:
+        course_id = None
+        
+    # Validate response before caching
+    if len(answer) < 100:
+        logger.debug("Skipping cache write: response too short", length=len(answer))
+        return
+        
+    lower_answer = answer.lower()
+    error_phrases = ["maaf saya tidak", "terjadi kesalahan", "maaf, aku tidak menemukan", "maaf, saya tidak menemukan"]
+    if any(phrase in lower_answer for phrase in error_phrases):
+        logger.debug("Skipping cache write: response contains error phrase")
+        return
 
+    # 1. Set Exact match (Redis)
+    redis = get_redis_client()
+    key = _cache_key(query, course_id)
+    ttl_ = ttl or settings.cache_query_ttl_seconds
+    
+    # Base payload
+    payload = {"answer": answer, "sources": sources}
+    if course_id:  # This correctly handles both None and 0
+        payload["course_id"] = int(course_id)
+    
     try:
-        data = json.dumps({"answer": answer, "sources": sources})
-        await redis.set(key, data, ex=ttl_)
-        logger.debug("Cache SET", query=query[:60], ttl=ttl_)
+        await redis.set(key, json.dumps(payload), ex=ttl_)
     except Exception as exc:
         logger.warning("Redis cache SET failed", error=str(exc))
+
+    # 2. Set Semantic match (Qdrant)
+    try:
+        await _ensure_semantic_collection()
+        ensure_llamaindex_configured()
+        
+        query_embedding = await Settings.embed_model.aget_query_embedding(query)
+        qdrant = get_qdrant_client()
+        
+        point_id = str(uuid.uuid4())
+        await qdrant.client.upsert(
+            collection_name="semantic_cache",
+            wait=True,
+            points=[
+                qdrant_models.PointStruct(
+                    id=point_id,
+                    vector=query_embedding,
+                    payload=payload
+                )
+            ]
+        )
+        logger.debug(f"Semantic Cache SET for query='{query[:60]}' course_id={course_id}")
+    except Exception as exc:
+        logger.warning("Semantic cache SET failed", error=str(exc))
+
+
+async def flush_cache_by_course(course_id: int) -> None:
+    """
+    Delete Qdrant points and Redis keys for a specific course_id.
+    """
+    # 1. Clear Redis cache keys for this course
+    redis = get_redis_client()
+    try:
+        cursor = 0
+        prefix = f"{_PREFIX}{course_id}:"
+        while True:
+            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
+            if keys:
+                await redis.delete(*keys)
+            if cursor == 0:
+                break
+        logger.info("Redis course cache flushed", course_id=course_id)
+    except Exception as exc:
+        logger.warning("Redis course cache flush failed", error=str(exc))
+        
+    # 2. Clear Qdrant semantic cache for this course
+    qdrant = get_qdrant_client()
+    try:
+        collections = await qdrant.client.get_collections()
+        if "semantic_cache" in {c.name for c in collections.collections}:
+            await qdrant.client.delete(
+                collection_name="semantic_cache",
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="course_id",
+                                match=qdrant_models.MatchValue(value=course_id)
+                            )
+                        ]
+                    )
+                )
+            )
+            logger.info("Semantic course cache flushed", course_id=course_id)
+    except Exception as exc:
+        logger.warning("Semantic course cache flush failed", error=str(exc))
+
+
+async def flush_cache() -> None:
+    """
+    Clear both Redis exact cache and Qdrant semantic cache completely.
+    """
+    global _semantic_collection_ready
+    # 1. Clear Redis cache keys starting with the prefix
+    redis = get_redis_client()
+    try:
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(cursor, match=f"{_PREFIX}*", count=100)
+            if keys:
+                await redis.delete(*keys)
+            if cursor == 0:
+                break
+        logger.info("Redis cache flushed successfully")
+    except Exception as exc:
+        logger.warning("Redis cache flush failed", error=str(exc))
+        
+    # 2. Clear Qdrant semantic cache
+    qdrant = get_qdrant_client()
+    try:
+        collections = await qdrant.client.get_collections()
+        if "semantic_cache" in {c.name for c in collections.collections}:
+            await qdrant.client.delete_collection("semantic_cache")
+        _semantic_collection_ready = False  # Reset so next call recreates
+        await _ensure_semantic_collection()
+        logger.info("Semantic cache flushed successfully")
+    except Exception as exc:
+        logger.warning("Semantic cache flush failed", error=str(exc))

@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_embedding_url: str | None = None
-    llm_model: str = "openai/gpt-4o-mini"
+    llm_model: str = "google/gemini-pro-1.5"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
 

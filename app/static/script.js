@@ -215,7 +215,9 @@ async function send() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 query: text,
-                conversation_id: getSessionId()
+                conversation_id: getSessionId(),
+                course_id: typeof MOODLE_COURSE_ID !== 'undefined' ? MOODLE_COURSE_ID : 0,
+                course_name: typeof MOODLE_COURSE_NAME !== 'undefined' ? MOODLE_COURSE_NAME : ''
             })
         });
 

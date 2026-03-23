@@ -12,8 +12,12 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional session ID for multi-turn conversation memory",
     )
+    course_id: int | None = Field(
+        default=None,
+        description="Optional course ID to scope the semantic cache and retrieval",
+    )
 
-    model_config = {"json_schema_extra": {"example": {"query": "What is LangGraph?"}}}
+    model_config = {"json_schema_extra": {"example": {"query": "What is LangGraph?", "course_id": 4}}}
 
 
 class SourceReference(BaseModel):

@@ -10,14 +10,15 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
+from app.config.embedding_config import ensure_llamaindex_configured
 from app.database.models import Chunk, Document
 from app.database.qdrant_client import get_qdrant_client
+from app.utils.token_counter import count_tokens
 
 from llama_index.core import Document as LlamaDocument
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
-from llama_index.core.node_parser import TokenTextSplitter, MarkdownNodeParser
+from llama_index.core.node_parser import MarkdownNodeParser
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.openai import OpenAIEmbedding
 
 settings = get_settings()
 
@@ -27,31 +28,6 @@ class IngestionResult:
     document_id: str
     chunks_count: int
     total_tokens: int
-
-
-def _init_llamaindex_settings(chunk_size: int, chunk_overlap: int) -> None:
-    """Initialize LlamaIndex global settings."""
-    # Embedding Configuration
-    kwargs = {
-        "model": settings.embedding_model,
-        "api_key": settings.openrouter_api_key,
-    }
-    if settings.openrouter_embedding_url:
-        base = settings.openrouter_embedding_url
-        if base.endswith("/embeddings"):
-            base = base[:-11]
-        kwargs["api_base"] = base
-        
-    if "text-embedding-3" in settings.embedding_model and settings.embedding_dim:
-        kwargs["dimensions"] = settings.embedding_dim
-
-    Settings.embed_model = OpenAIEmbedding(**kwargs)
-
-    # Chunker / Splitter Configuration
-    Settings.text_splitter = TokenTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
 
 
 async def ingest_document(
@@ -85,7 +61,7 @@ async def ingest_document(
 
     try:
         # ── 2. Configure LlamaIndex ───────────────────────────────────────
-        _init_llamaindex_settings(chunk_size, chunk_overlap)
+        ensure_llamaindex_configured(chunk_size, chunk_overlap)
         
         # Build Document
         llama_doc = LlamaDocument(
@@ -147,8 +123,7 @@ async def ingest_document(
         # ── 5. Store Chunk metadata in PostgreSQL ─────────────────────────
         total_tokens = 0
         for i, node in enumerate(nodes):
-            # approximate token count
-            tokens = len(node.text) // 4
+            tokens = count_tokens(node.text)
             total_tokens += tokens
             
             session.add(

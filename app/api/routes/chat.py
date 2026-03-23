@@ -82,7 +82,7 @@ async def chat(
     logger.info("Chat request received", query=request.query[:80], conversation_id=conversation_id)
 
     # ── 1. Cache check ────────────────────────────────────────────────────
-    cached = await get_cached_response(request.query)
+    cached = await get_cached_response(request.query, course_id=request.course_id)
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -234,6 +234,25 @@ async def chat(
         if scores:
             max_chunk_score = max(scores)
 
+    # ── 4.1 Auto-detect course_id from retrieved chunks ───────────────────
+    # If user didn't send course_id (or sent 0 from test UI), extract it from the 
+    # Knowledge_Base chunk metadata (each point in Qdrant KB has course_id in payload).
+    effective_course_id = request.course_id
+    if effective_course_id in (None, 0) and retrieved_context:
+        # Pick the most frequent course_id from top chunks (majority vote)
+        from collections import Counter
+        cids = [
+            c.get("course_id") for c in retrieved_context
+            if c.get("course_id") not in (None, "", 0)
+        ]
+        if cids:
+            most_common = Counter(cids).most_common(1)[0][0]
+            try:
+                effective_course_id = int(most_common)
+            except (ValueError, TypeError):
+                pass
+            logger.info("Auto-detected course_id from chunks", course_id=effective_course_id)
+
     # ── 5. Log Retriever Score to Langfuse ────────────────────────────────
     if trace_id and max_chunk_score is not None:
         try:
@@ -252,7 +271,24 @@ async def chat(
     background_tasks.add_task(_flush_langfuse)
 
     # ── 7. Store cache + conversation memory ──────────────────────────────
-    await set_cached_response(query=request.query, answer=answer, sources=[])
+    # Map retrieved context to SourceReference objects for the response
+    sources = []
+    if retrieved_context:
+        for c in retrieved_context:
+            # Only include chunks that have a source (avoid empty/placeholder chunks)
+            if c.get("source") and c.get("source") != "Unknown":
+                sources.append(
+                    SourceReference(
+                        chunk_id=c.get("chunk_id") or str(uuid.uuid4()),
+                        document_id=c.get("document_id") or "Unknown",
+                        source=c.get("source"),
+                        title=c.get("course_name") or c.get("title") or "Unknown",
+                        chunk_index=c.get("chunk_index") or 0,
+                        score=c.get("score") or 0.0,
+                    )
+                )
+
+    await set_cached_response(query=request.query, answer=answer, sources=[s.model_dump() for s in sources], course_id=effective_course_id)
     await append_to_history(
         conversation_id=conversation_id,
         user_message=request.query,
@@ -281,7 +317,7 @@ async def chat(
 
     return ChatResponse(
         answer=answer,
-        sources=[],
+        sources=sources,
         conversation_id=conversation_id,
         cached=False,
         latency_ms=round(latency_ms, 2),
