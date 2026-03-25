@@ -11,6 +11,8 @@ from app.api.schemas import IngestRequest, IngestResponse
 from app.database.postgres import get_db, AsyncSessionLocal
 from app.ingestion.pipeline import ingest_document
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
+import httpx
+from typing import Any
 
 router = APIRouter()
 
@@ -133,3 +135,56 @@ async def moodle_sync(
     return MoodleSyncResponse(
         message="Moodle sync task has been successfully enqueued and is running in the background."
     )
+
+
+
+@router.get("/moodle/sections", summary="Get Moodle course sections")
+async def get_moodle_sections(course_id: int = 3):
+    """
+    Fetch sections from a Moodle course.
+    
+    Returns list of section names that can be used for selective ingestion.
+    """
+    from app.config.settings import get_settings
+    settings = get_settings()
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{settings.moodle_api_url}/webservice/rest/server.php",
+                data={
+                    "wstoken": settings.moodle_api_token,
+                    "wsfunction": "core_course_get_contents",
+                    "moodlewsrestformat": "json",
+                    "courseid": course_id,
+                },
+            )
+            resp.raise_for_status()
+            sections_data = resp.json()
+            
+            if isinstance(sections_data, dict) and "exception" in sections_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Moodle error: {sections_data.get('message', 'Unknown error')}"
+                )
+            
+            # Extract section names
+            sections = []
+            for section in sections_data:
+                section_name = section.get("name", "").strip()
+                if section_name and section_name != "":
+                    sections.append({
+                        "id": section.get("id"),
+                        "name": section_name,
+                        "summary": section.get("summary", "")[:100]  # First 100 chars
+                    })
+            
+            logger.info(f"Fetched {len(sections)} sections from course {course_id}")
+            return sections
+            
+    except httpx.HTTPError as exc:
+        logger.error(f"Failed to fetch Moodle sections: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch sections: {exc}")
+    except Exception as exc:
+        logger.error(f"Unexpected error fetching sections: {exc}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")

@@ -278,8 +278,14 @@ async def _ingest_markdown(
     parser = MarkdownNodeParser()
     nodes = parser.get_nodes_from_documents([llama_doc])
 
+    # Filter out empty or whitespace-only nodes
+    original_node_count = len(nodes)
+    nodes = [n for n in nodes if n.text and n.text.strip()]
+    if len(nodes) < original_node_count:
+        logger.info(f"Filtered out {original_node_count - len(nodes)} empty nodes", source=filename)
+
     if not nodes:
-        logger.warning("No nodes produced from Markdown", source=filename)
+        logger.warning("No nodes produced from Markdown after filtering", source=filename)
         return 0
 
     # Attach frontmatter metadata to every node

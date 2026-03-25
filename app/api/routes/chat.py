@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.memory import append_to_history, get_conversation_history
+from app.agents.memory import append_to_history, get_conversation_history, resolve_numeric_query
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.database.models import AgentLog
 from app.database.postgres import get_db, AsyncSessionLocal
@@ -79,10 +79,13 @@ async def chat(
     start_time = time.perf_counter()
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
-    logger.info("Chat request received", query=request.query[:80], conversation_id=conversation_id)
+    # Resolve numeric query to follow-up question if applicable
+    resolved_query = await resolve_numeric_query(request.query, conversation_id)
+
+    logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
     # ── 1. Cache check ────────────────────────────────────────────────────
-    cached = await get_cached_response(request.query, course_id=request.course_id)
+    cached = await get_cached_response(resolved_query, course_id=request.course_id)
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -93,7 +96,7 @@ async def chat(
             with langfuse.start_as_current_observation(
                 as_type="generation",
                 name="peped-chat",
-                input={"query": request.query, "conversation_id": conversation_id},
+                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
             ) as root_obs:
                 with propagate_attributes(
                     trace_name="peped-chat",  # this is what sets the label in the dashboard
@@ -119,7 +122,7 @@ async def chat(
             log_to_db,
             conversation_id=conversation_id,
             query=request.query,
-            rewritten_query=request.query,
+            rewritten_query=resolved_query,
             answer=cached["answer"],
             chunks_retrieved=0,
             latency_ms=round(latency_ms, 2),
@@ -145,7 +148,7 @@ async def chat(
             messages.append(HumanMessage(content=turn["content"]))
         else:
             messages.append(AIMessage(content=turn["content"]))
-    messages.append(HumanMessage(content=request.query))
+    messages.append(HumanMessage(content=resolved_query))
 
     rag_graph = get_rag_graph()
     initial_state = {"messages": messages, "conversation_id": conversation_id}
@@ -184,6 +187,8 @@ async def chat(
             metadata={
                 "cache_hit": False,
                 "env": settings.app_env,
+                "original_query": request.query,
+                "resolved_query": resolved_query,
             }
         ):
             # NO wrapper observation here!
@@ -208,7 +213,7 @@ async def chat(
 
             # Override the trace I/O from raw state to clean query/answer
             langfuse.set_current_trace_io(
-                input={"query": request.query, "conversation_id": conversation_id},
+                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
                 output={"answer": answer}
             )
 
@@ -222,7 +227,7 @@ async def chat(
         raise HTTPException(status_code=500, detail="RAG pipeline failed") from exc
 
     # ── 4. Extract retrieval info from state ──────────────────────────────
-    rewritten_query = request.query
+    rewritten_query = resolved_query
     actual_chunks = 0
     max_chunk_score = None
 
@@ -288,10 +293,10 @@ async def chat(
                     )
                 )
 
-    await set_cached_response(query=request.query, answer=answer, sources=[s.model_dump() for s in sources], course_id=effective_course_id)
+    await set_cached_response(query=resolved_query, answer=answer, sources=[s.model_dump() for s in sources], course_id=effective_course_id)
     await append_to_history(
         conversation_id=conversation_id,
-        user_message=request.query,
+        user_message=resolved_query,
         assistant_message=answer,
     )
 

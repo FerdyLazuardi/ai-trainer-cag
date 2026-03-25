@@ -77,3 +77,110 @@ async def append_to_history(
         )
     except Exception as exc:
         logger.warning("Failed to update conversation history", error=str(exc))
+
+
+def extract_follow_up_questions(assistant_message: str) -> list[str]:
+    """
+    Extract follow-up questions from assistant message.
+    
+    Parses the assistant message to find the "**Apa kamu penasaran tentang:**" section
+    and extracts numbered questions (1., 2., 3.).
+    
+    Args:
+        assistant_message: The assistant's response text
+        
+    Returns:
+        List of question texts (without numbers). Empty list if no follow-ups found.
+    """
+    if not assistant_message:
+        return []
+    
+    try:
+        # Look for the follow-up section marker
+        marker = "**Apa kamu penasaran tentang:**"
+        if marker not in assistant_message:
+            return []
+        
+        # Extract the section after the marker
+        section_start = assistant_message.index(marker) + len(marker)
+        section = assistant_message[section_start:]
+        
+        # Parse lines starting with "1.", "2.", "3."
+        questions = []
+        lines = section.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # Check if line starts with "1.", "2.", or "3."
+            for num in ['1.', '2.', '3.']:
+                if line.startswith(num):
+                    # Extract question text (remove the number prefix)
+                    question_text = line[len(num):].strip()
+                    if question_text:
+                        questions.append(question_text)
+                    break
+        
+        return questions
+    except Exception as exc:
+        logger.warning("Failed to extract follow-up questions", error=str(exc))
+        return []
+
+
+async def resolve_numeric_query(query: str, conversation_id: str) -> str:
+    """
+    Resolve numeric input (1, 2, 3) to corresponding follow-up question.
+    
+    If the query is a single digit (1-3) and the last assistant message contains
+    follow-up questions, returns the corresponding full question text.
+    Otherwise returns the query unchanged.
+    
+    Args:
+        query: User's input query
+        conversation_id: Conversation session ID
+        
+    Returns:
+        Resolved question text if numeric input maps to a follow-up question,
+        otherwise the original query unchanged.
+    """
+    # Check if query is numeric (1, 2, or 3)
+    stripped_query = query.strip()
+    if stripped_query not in ['1', '2', '3']:
+        return query
+    
+    # Get conversation history
+    history = await get_conversation_history(conversation_id)
+    if not history:
+        return query
+    
+    # Extract last assistant message
+    last_assistant_message = None
+    for message in reversed(history):
+        if message.get("role") == "assistant":
+            last_assistant_message = message.get("content", "")
+            break
+    
+    if not last_assistant_message:
+        return query
+    
+    # Extract follow-up questions
+    follow_ups = extract_follow_up_questions(last_assistant_message)
+    if not follow_ups:
+        return query
+    
+    # Map numeric input to corresponding question (1→first, 2→second, 3→third)
+    try:
+        question_index = int(stripped_query) - 1  # Convert to 0-based index
+        if 0 <= question_index < len(follow_ups):
+            resolved = follow_ups[question_index]
+            logger.info(
+                "Resolved numeric query to follow-up question",
+                original_query=query,
+                resolved_query=resolved,
+                conversation_id=conversation_id,
+            )
+            return resolved
+        else:
+            # Out of range - return original query
+            return query
+    except (ValueError, IndexError):
+        return query
