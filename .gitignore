@@ -7,6 +7,17 @@ wheels/
 *.egg-info
 .agent/
 docs/
+
 # Virtual environments
 .venv
 .env
+
+# Logs & temporary files
+logs/
+*.log
+*.txt
+docker_logs*
+test_llm.py
+
+# Docker-generated files
+.kiro/

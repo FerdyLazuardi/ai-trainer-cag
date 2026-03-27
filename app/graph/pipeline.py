@@ -115,7 +115,7 @@ def _classify_intent(state: RAGState, config: RunnableConfig):
 def _handle_greeting(state: RAGState, config: RunnableConfig):
     """Simple friendly response for sapaan/perkenalan."""
     llm = get_llm()
-    greet_sys = f"{PERSONA} Greet warmly in 'aku/kamu' style. Keep it brief and friendly."
+    greet_sys = f"{PERSONA} Greet warmly. Keep it brief and friendly."
     response = llm.invoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
     return {"messages": [response]}
 
