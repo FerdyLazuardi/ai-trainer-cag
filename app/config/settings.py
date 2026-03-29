@@ -106,7 +106,8 @@ class Settings(BaseSettings):
     # ─── Security ───────────────────────────────────────────────────────────
     jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"
     jwt_algorithm: str = "HS256"
-    rate_limit_per_minute: int = 5
+    rate_limit_per_minute: int = 10
+    rate_limit_guest_per_minute: int = 3
 
 
 @lru_cache(maxsize=1)
