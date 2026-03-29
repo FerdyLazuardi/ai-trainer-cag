@@ -18,6 +18,7 @@ logs/
 *.txt
 docker_logs*
 test_llm.py
+docs/superpowers/
 
 # Docker-generated files
 .kiro/
