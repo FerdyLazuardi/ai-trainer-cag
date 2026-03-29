@@ -33,6 +33,7 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceReference]
     conversation_id: str | None = None
+    resolved_query: str | None = None
     cached: bool = False
     latency_ms: float | None = None
 

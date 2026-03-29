@@ -18,8 +18,8 @@ settings = get_settings()
 engine = create_async_engine(
     settings.postgres_dsn,
     echo=settings.app_debug,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=settings.postgres_pool_size,
+    max_overflow=settings.postgres_max_overflow,
     pool_pre_ping=True,       # healthcheck before using a connection
     pool_recycle=3600,        # recycle connections after 1h
 )

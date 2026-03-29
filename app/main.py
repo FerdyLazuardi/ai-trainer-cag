@@ -5,7 +5,7 @@ Initializes all DB connections on startup and tears them down on shutdown.
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,7 @@ from loguru import logger
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.api.routes import chat, ingest
+from app.api.auth import get_current_user
 from app.observability import set_langfuse_client, get_langfuse_client
 
 settings = get_settings()
@@ -24,12 +25,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: boot → yield → shutdown."""
     setup_logging(debug=settings.app_debug)
 
-    from loguru import logger
     from app.database.postgres import init_db
     from app.database.redis_client import get_redis_client
     from app.database.qdrant_client import get_qdrant_client
+    from app.utils.logger_batch import batch_logger
 
     logger.info("Starting application", env=settings.app_env)
+
+    # Start BatchLogger background task
+    await batch_logger.start()
 
     # ── Langfuse v4 Observability (MUST init first, before any LLM calls) ──
     print(f"[STARTUP] Langfuse keys: PUB={bool(settings.langfuse_public_key)}, SEC={bool(settings.langfuse_secret_key)}", flush=True)
@@ -48,7 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 debug=settings.app_debug,
             )
             set_langfuse_client(lf)
-            print(f"[STARTUP] Langfuse v4 initialized OK", flush=True)
+            print("[STARTUP] Langfuse v4 initialized OK", flush=True)
             logger.info("Langfuse v4 initialized (OTEL auto-instrumentation active)")
         except Exception as e:
             print(f"[STARTUP] Langfuse init FAILED: {e}", flush=True)
@@ -79,6 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down application")
+    from app.utils.logger_batch import batch_logger
+    await batch_logger.stop()
+
     if get_langfuse_client():
         get_langfuse_client().flush()
     await redis.aclose()
@@ -105,8 +112,18 @@ def create_app() -> FastAPI:
     )
 
     # ─── Routes ─────────────────────────────────────────────────────────────
-    app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
-    app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
+    app.include_router(
+        chat.router,
+        prefix="/api/v1",
+        tags=["Chat"],
+        dependencies=[Depends(get_current_user)]
+    )
+    app.include_router(
+        ingest.router,
+        prefix="/api/v1",
+        tags=["Ingestion"],
+        dependencies=[Depends(get_current_user)]
+    )
 
     # Mount static files correctly
     import os

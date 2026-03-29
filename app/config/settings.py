@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
     postgres_password: str = "admin"
+    postgres_pool_size: int = 20
+    postgres_max_overflow: int = 40
 
     @computed_field  # type: ignore[misc]
     @property
@@ -51,6 +53,7 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""
+    redis_max_connections: int = 100
 
     @computed_field  # type: ignore[misc]
     @property
@@ -77,6 +80,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
 
+    # ─── Cohere (Reranking) ─────────────────────────────────────────────────
+    cohere_api_key: str = Field(default="", alias="COHERE_API_KEY")
+
     # ─── Langfuse (Observability) ───────────────────────────────────────────
     langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
@@ -96,6 +102,11 @@ class Settings(BaseSettings):
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
+
+    # ─── Security ───────────────────────────────────────────────────────────
+    jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"
+    jwt_algorithm: str = "HS256"
+    rate_limit_per_minute: int = 5
 
 
 @lru_cache(maxsize=1)

@@ -1,4 +1,3 @@
-
 services:
 
   api:
@@ -24,7 +23,30 @@ services:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
-    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    command: [ "uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4" ]
+
+  worker:
+    build: .
+    container_name: peped-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+    restart: unless-stopped
+    volumes:
+      - .:/app
+      - /app/.venv
+      - ./logs:/app/logs
+    command: [ "uv", "run", "arq", "app.worker.WorkerSettings" ]
 
   postgres:
     image: postgres:16
@@ -39,7 +61,7 @@ services:
       - peped_postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d lms_ai"]
+      test: [ "CMD-SHELL", "pg_isready -U admin -d lms_ai" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,7 +73,7 @@ services:
       - "6381:6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5

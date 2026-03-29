@@ -6,15 +6,28 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from arq import create_pool
+from arq.connections import RedisSettings
 
 from app.api.schemas import IngestRequest, IngestResponse
 from app.database.postgres import get_db, AsyncSessionLocal
 from app.ingestion.pipeline import ingest_document
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
+from app.config.settings import get_settings
 import httpx
-from typing import Any
+from app.api.auth import get_current_user, User
 
 router = APIRouter()
+settings = get_settings()
+
+async def get_arq_redis():
+    """Returns an arq pool connected to Redis."""
+    return await create_pool(RedisSettings(
+        host=settings.redis_host,
+        port=settings.redis_port,
+        database=settings.redis_db,
+        password=settings.redis_password if settings.redis_password else None,
+    ))
 
 # ... (keep existing ingest endpoint) ...
 
@@ -22,6 +35,7 @@ router = APIRouter()
 async def ingest(
     request: IngestRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> IngestResponse:
     """
     Ingest raw text into the RAG knowledge base.
@@ -31,6 +45,7 @@ async def ingest(
         title=request.title,
         source=request.source,
         text_len=len(request.text),
+        user=current_user.username,
     )
 
     try:
@@ -63,7 +78,7 @@ class MoodleSyncRequest(BaseModel):
     course_id: int = Field(default=3, description="Moodle Course ID (defaults to 3 = AI_Knowledge_Base)")
     target_sections: list[str] | None = Field(default=None, description="Specific sections to sync (case-insensitive, leave null for all sections)")
     force_reingest: bool = Field(default=True, description="Force re-ingestion even if content hash matches")
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -79,25 +94,6 @@ class MoodleSyncResponse(BaseModel):
     message: str
 
 
-async def run_moodle_sync_background(course_id: int | None, target_sections: list[str] | None, force_reingest: bool):
-    """Background task to run the moodle sync with its own database session."""
-    logger.info("Starting background Moodle sync task", force_reingest=force_reingest)
-    try:
-        async with AsyncSessionLocal() as session:
-            summary = await sync_moodle_knowledge_base(
-                session=session,
-                course_id=course_id,
-                target_sections=target_sections,
-                force_reingest=force_reingest
-            )
-            # Commit any changes made by the sync
-            await session.commit()
-            
-            logger.info(f"Background Moodle sync completed: {summary}")
-    except Exception as exc:
-        logger.error(f"Background Moodle sync failed: {exc}")
-
-
 @router.post(
     "/ingest/moodle/sync",
     response_model=MoodleSyncResponse,
@@ -105,41 +101,62 @@ async def run_moodle_sync_background(course_id: int | None, target_sections: lis
 )
 async def moodle_sync(
     request: MoodleSyncRequest,
-    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
 ) -> MoodleSyncResponse:
     """
-    Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base).
-    
+    Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base) via arq worker.
+
     **Quick Start:** Just click "Execute" to sync all markdown files from AI_Knowledge_Base course.
-    
+
     **Parameters:**
     - `course_id`: Moodle course ID (default: 3 = AI_Knowledge_Base)
     - `target_sections`: Optional list of section names to sync (leave empty for all)
     - `force_reingest`: Set to `true` to re-process files even if unchanged
-    
+
     **What it does:**
-    1. Downloads all `.md` files from the specified Moodle course
-    2. Parses YAML frontmatter for metadata (department, topic, course_id, course_name)
-    3. Splits content by markdown headers
-    4. Embeds and upserts to Qdrant `Knowledge_Base` collection
-    5. Skips unchanged files (unless force_reingest=true)
+    1. Enqueues a persistent job to the arq worker.
+    2. Downloads all `.md` files from the specified Moodle course
+    3. Parses YAML frontmatter for metadata (department, topic, course_id, course_name)
+    4. Splits content by markdown headers
+    5. Embeds and upserts to Qdrant `Knowledge_Base` collection
+    6. Skips unchanged files (unless force_reingest=true)
     """
-    
-    background_tasks.add_task(
-        run_moodle_sync_background,
+    logger.info(f"Moodle sync triggered by user: {current_user.username}")
+
+    redis = await get_arq_redis()
+    await redis.enqueue_job(
+        'sync_moodle_task',
         course_id=request.course_id,
         target_sections=request.target_sections,
         force_reingest=request.force_reingest
     )
+    await redis.close()
 
     return MoodleSyncResponse(
-        message="Moodle sync task has been successfully enqueued and is running in the background."
+        message="Moodle sync task has been successfully enqueued to the persistent background worker."
     )
 
 
+@router.post("/test/dummy-task", summary="Enqueue a dummy task to verify the worker")
+async def enqueue_dummy_task(
+    name: str = "Tester",
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Enqueue a dummy task to verify that the arq worker is running correctly.
+    """
+    logger.info(f"Dummy task enqueued by user: {current_user.username}")
+    redis = await get_arq_redis()
+    job = await redis.enqueue_job('dummy_task', name=name)
+    await redis.close()
+    return {"message": f"Dummy task enqueued for {name}", "job_id": job.job_id}
+
 
 @router.get("/moodle/sections", summary="Get Moodle course sections")
-async def get_moodle_sections(course_id: int = 3):
+async def get_moodle_sections(
+    course_id: int = 3,
+    current_user: User = Depends(get_current_user),
+):
     """
     Fetch sections from a Moodle course.
     
@@ -179,7 +196,7 @@ async def get_moodle_sections(course_id: int = 3):
                         "summary": section.get("summary", "")[:100]  # First 100 chars
                     })
             
-            logger.info(f"Fetched {len(sections)} sections from course {course_id}")
+            logger.info(f"Fetched {len(sections)} sections from course {course_id} for user {current_user.username}")
             return sections
             
     except httpx.HTTPError as exc:

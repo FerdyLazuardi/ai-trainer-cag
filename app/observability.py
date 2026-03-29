@@ -6,7 +6,6 @@ are traced via OpenTelemetry auto-instrumentation.
 
 Import this module from anywhere to get the shared client.
 """
-from typing import Optional
 
 _langfuse_client = None
 

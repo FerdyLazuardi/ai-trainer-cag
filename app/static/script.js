@@ -74,7 +74,7 @@ function toggleChat() {
             if (badge) badge.style.display = "none";
 
             if (!introduced) {
-                setTimeout(showIntro, 500);
+                loadHistory();
                 introduced = true;
             }
 
@@ -108,6 +108,35 @@ function showIntro() {
     );
 }
 
+async function loadHistory() {
+    // Selalu tampilkan intro pertama kali
+    setTimeout(showIntro, 100);
+
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
+        ? API_BASE_URL
+        : "";
+    
+    try {
+        const sessionId = getSessionId();
+        const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`);
+        if (!res.ok) throw new Error("No history found");
+        
+        const history = await res.json();
+        
+        if (history && history.length > 0) {
+            // Tunggu sedikit agar intro muncul duluan sebelum history
+            setTimeout(() => {
+                history.forEach(msg => {
+                    const role = msg.role === 'user' ? 'user' : 'ai';
+                    addMessage(msg.content, role);
+                });
+            }, 300);
+        }
+    } catch (err) {
+        console.error("Failed to load history:", err);
+    }
+}
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -139,6 +168,8 @@ function addMessage(text, type) {
     wrap.appendChild(bubble);
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
+    
+    return wrap;
 }
 
 function showTyping() {
@@ -197,7 +228,7 @@ async function send() {
     const text = textarea.value.trim();
     if (!text) return;
 
-    addMessage(text, "user");
+    const userMsgNode = addMessage(text, "user");
     textarea.value = "";
     textarea.style.height = "auto";
 
@@ -225,6 +256,20 @@ async function send() {
 
         const data = await res.json();
         removeTyping();
+
+        // Ganti UI bubble user jika input di-"resolve" oleh AI (misal, input "1" menjadi "Apa itu Amartha?")
+        if (data && data.resolved_query && data.resolved_query !== text) {
+            const contentNode = userMsgNode.querySelector('.content');
+            if (contentNode) {
+                const tempDiv = document.createElement("div");
+                tempDiv.innerHTML = marked.parse(data.resolved_query);
+                tempDiv.querySelectorAll("a").forEach(link => {
+                    link.setAttribute("target", "_blank");
+                    link.setAttribute("rel", "noopener noreferrer");
+                });
+                contentNode.innerHTML = tempDiv.innerHTML;
+            }
+        }
 
         const reply = data?.answer || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
         addAIResponse(reply);

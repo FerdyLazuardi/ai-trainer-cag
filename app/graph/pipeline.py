@@ -7,7 +7,6 @@ Architecture change vs prior ReAct pattern:
 
 Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent call is eliminated).
 """
-import json
 from functools import lru_cache
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -89,7 +88,7 @@ Reply with one word only."""
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
 
-def _classify_intent(state: RAGState, config: RunnableConfig):
+async def _classify_intent(state: RAGState, config: RunnableConfig):
     """Classify user intent. Fast heuristic first, then LLM if needed."""
     user_msg = state["messages"][-1].content
     low_msg = user_msg.lower().strip()
@@ -99,7 +98,7 @@ def _classify_intent(state: RAGState, config: RunnableConfig):
         return {"intent": "GREETING"}
 
     llm = get_llm()
-    response = llm.invoke([
+    response = await llm.ainvoke([
         SystemMessage(content=ROUTER_PROMPT),
         HumanMessage(content=user_msg)
     ], config=config)
@@ -112,20 +111,56 @@ def _classify_intent(state: RAGState, config: RunnableConfig):
     return {"intent": "KNOWLEDGE"}
 
 
-def _handle_greeting(state: RAGState, config: RunnableConfig):
+async def _handle_greeting(state: RAGState, config: RunnableConfig):
     """Simple friendly response for sapaan/perkenalan."""
     llm = get_llm()
     greet_sys = f"{PERSONA} Greet warmly. Keep it brief and friendly."
-    response = llm.invoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
+    response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
     return {"messages": [response]}
 
 
-def _handle_ambiguity(state: RAGState, config: RunnableConfig):
+async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
     """Politely ask for clarification when query is too vague."""
     llm = get_llm()
     ambiguity_sys = f"{PERSONA} The user's message is unclear. Ask casually (aku/kamu) what they need help with."
-    response = llm.invoke([SystemMessage(content=ambiguity_sys)] + state["messages"], config=config)
+    response = await llm.ainvoke([SystemMessage(content=ambiguity_sys)] + state["messages"], config=config)
     return {"messages": [response]}
+
+
+async def _rewrite_query_node(state: RAGState, config: RunnableConfig):
+    """
+    Rewrite the user's query if there's conversation history, 
+    so it becomes a standalone query for better retrieval.
+    """
+    messages = state["messages"]
+    user_msg = messages[-1].content
+
+    # Only rewrite if there is previous history (at least 1 user + 1 AI msg)
+    if len(messages) > 1:
+        # Get the last 3 messages for context
+        recent_history = messages[-3:]
+        history_str = "\n".join(
+            [f"{'User' if isinstance(m, HumanMessage) else 'AI'}: {m.content}" for m in recent_history[:-1]]
+        )
+        
+        rewrite_prompt = f"""Given the following conversation history, rewrite the user's latest query to be a standalone, fully self-contained question. 
+Do not answer the question, only rewrite it. If it is already standalone, return it as is.
+
+Conversation History:
+{history_str}
+
+Latest Query: {user_msg}
+
+Standalone Query:"""
+
+        llm = get_llm()
+        response = await llm.ainvoke([SystemMessage(content=rewrite_prompt)])
+        rewritten = response.content.strip()
+        logger.info(f"Query rewritten: '{user_msg}' -> '{rewritten}'")
+        return {"rewritten_query": rewritten}
+    else:
+        # First turn, no need to rewrite
+        return {"rewritten_query": user_msg}
 
 
 async def _rag_node(state: RAGState, config: RunnableConfig):
@@ -136,14 +171,14 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     """
     from app.retrieval.hybrid_retriever import hybrid_search
     from app.retrieval.reranker import rerank
-    from app.config.settings import get_settings
-
-    settings = get_settings()
-    user_msg = state["messages"][-1].content
+    
+    
+    # Use rewritten query if available, otherwise fallback to the last message
+    query_to_search = state.get("rewritten_query") or state["messages"][-1].content
 
     try:
-        docs = await hybrid_search(query=user_msg)
-        reranked = rerank(docs)
+        docs = await hybrid_search(query=query_to_search)
+        reranked = await rerank(query=query_to_search, chunks=docs)
 
         chunks = []
         for d in reranked:
@@ -157,22 +192,21 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })
 
-        logger.info(f"RAG node retrieved {len(chunks)} chunks for query: {user_msg[:60]}")
+        logger.info(f"RAG node retrieved {len(chunks)} chunks for query: {query_to_search[:60]}")
         return {"retrieved_context": chunks}
 
     except Exception as e:
-        logger.warning(f"RAG node retrieval failed: {e}")
-        return {"retrieved_context": []}
+        logger.error(f"RAG node retrieval failed: {e}")
+        # Raise instead of swallowing to allow FastAPI's error handler to return 500
+        raise RuntimeError(f"Database error during context retrieval: {e}") from e
 
 
-def _generate_node(state: RAGState, config: RunnableConfig):
+async def _generate_node(state: RAGState, config: RunnableConfig):
     """
     Generate node — receives already-retrieved context from state and calls LLM once.
     This replaces the second ReAct 'agent' call that synthesized the tool result.
     """
     chunks = state.get("retrieved_context") or []
-    user_msg = state["messages"][-1].content
-
     # Format context for the LLM prompt
     if chunks:
         context_lines = []
@@ -190,7 +224,7 @@ def _generate_node(state: RAGState, config: RunnableConfig):
 
     llm = get_llm()
     messages = [SystemMessage(content=full_system)] + list(state["messages"])
-    response = llm.invoke(messages, config=config)
+    response = await llm.ainvoke(messages, config=config)
     return {"messages": [response]}
 
 
@@ -210,6 +244,7 @@ def _build_agent_graph():
     builder.add_node("classifier", _classify_intent)
     builder.add_node("greeting", _handle_greeting)
     builder.add_node("ambiguity", _handle_ambiguity)
+    builder.add_node("rewrite_node", _rewrite_query_node)
     builder.add_node("rag_node", _rag_node)
     builder.add_node("generate_node", _generate_node)
 
@@ -222,12 +257,13 @@ def _build_agent_graph():
         {
             "GREETING": "greeting",
             "AMBIGUOUS": "ambiguity",
-            "KNOWLEDGE": "rag_node",
+            "KNOWLEDGE": "rewrite_node",
         }
     )
 
     builder.add_edge("greeting", END)
     builder.add_edge("ambiguity", END)
+    builder.add_edge("rewrite_node", "rag_node")
     builder.add_edge("rag_node", "generate_node")
     builder.add_edge("generate_node", END)
 

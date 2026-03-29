@@ -23,6 +23,8 @@ from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
 from app.observability import get_langfuse_client
+from app.utils.logger_batch import batch_logger
+from app.api.auth import get_current_user, User
 
 router = APIRouter()
 settings = get_settings()
@@ -38,38 +40,12 @@ def _flush_langfuse():
             logger.warning(f"Langfuse flush error: {e}")
 
 
-async def log_to_db(
-    conversation_id: str,
-    query: str,
-    rewritten_query: str,
-    answer: str,
-    chunks_retrieved: int,
-    latency_ms: float,
-    cache_hit: bool,
-):
-    """Background task to persist logs to PostgreSQL."""
-    async with AsyncSessionLocal() as session:
-        try:
-            log_entry = AgentLog(
-                conversation_id=conversation_id,
-                query=query,
-                rewritten_query=rewritten_query,
-                answer=answer,
-                chunks_retrieved=chunks_retrieved,
-                latency_ms=latency_ms,
-                cache_hit=cache_hit,
-            )
-            session.add(log_entry)
-            await session.commit()
-        except Exception as exc:
-            logger.error("Failed to log to database in background", error=str(exc))
-
-
 @router.post("/chat", response_model=ChatResponse, summary="Ask a question using the RAG pipeline")
 async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """
     Process a user query through the full Hybrid RAG pipeline.
@@ -119,20 +95,30 @@ async def chat(
         background_tasks.add_task(_flush_langfuse)
 
         background_tasks.add_task(
-            log_to_db,
+            batch_logger.add_log,
+            {
+                "conversation_id": conversation_id,
+                "query": request.query,
+                "rewritten_query": resolved_query,
+                "answer": cached["answer"],
+                "chunks_retrieved": 0,
+                "latency_ms": round(latency_ms, 2),
+                "cache_hit": True,
+            }
+        )
+
+        # FIX: Append to history EVEN for cache hits, so follow-up queries aren't stuck on old context
+        await append_to_history(
             conversation_id=conversation_id,
-            query=request.query,
-            rewritten_query=resolved_query,
-            answer=cached["answer"],
-            chunks_retrieved=0,
-            latency_ms=round(latency_ms, 2),
-            cache_hit=True,
+            user_message=resolved_query,
+            assistant_message=cached["answer"],
         )
 
         return ChatResponse(
             answer=cached["answer"],
             sources=[SourceReference(**s) for s in cached["sources"]],
             conversation_id=conversation_id,
+            resolved_query=resolved_query if resolved_query != request.query else None,
             cached=True,
             latency_ms=round(latency_ms, 2),
         )
@@ -302,14 +288,16 @@ async def chat(
 
     # ── 8. Log to PostgreSQL ──────────────────────────────────────────────
     background_tasks.add_task(
-        log_to_db,
-        conversation_id=conversation_id,
-        query=request.query,
-        rewritten_query=rewritten_query,
-        answer=answer,
-        chunks_retrieved=actual_chunks,
-        latency_ms=round(latency_ms, 2),
-        cache_hit=False,
+        batch_logger.add_log,
+        {
+            "conversation_id": conversation_id,
+            "query": request.query,
+            "rewritten_query": rewritten_query,
+            "answer": answer,
+            "chunks_retrieved": actual_chunks,
+            "latency_ms": round(latency_ms, 2),
+            "cache_hit": False,
+        }
     )
 
     logger.info(
@@ -324,6 +312,14 @@ async def chat(
         answer=answer,
         sources=sources,
         conversation_id=conversation_id,
+        resolved_query=resolved_query if resolved_query != request.query else None,
         cached=False,
         latency_ms=round(latency_ms, 2),
     )
+
+
+@router.get("/chat/history/{conversation_id}", summary="Get chat history for a session")
+async def get_history(conversation_id: str) -> list[dict]:
+    """Retrieve the chat history from memory for a specific conversation ID."""
+    history = await get_conversation_history(conversation_id)
+    return history

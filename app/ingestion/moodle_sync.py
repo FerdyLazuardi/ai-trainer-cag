@@ -11,8 +11,6 @@ Moodle → Qdrant  Knowledge-Base Synchronisation Script
 7. On re-ingest (content changed), deletes stale chunks from Qdrant + PG first.
 """
 import hashlib
-import io
-import re
 import uuid
 from typing import Any
 
