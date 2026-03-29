@@ -10,7 +10,11 @@ docs/
 
 # Virtual environments
 .venv
+.venv_new/
 .env
+
+# Editor settings
+.vscode/
 
 # Logs & temporary files
 logs/
