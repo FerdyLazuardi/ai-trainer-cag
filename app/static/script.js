@@ -121,7 +121,11 @@ async function loadHistory() {
     setTimeout(showIntro, 100);
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-    const headers = { "Content-Type": "application/json" };
+    const headers = { 
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true" 
+    };
+    
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -156,7 +160,11 @@ async function clearChat() {
     if (confirm("Yakin mau hapus semua chat history?")) {
         const sessionId = getSessionId();
         const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-        const headers = { "Content-Type": "application/json" };
+        const headers = { 
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true" 
+        };
+        
         if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
             headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
         }
@@ -276,7 +284,11 @@ async function send() {
         ? API_BASE_URL
         : "";
 
-    const headers = { "Content-Type": "application/json" };
+    const headers = { 
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true" 
+    };
+    
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }

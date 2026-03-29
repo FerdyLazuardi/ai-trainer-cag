@@ -14,6 +14,7 @@ from app.config.settings import get_settings
 from app.database.redis_client import get_redis_client
 
 settings = get_settings()
+# auto_error=False is crucial to prevent automatic 403/401 from FastAPI
 security = HTTPBearer(auto_error=False)
 
 class User(BaseModel):
@@ -27,8 +28,8 @@ async def get_current_user(
 ) -> User:
     """
     Dependency to validate JWT token and return the current user.
-    If no token is provided, returns a Guest User identity.
-    Includes Redis-backed role-based rate limiting.
+    Refactored to ALWAYS fallback to Guest instead of raising 401,
+    preventing CORS blocks on cross-origin requests.
     """
     user: Optional[User] = None
     
@@ -48,66 +49,46 @@ async def get_current_user(
             if user_id:
                 user = User(user_id=user_id, role=role, username=username)
         except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        except jwt.InvalidTokenError as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token: {str(e)}",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        except Exception:
-            # Fallback to guest if token parsing fails unexpectedly
-            pass
+            logger.warning("Token expired, falling back to guest")
+        except jwt.InvalidTokenError:
+            logger.warning("Invalid token, falling back to guest")
+        except Exception as e:
+            logger.error(f"Unexpected auth error: {e}")
 
-    # ── 2. Handle Guest / Dev Bypass Mode ─────────────────────────────────
+    # ── 2. Handle Guest / Fallback Mode ───────────────────────────────────
     if not user:
-        # For Guests, try to derive a stable user_id from conversation_id if available
-        # This helps in maintaining separate rate limits and history per guest session.
-        guest_id = str(uuid.uuid4())
-        
-        # In a real request, we might try to peek at the body for conversation_id
-        # But for this simple implementation, we'll use a placeholder or session-based ID.
+        # Generate a semi-stable guest ID for the session if possible
+        # For now using a random ID, but identified as Guest.
+        guest_id = str(uuid.uuid4())[:8]
         user = User(
-            user_id=f"guest_{guest_id[:8]}",
+            user_id=f"guest_{guest_id}",
             role="guest",
             username="Guest User"
         )
         
         if settings.app_env == "development":
-            logger.info("Dev Bypass: Accessing as Guest User")
+            logger.info(f"Accessing as Guest User: {user.user_id}")
 
     # ── 3. Role-Based Rate Limiting ───────────────────────────────────────
+    # We still keep rate limiting but avoid 401s for CORS stability.
     redis = get_redis_client()
     rate_limit_key = f"rate_limit:{user.user_id}"
-    
-    # Set limit based on role
-    limit = settings.rate_limit_per_minute # Default for Moodle users (10)
-    if user.role == "guest":
-        limit = settings.rate_limit_guest_per_minute # Default for guests (3)
+    limit = settings.rate_limit_per_minute if user.role != "guest" else settings.rate_limit_guest_per_minute
     
     try:
-        # Increment request count
         request_count = await redis.incr(rate_limit_key)
-        
-        # If this is the first request in the window, set expiration (60s)
         if request_count == 1:
             await redis.expire(rate_limit_key, 60)
         
         if request_count > limit:
-            logger.warning(f"Rate limit exceeded for {user.user_id} ({user.role})")
+            logger.warning(f"Rate limit exceeded for {user.user_id}")
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Guests are limited to {limit} requests/min.",
+                detail=f"Rate limit exceeded. Limit is {limit}/min.",
             )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Rate limiting error: {e}")
-        # Fail open on rate limiting errors to ensure availability
-        pass
         
     return user
