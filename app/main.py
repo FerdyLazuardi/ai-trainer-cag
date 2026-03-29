@@ -112,18 +112,8 @@ def create_app() -> FastAPI:
     )
 
     # ─── Routes ─────────────────────────────────────────────────────────────
-    app.include_router(
-        chat.router,
-        prefix="/api/v1",
-        tags=["Chat"],
-        dependencies=[Depends(get_current_user)]
-    )
-    app.include_router(
-        ingest.router,
-        prefix="/api/v1",
-        tags=["Ingestion"],
-        dependencies=[Depends(get_current_user)]
-    )
+    app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
+    app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
 
     # Mount static files correctly
     import os

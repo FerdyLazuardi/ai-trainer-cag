@@ -30,7 +30,6 @@ async def get_arq_redis():
     ))
 
 # ... (keep existing ingest endpoint) ...
-
 @router.post("/ingest", response_model=IngestResponse, summary="Ingest a document into the RAG system")
 async def ingest(
     request: IngestRequest,

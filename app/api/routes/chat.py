@@ -10,6 +10,7 @@ Langfuse v4 Tracing Strategy (CLEAN DASHBOARD):
 """
 import time
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from loguru import logger
@@ -319,7 +320,10 @@ async def chat(
 
 
 @router.get("/chat/history/{conversation_id}", summary="Get chat history for a session")
-async def get_history(conversation_id: str) -> list[dict]:
+async def get_history(
+    conversation_id: str,
+    current_user: Optional[User] = Depends(get_current_user),
+) -> list[dict]:
     """Retrieve the chat history from memory for a specific conversation ID."""
     history = await get_conversation_history(conversation_id)
     return history

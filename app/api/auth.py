@@ -33,7 +33,7 @@ async def get_current_user(
     user: Optional[User] = None
     
     # ── 1. Attempt JWT Authentication ─────────────────────────────────────
-    if credentials:
+    if credentials and credentials.credentials:
         token = credentials.credentials
         try:
             payload = jwt.decode(

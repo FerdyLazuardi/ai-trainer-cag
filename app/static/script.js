@@ -20,7 +20,10 @@
                         <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
                     </div>
                 </div>
-                <i class="fas fa-times" style="cursor:pointer" onclick="toggleChat()"></i>
+                <div style="display:flex; gap:22px; align-items:center;">
+                    <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
+                    <i class="fas fa-times header-icon" onclick="toggleChat()" title="Close chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
+                </div>
             </div>
             <div id="chat-messages"></div>
             <div id="chat-input">
@@ -46,8 +49,11 @@ const textarea = document.getElementById("prompt");
 let introduced = false;
 
 /* AKTIFKAN PULSE */
-document.getElementById("chat-toggle").classList.add("pulse");
-document.getElementById("chat-toggle").onclick = toggleChat;
+const toggleBtn = document.getElementById("chat-toggle");
+if (toggleBtn) {
+    toggleBtn.classList.add("pulse");
+    toggleBtn.onclick = toggleChat;
+}
 
 // ============================================================
 // TOGGLE CHAT
@@ -65,9 +71,9 @@ function toggleChat() {
             chatBox.classList.remove("animate__fadeOutDown");
             chatBox.classList.add("animate__fadeInUp");
 
-            icon.classList.remove("fa-comment-dots");
-            icon.classList.add("fa-times");
-
+            // Sembunyikan bubble button saat chat dibuka
+            toggleBtn.style.opacity = "0";
+            toggleBtn.style.pointerEvents = "none";
             toggleBtn.classList.remove("pulse");
 
             const badge = document.getElementById("chat-badge");
@@ -82,12 +88,14 @@ function toggleChat() {
             // ===== CLOSE =====
             chatBox.classList.remove("animate__fadeInUp");
             chatBox.classList.add("animate__fadeOutDown");
-            setTimeout(() => { chatBox.style.display = "none"; }, 500);
-
-            icon.classList.remove("fa-times");
-            icon.classList.add("fa-comment-dots");
-
-            toggleBtn.classList.add("pulse");
+            
+            setTimeout(() => { 
+                chatBox.style.display = "none";
+                // Tampilkan kembali bubble button saat chat ditutup
+                toggleBtn.style.opacity = "1";
+                toggleBtn.style.pointerEvents = "auto";
+                toggleBtn.classList.add("pulse");
+            }, 500);
         }
 
         icon.classList.remove("icon-animate");
@@ -112,13 +120,19 @@ async function loadHistory() {
     // Selalu tampilkan intro pertama kali
     setTimeout(showIntro, 100);
 
-    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
-        ? API_BASE_URL
-        : "";
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+    const headers = { "Content-Type": "application/json" };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
     
     try {
         const sessionId = getSessionId();
-        const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`);
+        const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
+            method: "GET",
+            headers: headers
+        });
+        
         if (!res.ok) throw new Error("No history found");
         
         const history = await res.json();
@@ -128,12 +142,36 @@ async function loadHistory() {
             setTimeout(() => {
                 history.forEach(msg => {
                     const role = msg.role === 'user' ? 'user' : 'ai';
-                    addMessage(msg.content, role);
+                    const content = msg.content || msg.text || "";
+                    addMessage(content, role);
                 });
             }, 300);
         }
     } catch (err) {
         console.error("Failed to load history:", err);
+    }
+}
+
+async function clearChat() {
+    if (confirm("Yakin mau hapus semua chat history?")) {
+        const sessionId = getSessionId();
+        const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+        const headers = { "Content-Type": "application/json" };
+        if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+            headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+        }
+
+        try {
+            await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
+                method: 'DELETE',
+                headers: headers
+            });
+            messages.innerHTML = '';
+            introduced = false;
+            showIntro();
+        } catch (e) {
+            console.error("Error clearing chat history:", e);
+        }
     }
 }
 
@@ -234,16 +272,19 @@ async function send() {
 
     showTyping();
 
-    // Tentukan base URL — pakai API_BASE_URL kalau di Moodle,
-    // fallback ke "" (relative) kalau di test-ui
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
         ? API_BASE_URL
         : "";
 
+    const headers = { "Content-Type": "application/json" };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
+
     try {
         const res = await fetch(`${baseUrl}/api/v1/chat`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: headers,
             body: JSON.stringify({
                 query: text,
                 conversation_id: getSessionId(),
@@ -293,7 +334,10 @@ function handleKey(e) {
 }
 
 // Auto resize textarea
-document.getElementById("prompt").addEventListener("input", function () {
-    this.style.height = "auto";
-    this.style.height = (this.scrollHeight) + "px";
-});
+const promptNode = document.getElementById("prompt");
+if (promptNode) {
+    promptNode.addEventListener("input", function () {
+        this.style.height = "auto";
+        this.style.height = (this.scrollHeight) + "px";
+    });
+}

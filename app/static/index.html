@@ -20,16 +20,19 @@
     </button>
 
     <div id="chat-box" class="animate__animated">
-        <div id="chat-header">
-            <div class="header-info">
-                <div class="online-dot"></div>
-                <div style="display:flex; flex-direction:column;">
-                    <span>Peped AI Trainer</span>
-                    <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
+            <div id="chat-header">
+                <div class="header-info">
+                    <div class="online-dot"></div>
+                    <div style="display:flex; flex-direction:column;">
+                        <span>Peped AI Trainer</span>
+                        <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
+                    </div>
+                </div>
+                <div style="display:flex; gap:22px; align-items:center;">
+                    <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
+                    <i class="fas fa-times header-icon" onclick="toggleChat()" title="Close chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
                 </div>
             </div>
-            <i class="fas fa-times" style="cursor:pointer" onclick="toggleChat()"></i>
-        </div>
 
         <div id="chat-messages"></div>
 
