@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,7 +12,7 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -20,33 +21,35 @@
             align-items: center;
             justify-content: center;
             padding: 20px;
+            overflow-x: hidden;
+            /* Fix horizontal scroll issue */
         }
-        
+
         .container {
             background: white;
             border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             padding: 40px;
             max-width: 500px;
             width: 100%;
         }
-        
+
         h1 {
             color: #333;
             margin-bottom: 10px;
             font-size: 24px;
         }
-        
+
         .subtitle {
             color: #666;
             margin-bottom: 30px;
             font-size: 14px;
         }
-        
+
         .option-group {
             margin-bottom: 25px;
         }
-        
+
         label {
             display: block;
             color: #333;
@@ -54,8 +57,9 @@
             margin-bottom: 8px;
             font-size: 14px;
         }
-        
-        select, input[type="number"] {
+
+        select,
+        input[type="number"] {
             width: 100%;
             padding: 12px;
             border: 2px solid #e0e0e0;
@@ -63,7 +67,7 @@
             font-size: 14px;
             transition: border-color 0.3s;
         }
-        
+
         /* Select2 custom styling */
         .select2-container--default .select2-selection--multiple {
             border: 2px solid #e0e0e0 !important;
@@ -72,131 +76,196 @@
             padding: 8px !important;
             background-color: white !important;
         }
-        
+
         .select2-container--default.select2-container--focus .select2-selection--multiple {
             border-color: #667eea !important;
             outline: none !important;
         }
-        
+
         .select2-container {
             width: 100% !important;
             font-size: 14px !important;
         }
-        
-        /* Selected section tags - clean design with X on the right */
+
+        /* Selected section tags - Modern Pill design */
         .select2-container--default .select2-selection--multiple .select2-selection__choice {
-            background-color: #667eea !important;
-            border: none !important;
-            color: white !important;
-            padding: 8px 36px 8px 12px !important;
-            border-radius: 6px !important;
-            margin: 4px 4px 4px 0 !important;
-            font-size: 14px !important;
+            background: rgba(102, 126, 234, 0.1) !important;
+            border: 1px solid #667eea !important;
+            color: #667eea !important;
+            padding: 0 14px 0 34px !important;
+            /* Fixed padding for X on the far left */
+            border-radius: 20px !important;
+            /* More modern rounded pill */
+            margin: 4px 6px 4px 0 !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
             position: relative !important;
-            display: inline-block !important;
-            line-height: 1.4 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            height: 32px !important;
+            /* Fixed height for consistent vertical centering */
+            line-height: 1 !important;
+            transition: all 0.2s ease !important;
         }
-        
-        /* Remove button (X) for each section - positioned on the right */
+
+        .select2-container--default .select2-selection--multiple .select2-selection__choice:hover {
+            background: rgba(102, 126, 234, 0.2) !important;
+            transform: translateY(-1px);
+        }
+
+        /* Remove button (X) - strictly on the far left, redesigned as a circle */
         .select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
-            color: white !important;
-            background: rgba(255, 255, 255, 0.2) !important;
+            color: #667eea !important;
+            background: transparent !important;
             border: none !important;
-            border-radius: 3px !important;
-            font-size: 16px !important;
-            font-weight: bold !important;
+            border-radius: 50% !important;
+            font-size: 18px !important;
+            font-weight: 400 !important;
             position: absolute !important;
-            right: 8px !important;
+            left: 6px !important;
             top: 50% !important;
             transform: translateY(-50%) !important;
-            line-height: 1 !important;
-            padding: 2px 6px !important;
+            width: 20px !important;
+            height: 20px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
             cursor: pointer !important;
-            transition: background 0.2s !important;
+            transition: all 0.2s !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
         }
-        
+
         .select2-container--default .select2-selection--multiple .select2-selection__choice__remove:hover {
-            background: rgba(255, 255, 255, 0.3) !important;
+            background: #ff5252 !important;
             color: white !important;
         }
-        
-        /* Search input inside the box */
-        .select2-container--default .select2-search--inline .select2-search__field {
-            margin-top: 4px !important;
-            padding: 4px !important;
-            font-size: 14px !important;
+
+        /* Dropdown item styling - ensuring full width for placeholder */
+        .select2-selection--multiple {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            min-height: 46px !important;
+            overflow: visible !important;
+            /* Ensure nothing is clipped */
         }
-        
+
+        .select2-selection__rendered {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }
+
+        .select2-selection__choice__display {
+            padding: 0 !important;
+            display: inline-block !important;
+        }
+
+        .select2-container--default .select2-search--inline {
+            flex-grow: 1 !important;
+            width: 100% !important;
+            /* Force search to take full width when empty */
+        }
+
+        .select2-container--default .select2-search--inline .select2-search__field {
+            margin-top: 0 !important;
+            padding: 10px 4px !important;
+            font-size: 14px !important;
+            min-height: 32px !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            /* Force full width for placeholder */
+            box-sizing: border-box !important;
+            white-space: normal !important;
+            line-height: 1.2 !important;
+        }
+
         /* Dropdown menu styling */
         .select2-dropdown {
             border: 2px solid #e0e0e0 !important;
             border-radius: 8px !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
         }
-        
+
         /* Dropdown options */
         .select2-container--default .select2-results__option {
             padding: 10px 12px !important;
             font-size: 14px !important;
         }
-        
-        /* Hover effect - blue-purple gradient */
-        .select2-container--default .select2-results__option--highlighted[aria-selected] {
+
+        /* Hover effect - ensure text is white and background is gradient */
+        .select2-container--default .select2-results__option--highlighted {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
             color: white !important;
         }
-        
+
+        /* Force white color on all result hover states */
+        .select2-results__option--highlighted[aria-selected],
+        .select2-results__option[aria-selected]:hover,
+        .select2-results__option:hover {
+            color: white !important;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        }
+
         /* Selected option in dropdown */
         .select2-container--default .select2-results__option[aria-selected=true] {
             background-color: #f0f0f0 !important;
-            color: #333 !important;
         }
-        
+
         /* Clear all button - outside the box, below dropdown */
         .clear-all-btn {
-            display: inline-block;
-            margin-top: 8px;
-            padding: 6px 12px;
-            background: #f44336;
+            display: none;
+            /* Hidden by default, shown when items selected */
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #ff5252;
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
-        
+
         .clear-all-btn:hover {
-            background: #d32f2f;
+            background: #ff1744;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 12px rgba(255, 82, 82, 0.3);
         }
-        
+
         .clear-all-btn:active {
             transform: scale(0.98);
         }
-        
-        select:focus, input:focus {
+
+        select:focus,
+        input:focus {
             outline: none;
             border-color: #667eea;
         }
-        
+
         .checkbox-group {
             display: flex;
             align-items: center;
             gap: 10px;
         }
-        
+
         input[type="checkbox"] {
             width: 20px;
             height: 20px;
             cursor: pointer;
         }
-        
+
         .checkbox-group label {
             margin: 0;
             cursor: pointer;
             font-weight: normal;
         }
-        
+
         button {
             width: 100%;
             padding: 14px;
@@ -209,22 +278,22 @@
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        
+
         button:hover {
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
         }
-        
+
         button:active {
             transform: translateY(0);
         }
-        
+
         button:disabled {
             background: #ccc;
             cursor: not-allowed;
             transform: none;
         }
-        
+
         .status {
             margin-top: 20px;
             padding: 15px;
@@ -232,39 +301,71 @@
             font-size: 14px;
             display: none;
         }
-        
+
         .status.success {
             background: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
         }
-        
+
         .status.error {
             background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
-        
+
         .status.loading {
             background: #d1ecf1;
             color: #0c5460;
             border: 1px solid #bee5eb;
         }
-        
+
+        .progress-container {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            margin-top: 15px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.4s ease;
+        }
+
         .loader {
             display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 3px solid rgba(0,0,0,0.1);
+            width: 18px;
+            height: 18px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
             border-radius: 50%;
-            border-top-color: #0c5460;
-            animation: spin 1s ease-in-out infinite;
+            border-top-color: #667eea;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
         }
-        
+
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
-        
+
+        .queue-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #fff3e0;
+            color: #ef6c00;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+
         .info-badge {
             display: inline-block;
             background: #e3f2fd;
@@ -277,15 +378,16 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🚀 Ingest to RAG System</h1>
         <p class="subtitle">Sync Moodle course content to Qdrant Knowledge Base</p>
-        
+
         <form id="ingestForm">
             <div class="option-group">
                 <label for="courseId">
-                    Course ID 
+                    Course ID
                     <span class="info-badge">Auto-detected</span>
                 </label>
                 <input type="number" id="courseId" value="3" readonly>
@@ -293,17 +395,20 @@
                     Automatically detected from current course
                 </small>
             </div>
-            
+
             <div class="option-group">
                 <label for="targetSections">Target Sections (Optional)</label>
                 <select id="targetSections" multiple="multiple" style="width: 100%">
                     <!-- Options will be loaded dynamically -->
                 </select>
+                <button type="button" id="clearAllBtn" class="clear-all-btn">
+                    🗑️ Delete All Selected
+                </button>
                 <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
                     Select specific sections or leave empty to sync all
                 </small>
             </div>
-            
+
             <div class="option-group">
                 <div class="checkbox-group">
                     <input type="checkbox" id="forceReingest" checked>
@@ -313,30 +418,33 @@
                     Re-process files even if unchanged
                 </small>
             </div>
-            
+
             <button type="submit" id="submitBtn">
                 Start Ingestion
             </button>
         </form>
-        
+
         <div id="status" class="status"></div>
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
     </div>
-    
+
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script>
         const API_BASE = window.location.origin;
-        
+
         // Auto-detect course_id from URL parameters
         function getCourseIdFromURL() {
             const urlParams = new URLSearchParams(window.location.search);
             // Try different parameter names that Moodle might use
-            return urlParams.get('course_id') || 
-                   urlParams.get('courseid') || 
-                   urlParams.get('id') || 
-                   '3'; // Default to AI_Knowledge_Base
+            return urlParams.get('course_id') ||
+                urlParams.get('courseid') ||
+                urlParams.get('id') ||
+                '3'; // Default to AI_Knowledge_Base
         }
-        
+
         // Initialize course ID on page load
         window.addEventListener('DOMContentLoaded', () => {
             const courseId = getCourseIdFromURL();
@@ -344,37 +452,49 @@
             courseIdInput.value = courseId;
             courseIdInput.style.backgroundColor = '#f5f5f5';
             courseIdInput.style.cursor = 'not-allowed';
-            
+
             // Initialize Select2 for sections dropdown
             $('#targetSections').select2({
-                placeholder: 'Select sections (leave empty for all)',
-                allowClear: true,
+                placeholder: 'Select specific sections or leave empty to sync all',
+                allowClear: false,  // Disabled to remove the internal clear button
                 width: '100%'
+            }).on('change', function () {
+                const selectedCount = $(this).val()?.length || 0;
+                if (selectedCount > 0) {
+                    $('#clearAllBtn').fadeIn(200);
+                } else {
+                    $('#clearAllBtn').fadeOut(200);
+                }
             });
-            
+
+            // Clear All button handler
+            $('#clearAllBtn').on('click', function () {
+                $('#targetSections').val(null).trigger('change');
+            });
+
             loadSections();
         });
-        
+
         async function loadSections() {
             const courseId = document.getElementById('courseId').value;
             const select = $('#targetSections');
-            
+
             // Clear existing options
             select.empty();
-            
+
             // Fetch sections from Moodle API
             try {
                 const response = await fetch(`${API_BASE}/api/v1/moodle/sections?course_id=${courseId}`);
-                
+
                 if (response.ok) {
                     const sections = await response.json();
-                    
+
                     // Add sections as options
                     sections.forEach(section => {
                         const option = new Option(section.name, section.name, false, false);
                         select.append(option);
                     });
-                    
+
                     select.trigger('change');
                 } else {
                     // If API fails, add some default sections
@@ -385,12 +505,12 @@
                         'Profile Amartha',
                         'New section'
                     ];
-                    
+
                     defaultSections.forEach(sectionName => {
                         const option = new Option(sectionName, sectionName, false, false);
                         select.append(option);
                     });
-                    
+
                     select.trigger('change');
                 }
             } catch (error) {
@@ -402,43 +522,55 @@
                     'Profile Amartha',
                     'New section'
                 ];
-                
+
                 defaultSections.forEach(sectionName => {
                     const option = new Option(sectionName, sectionName, false, false);
                     select.append(option);
                 });
-                
+
                 select.trigger('change');
             }
         }
-        
+
         document.getElementById('ingestForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const submitBtn = document.getElementById('submitBtn');
             const statusDiv = document.getElementById('status');
-            
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+
             // Get form values
             const courseId = parseInt(document.getElementById('courseId').value);
             const forceReingest = document.getElementById('forceReingest').checked;
-            
+
             // Get selected sections
             const selectedSections = $('#targetSections').val() || [];
-            
+
             const payload = {
                 course_id: courseId,
                 target_sections: selectedSections.length > 0 ? selectedSections : null,
                 force_reingest: forceReingest
             };
-            
-            // Show loading state
+
+            // Step 1: Show Queue state
             submitBtn.disabled = true;
-            submitBtn.textContent = 'Processing...';
+            submitBtn.textContent = 'Queueing...';
             statusDiv.className = 'status loading';
             statusDiv.style.display = 'block';
-            statusDiv.innerHTML = '<span class="loader"></span> Ingestion in progress...';
-            
+            statusDiv.innerHTML = '<span class="queue-badge">QUEUE</span> Preparing ingestion task...';
+
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '10%';
+
             try {
+                // Short artificial delay for smooth "Queue" transition
+                await new Promise(resolve => setTimeout(resolve, 800));
+
+                // Step 2: Show Ingesting state
+                statusDiv.innerHTML = '<span class="loader"></span> Ingesting data from Moodle...';
+                progressBar.style.width = '40%';
+
                 const response = await fetch(`${API_BASE}/api/v1/ingest/moodle/sync`, {
                     method: 'POST',
                     headers: {
@@ -446,14 +578,19 @@
                     },
                     body: JSON.stringify(payload)
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (response.ok) {
+                    // Smoothly animate progress to 100%
+                    progressBar.style.width = '100%';
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    // Step 3: Show Complete state
                     statusDiv.className = 'status success';
                     statusDiv.innerHTML = `
-                        ✅ ${data.message || 'Ingestion started successfully!'}
-                        <br><small>The process is running in the background.</small>
+                        <strong>✅ Data Ingestion Successful</strong><br>
                     `;
                 } else {
                     throw new Error(data.detail || 'Ingestion failed');
@@ -461,11 +598,21 @@
             } catch (error) {
                 statusDiv.className = 'status error';
                 statusDiv.innerHTML = `❌ Error: ${error.message}`;
+                progressBar.style.backgroundColor = '#f44336';
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Start Ingestion';
+                // Wait a bit then hide progress bar if error, or keep if success
+                setTimeout(() => {
+                    if (statusDiv.classList.contains('error')) {
+                        progressContainer.style.display = 'none';
+                        progressBar.style.width = '0%';
+                        progressBar.style.backgroundColor = '';
+                    }
+                }, 3000);
             }
         });
     </script>
 </body>
+
 </html>
