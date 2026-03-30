@@ -184,3 +184,63 @@ async def resolve_numeric_query(query: str, conversation_id: str) -> str:
             return query
     except (ValueError, IndexError):
         return query
+
+
+SUMMARY_TRIGGER_TURNS = 6  # summarize setelah 6 turns penuh (12 messages)
+
+async def get_or_summarize_history(
+    conversation_id: str,
+    llm,
+    max_fresh_turns: int = 5,
+) -> tuple[str, list[dict]]:
+    """
+    Return (summary_str, recent_turns_list) using Rolling Batch Summarization.
+    """
+    history = await get_conversation_history(conversation_id)
+    
+    redis = get_redis_client()
+    summary_key = f"rag:summary:{conversation_id}"
+
+    # 1. Check if conversation length is within the fresh turn window.
+    # Return full history and existing summary if available without invoking LLM.
+    if len(history) // 2 <= max_fresh_turns:
+        cached_summary = await redis.get(summary_key)
+        return cached_summary or "", history
+
+    # 2. Window exceeded: Trigger Batch Summarization.
+    # Extract the oldest turns to be consolidated into the persistent summary.
+    turns_to_summarize = history[:(max_fresh_turns * 2)]
+    
+    # Retain the most recent turn as the starting point for the next window.
+    fresh_turns = history[(max_fresh_turns * 2):]
+
+    # 3. Retrieve the existing consolidated summary.
+    old_summary = await redis.get(summary_key) or ""
+
+    # 4. Recursive Refinement: Merge existing summary with the overflowing turns.
+    from langchain_core.messages import HumanMessage as HM
+    old_text = "\n".join(
+        f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:300]}"
+        for m in turns_to_summarize
+    )
+    
+    prompt = (
+        "Refine the following conversation summary to include the key points from the new dialogue segment. "
+        "Maintain a concise, 2-3 sentence overview in the same language.\n\n"
+        f"Existing Summary:\n{old_summary}\n\n"
+        f"New context to integrate:\n{old_text}\n\n"
+        "Updated Summary:"
+    )
+    
+    resp = await llm.ainvoke([HM(content=prompt)])
+    new_summary = resp.content.strip()
+
+    # 5. Persist the updated consolidated summary to Redis.
+    await redis.set(summary_key, new_summary, ex=settings.conversation_ttl_seconds)
+
+    # 6. Update the conversation history in Redis by removing the summarized segments.
+    key = _conv_key(conversation_id)
+    await redis.set(key, json.dumps(fresh_turns), ex=settings.conversation_ttl_seconds)
+
+    logger.info("Conversation rolling batch summary updated", conversation_id=conversation_id)
+    return new_summary, fresh_turns

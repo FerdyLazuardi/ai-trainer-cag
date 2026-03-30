@@ -43,6 +43,50 @@ async def shutdown(ctx: dict):
     """Cleanup resources for the worker."""
     logger.info("Worker shutting down...")
 
+async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[str, Any]:
+    """arq task to run LTM summarization after 30 mins of AFK."""
+    from app.database.redis_client import get_redis_client
+    import time
+    
+    redis = get_redis_client()
+    # Check if the user has been active recently
+    last_active = await redis.get(f"rag:last_active:{conversation_id}")
+    if last_active:
+        time_since_active = time.time() - float(last_active)
+        # If they were active within the last 30 minutes (minus 1 min buffer), abort
+        if time_since_active < (30 * 60) - 60:
+            logger.info("User still active, aborting LTM sync task", conversation_id=conversation_id)
+            return {"status": "aborted", "reason": "still_active"}
+            
+    # AFK for 30 minutes confirmed! Let's summarize
+    from app.agents.memory import get_or_summarize_history
+    from app.llm.client import get_cheap_llm
+    from app.agents.long_term_memory import long_term_memory
+    
+    cheap_llm = get_cheap_llm()
+    summary, recent_history = await get_or_summarize_history(
+        conversation_id=conversation_id,
+        llm=cheap_llm,
+        max_fresh_turns=10, 
+    )
+
+    if not summary and not recent_history:
+        return {"status": "skipped", "reason": "no_history"}
+
+    session_summary_for_ltm = summary if summary else " ".join([m["content"] for m in recent_history])[:1000]
+
+    await long_term_memory.update(
+        user_id=user_id,
+        session_summary=session_summary_for_ltm,
+        new_topics=[],
+        llm=cheap_llm,
+    )
+    
+    # Clean up the last active key
+    await redis.delete(f"rag:last_active:{conversation_id}")
+    logger.info("AFK LTM Sync Complete", conversation_id=conversation_id)
+    return {"status": "synced"}
+
 class WorkerSettings:
     """arq worker configuration."""
     redis_settings = RedisSettings(
@@ -51,6 +95,6 @@ class WorkerSettings:
         database=settings.redis_db,
         password=settings.redis_password if settings.redis_password else None,
     )
-    functions = [sync_moodle_task, dummy_task]
+    functions = [sync_moodle_task, dummy_task, sync_ltm_task]
     on_startup = startup
     on_shutdown = shutdown

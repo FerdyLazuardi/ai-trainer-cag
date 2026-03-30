@@ -42,11 +42,12 @@ async def get_current_user(
                 settings.jwt_secret,
                 algorithms=[settings.jwt_algorithm]
             )
-            user_id: str = str(payload.get("user_id"))
+            raw_user_id = payload.get("user_id")
+            user_id: str = str(raw_user_id) if raw_user_id is not None else ""
             role: str = payload.get("role", "moodle_user")
             username: str = payload.get("username", "Moodle User")
             
-            if user_id:
+            if user_id and user_id.strip():
                 user = User(user_id=user_id, role=role, username=username)
         except jwt.ExpiredSignatureError:
             logger.warning("Token expired, falling back to guest")

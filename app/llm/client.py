@@ -31,6 +31,25 @@ def get_llm() -> ChatOpenAI:
     )
 
 
+@lru_cache(maxsize=1)
+def get_cheap_llm() -> ChatOpenAI:
+    """Return a cheaper, faster LLM for background tasks like memory summarization."""
+    # Using Gemini 2.0 Flash via OpenRouter for cost-efficiency
+    return ChatOpenAI(
+        model="google/gemini-2.0-flash-001",
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+        temperature=0.3,
+        max_tokens=1000,
+        request_timeout=30,
+        max_retries=3,
+        default_headers={
+            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "X-Title": "AI LMS RAG Agent (Background Worker)",
+        },
+    )
+
+
 # Standalone retry decorator for direct LLM calls outside of LangChain
 @retry(
     stop=stop_after_attempt(3),

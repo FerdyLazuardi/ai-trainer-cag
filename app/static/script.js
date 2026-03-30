@@ -353,3 +353,27 @@ if (promptNode) {
         this.style.height = (this.scrollHeight) + "px";
     });
 }
+
+// ============================================================
+// LTM SYNC - On Leave/Close
+// ============================================================
+window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        const sessionId = getSessionId();
+        const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+        const url = `${baseUrl}/api/v1/chat/sync_memory/${sessionId}`;
+        
+        let headers = { "Content-Type": "application/json" };
+        if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+            headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+        }
+        
+        try {
+            fetch(url, {
+                method: "POST",
+                headers: headers,
+                keepalive: true
+            }).catch(e => console.log(e));
+        } catch (e) {}
+    }
+});

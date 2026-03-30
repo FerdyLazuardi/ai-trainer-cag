@@ -126,9 +126,15 @@ async def chat(
 
     # ── 2. Build message history ──────────────────────────────────────────
     from langchain_core.messages import HumanMessage, AIMessage
+    from app.agents.memory import get_or_summarize_history
+    from app.llm.client import get_cheap_llm
 
-    history = await get_conversation_history(conversation_id)
-    recent_history = history[-(3 * 2):] if len(history) > 6 else history
+    summary, recent_history = await get_or_summarize_history(
+        conversation_id=conversation_id,
+        llm=get_cheap_llm(),
+        max_fresh_turns=5,
+    )
+
     messages = []
     for turn in recent_history:
         if turn["role"] == "user":
@@ -137,8 +143,40 @@ async def chat(
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
 
+    # ── 2b. Long-Term Memory (LTM): Session Initialization ────────────────
+    from app.api.user_utils import is_real_user, ltm_load_redis_key
+    from app.agents.long_term_memory import long_term_memory
+    from app.database.redis_client import get_redis_client
+
+    user_id = current_user.user_id
+    ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
+
+    ltm_profile = {"summary": "", "topics": []}
+
+    if ltm_eligible:
+        redis = get_redis_client()
+        is_new_session = len(recent_history) == 0
+        ltm_already_loaded = await redis.exists(ltm_load_redis_key(user_id))
+
+        if is_new_session and not ltm_already_loaded:
+            ltm_profile = await long_term_memory.load(user_id=user_id)
+            await redis.set(
+                ltm_load_redis_key(user_id),
+                "1",
+                ex=settings.conversation_ttl_seconds,
+            )
+            if ltm_profile["summary"]:
+                logger.info("LTM profile synchronized for authenticated user", user_id=user_id)
+            else:
+                logger.debug("No existing LTM profile found for user", user_id=user_id)
+
     rag_graph = get_rag_graph()
-    initial_state = {"messages": messages, "conversation_id": conversation_id}
+    initial_state = {
+        "messages": messages,
+        "conversation_id": conversation_id,
+        "conversation_summary": summary,
+        "user_profile": ltm_profile,
+    }
 
     # ── 3. Run RAG pipeline inside a SINGLE Langfuse trace ────────────────
     #
@@ -280,12 +318,24 @@ async def chat(
                     )
                 )
 
-    await set_cached_response(query=resolved_query, answer=answer, sources=[s.model_dump() for s in sources], course_id=effective_course_id)
-    await append_to_history(
+    background_tasks.add_task(
+        set_cached_response,
+        query=resolved_query,
+        answer=answer,
+        sources=[s.model_dump() for s in sources],
+        course_id=effective_course_id,
+    )
+    background_tasks.add_task(
+        append_to_history,
         conversation_id=conversation_id,
         user_message=resolved_query,
         assistant_message=answer,
     )
+
+    # ── 7b. Long-Term Memory (LTM) Architecture ─────────────────────────
+    # LTM updates are no longer performed per-turn to optimize cost and latency.
+    # Synchronization is now handled by a background worker after a 30-minute
+    # period of user inactivity (AFK), utilizing cost-efficient models (Gemini Flash).
 
     # ── 8. Log to PostgreSQL ──────────────────────────────────────────────
     background_tasks.add_task(
@@ -308,6 +358,31 @@ async def chat(
         chunks_retrieved=actual_chunks,
         max_chunk_score=max_chunk_score,
     )
+    
+    # ── 9. Schedule AFK LTM Sync (30 minutes) ─────────────────────────────
+    # Instead of relying on Moodle tab close, we schedule a background task
+    # that fires in 30 minutes. If user chats again, this task safely aborts.
+    async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
+        from app.database.redis_client import get_redis_client
+        from app.api.routes.ingest import get_arq_redis
+        import time
+        import datetime
+        
+        redis_client = get_redis_client()
+        await redis_client.set(f"rag:last_active:{conv_id}", str(time.time()), ex=86400)
+        try:
+            arq_redis = await get_arq_redis()
+            await arq_redis.enqueue_job(
+                'sync_ltm_task',
+                conv_id,
+                u_id,
+                _defer_by=datetime.timedelta(minutes=30)
+            )
+            await arq_redis.close()
+        except Exception as e:
+            logger.warning(f"Failed to schedule AFK LTM sync: {e}")
+
+    background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
 
     return ChatResponse(
         answer=answer,
@@ -327,3 +402,16 @@ async def get_history(
     """Retrieve the chat history from memory for a specific conversation ID."""
     history = await get_conversation_history(conversation_id)
     return history
+
+
+@router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
+async def sync_memory(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Deprecated: Frontend trigger for LTM sync is no longer required.
+    LTM is now automatically handled by the AFK 30-minute worker.
+    """
+    return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
