@@ -319,6 +319,12 @@ async def chat(
         set_cached_response,
         query=resolved_query,
         answer=answer,
+        sources=[s.model_dump() for s in sources],    )
+
+    background_tasks.add_task(
+        set_cached_response,
+        query=resolved_query,
+        answer=answer,
         sources=[s.model_dump() for s in sources],
         course_id=effective_course_id,
     )
@@ -408,6 +414,35 @@ async def chat(
 async def get_history(
     conversation_id: str,
     current_user: Optional[User] = Depends(get_current_user),
+) -> list[dict]:
+    """Retrieve the chat history from memory for a specific conversation ID."""
+    history = await get_conversation_history(conversation_id)
+    return history
+
+
+@router.delete("/chat/history/{conversation_id}", summary="Clear chat history for a session")
+async def delete_history(
+    conversation_id: str,
+    current_user: Optional[User] = Depends(get_current_user),
+):
+    """Clear the chat history from memory for a specific conversation ID."""
+    from app.agents.memory import clear_conversation_history
+    await clear_conversation_history(conversation_id)
+    return {"status": "success", "message": "Conversation history cleared"}
+
+
+@router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
+async def sync_memory(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Deprecated: Frontend trigger for LTM sync is no longer required.
+    LTM is now automatically handled by the AFK 30-minute worker.
+    """
+    return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
+tional[User] = Depends(get_current_user),
 ) -> list[dict]:
     """Retrieve the chat history from memory for a specific conversation ID."""
     history = await get_conversation_history(conversation_id)
