@@ -143,10 +143,13 @@ async def chat(
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
 
-    # ── 2b. Long-Term Memory (LTM): Session Initialization ────────────────
-    from app.api.user_utils import is_real_user, ltm_load_redis_key
-    from app.agents.long_term_memory import long_term_memory
-    from app.database.redis_client import get_redis_client
+    # ── 2b. Long-Term Memory (LTM): Semantic per-request retrieval ──────────
+    # Uses QdrantLTMService: embeds the current query and retrieves the top-2
+    # most semantically relevant past episodes for this user.
+    # Per-request retrieval (not just new_session) ensures the most relevant
+    # context is always injected, regardless of session state.
+    from app.api.user_utils import is_real_user
+    from app.agents.long_term_memory_qdrant import qdrant_ltm
 
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
@@ -154,21 +157,15 @@ async def chat(
     ltm_profile = {"summary": "", "topics": []}
 
     if ltm_eligible:
-        redis = get_redis_client()
-        is_new_session = len(recent_history) == 0
-        ltm_already_loaded = await redis.exists(ltm_load_redis_key(user_id))
-
-        if is_new_session and not ltm_already_loaded:
-            ltm_profile = await long_term_memory.load(user_id=user_id)
-            await redis.set(
-                ltm_load_redis_key(user_id),
-                "1",
-                ex=settings.conversation_ttl_seconds,
+        ltm_profile = await qdrant_ltm.load(user_id=user_id, query=resolved_query)
+        if ltm_profile["summary"]:
+            logger.info(
+                "LTM profile loaded (semantic)",
+                user_id=user_id,
+                topics=len(ltm_profile.get("topics", [])),
             )
-            if ltm_profile["summary"]:
-                logger.info("LTM profile synchronized for authenticated user", user_id=user_id)
-            else:
-                logger.debug("No existing LTM profile found for user", user_id=user_id)
+        else:
+            logger.debug("No relevant LTM episodes found for user", user_id=user_id)
 
     rag_graph = get_rag_graph()
     initial_state = {
@@ -359,26 +356,39 @@ async def chat(
         max_chunk_score=max_chunk_score,
     )
     
-    # ── 9. Schedule AFK LTM Sync (30 minutes) ─────────────────────────────
-    # Instead of relying on Moodle tab close, we schedule a background task
-    # that fires in 30 minutes. If user chats again, this task safely aborts.
+    # ── 9. Schedule AFK LTM Sync (30 minutes, deduplicated) ─────────────────
+    # One deferred arq task per conversation — dedup via Redis NX key.
+    # If user sends multiple messages, only ONE task reaches the worker;
+    # all others are skipped via the dedup_key guard in sync_ltm_task.
     async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
         from app.database.redis_client import get_redis_client
         from app.api.routes.ingest import get_arq_redis
         import time
         import datetime
-        
+
         redis_client = get_redis_client()
+        # Update last_active timestamp on every message (rolling window)
         await redis_client.set(f"rag:last_active:{conv_id}", str(time.time()), ex=86400)
+
+        # Deduplication: only enqueue if no task is already queued for this conversation
+        sched_key = f"rag:ltm:scheduled:{conv_id}"
+        already_scheduled = await redis_client.exists(sched_key)
+        if already_scheduled:
+            logger.debug("AFK LTM sync already scheduled, skipping", conversation_id=conv_id)
+            return
+
         try:
             arq_redis = await get_arq_redis()
             await arq_redis.enqueue_job(
                 'sync_ltm_task',
                 conv_id,
                 u_id,
-                _defer_by=datetime.timedelta(minutes=30)
+                _defer_by=datetime.timedelta(seconds=10)
             )
             await arq_redis.close()
+            # Mark as scheduled (TTL slightly > 10s so key covers the defer window)
+            await redis_client.set(sched_key, "1", ex=60)
+            logger.debug("AFK LTM sync scheduled", conversation_id=conv_id)
         except Exception as e:
             logger.warning(f"Failed to schedule AFK LTM sync: {e}")
 

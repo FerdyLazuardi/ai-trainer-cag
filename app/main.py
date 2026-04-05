@@ -79,6 +79,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await qdrant.ensure_kb_collection()
     logger.info("Qdrant Knowledge_Base collection ready", collection=settings.qdrant_kb_collection)
 
+    # Initialize Long-Term Memory (LTM) collection in Qdrant
+    await qdrant.ensure_ltm_collection()
+    logger.info("Qdrant LTM collection ready (user_ltm_memories)")
+
     yield
 
     # Shutdown

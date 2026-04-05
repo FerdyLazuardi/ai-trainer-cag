@@ -105,27 +105,5 @@ class AgentLog(Base):
         return f"<AgentLog id={self.id} query={self.query[:40]!r} latency={self.latency_ms}ms>"
 
 
-class UserMemory(Base):
-    """Persists user learning context across chat sessions."""
 
-    __tablename__ = "user_memory"
 
-    id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, unique=True, index=True
-    )
-    summary: Mapped[str] = mapped_column(Text, nullable=True)
-    topics: Mapped[list] = mapped_column(JSON, nullable=True, default=list)
-    last_active: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    def __repr__(self) -> str:
-        return f"<UserMemory user_id={self.user_id} last_active={self.last_active}>"

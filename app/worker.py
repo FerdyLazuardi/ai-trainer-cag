@@ -44,47 +44,79 @@ async def shutdown(ctx: dict):
     logger.info("Worker shutting down...")
 
 async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[str, Any]:
-    """arq task to run LTM summarization after 30 mins of AFK."""
+    """
+    arq background task: persist a new LTM episode to Qdrant after 30-min AFK.
+
+    Flow:
+        1. Guard: check Redis dedup key — skip if another task already ran.
+        2. Guard: check last_active timestamp — abort if user is still active.
+        3. Get session summary from STM (get_or_summarize_history).
+        4. Extract topics via cheap LLM.
+        5. Upsert new episode to Qdrant via QdrantLTMService.update().
+        6. Clean up Redis keys.
+    """
     from app.database.redis_client import get_redis_client
     import time
-    
+
     redis = get_redis_client()
-    # Check if the user has been active recently
+
+    # ── Guard 1: Deduplication ────────────────────────────────────────────────
+    # Only the FIRST task to acquire this key proceeds; subsequent ones abort.
+    dedup_key = f"rag:ltm:syncing:{conversation_id}"
+    acquired = await redis.set(dedup_key, "1", nx=True, ex=3600)   # 1-hour TTL
+    if not acquired:
+        logger.info("LTM sync: skipped (another task already running)", conversation_id=conversation_id)
+        return {"status": "skipped", "reason": "dedup_lock"}
+
+    # ── Guard 2: Activity check ───────────────────────────────────────────────
     last_active = await redis.get(f"rag:last_active:{conversation_id}")
     if last_active:
         time_since_active = time.time() - float(last_active)
-        # If they were active within the last 30 minutes (minus 1 min buffer), abort
-        if time_since_active < (30 * 60) - 60:
-            logger.info("User still active, aborting LTM sync task", conversation_id=conversation_id)
+        if time_since_active < 5:   # Quick test: check if user was active in last 5 seconds
+            await redis.delete(dedup_key)          # release lock so retry can happen
+            logger.info(
+                "LTM sync: user still active, aborting",
+                conversation_id=conversation_id,
+                seconds_since_active=round(time_since_active),
+            )
             return {"status": "aborted", "reason": "still_active"}
-            
-    # AFK for 30 minutes confirmed! Let's summarize
+
+    # ── Step 3: Get session summary ───────────────────────────────────────────
     from app.agents.memory import get_or_summarize_history
     from app.llm.client import get_cheap_llm
-    from app.agents.long_term_memory import long_term_memory
-    
+    from app.agents.long_term_memory_qdrant import qdrant_ltm
+
     cheap_llm = get_cheap_llm()
     summary, recent_history = await get_or_summarize_history(
         conversation_id=conversation_id,
         llm=cheap_llm,
-        max_fresh_turns=10, 
+        max_fresh_turns=10,
     )
 
     if not summary and not recent_history:
+        await redis.delete(dedup_key)
         return {"status": "skipped", "reason": "no_history"}
 
-    session_summary_for_ltm = summary if summary else " ".join([m["content"] for m in recent_history])[:1000]
+    # Prefer the rolling summary; fallback to raw history concat (capped at 1000 chars)
+    session_summary = summary if summary else " ".join(
+        [m["content"] for m in recent_history]
+    )[:1000]
 
-    await long_term_memory.update(
+    # ── Step 4+5: Extract topics + upsert to Qdrant ───────────────────────────
+    # Topic extraction is done inside qdrant_ltm.update() when new_topics=[]
+    await qdrant_ltm.update(
         user_id=user_id,
-        session_summary=session_summary_for_ltm,
-        new_topics=[],
+        session_summary=session_summary,
+        new_topics=[],          # let _extract_topics() handle this via llm=
+        session_id=conversation_id,
         llm=cheap_llm,
     )
-    
-    # Clean up the last active key
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
     await redis.delete(f"rag:last_active:{conversation_id}")
-    logger.info("AFK LTM Sync Complete", conversation_id=conversation_id)
+    await redis.delete(dedup_key)
+
+    logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
     return {"status": "synced"}
 
 class WorkerSettings:

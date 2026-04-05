@@ -24,6 +24,5 @@ def is_real_user(user_id: str, role: str) -> bool:
         return False
     return True
 
-def ltm_load_redis_key(user_id: str) -> str:
-    """Redis key to mark that LTM was already loaded for this user in this session."""
-    return f"rag:ltm:loaded:{user_id}"
+
+

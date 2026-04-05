@@ -26,3 +26,5 @@ docs/superpowers/
 
 # Docker-generated files
 .kiro/
+
+tmp/

@@ -192,6 +192,88 @@ class QdrantManager:
         else:
             logger.info("Qdrant Knowledge_Base collection OK", collection=kb_col, dim=stored_dim or self.dim)
 
+    # ── Long-Term Memory Collection ───────────────────────────────────────────
+
+    _LTM_COLLECTION = "user_ltm_memories"
+
+    async def _create_ltm_collection(self) -> None:
+        """
+        Create the user_ltm_memories collection for semantic long-term memory.
+
+        Design choices:
+        - Dense-only vectors (no sparse): semantic similarity is the primary retrieval mechanism.
+        - Payload indexed on user_id (keyword) for fast per-user pre-filtering.
+        - Payload indexed on created_at (float epoch) for time-based ordering.
+        - on_disk_payload=True for memory efficiency at scale.
+        """
+        await self.client.create_collection(
+            collection_name=self._LTM_COLLECTION,
+            vectors_config=VectorParams(
+                size=self.dim,
+                distance=Distance.COSINE,
+            ),
+            hnsw_config=HnswConfigDiff(
+                m=16,
+                ef_construct=100,
+            ),
+            on_disk_payload=True,
+        )
+        # CRITICAL: user_id index ensures each query filters ONLY this user's memories
+        await self.client.create_payload_index(
+            collection_name=self._LTM_COLLECTION,
+            field_name="user_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        # created_at as float epoch for time-based sorting / recency scoring
+        await self.client.create_payload_index(
+            collection_name=self._LTM_COLLECTION,
+            field_name="created_at",
+            field_schema=PayloadSchemaType.FLOAT,
+        )
+        logger.info(
+            "Qdrant LTM collection created",
+            collection=self._LTM_COLLECTION,
+            dim=self.dim,
+        )
+
+    async def ensure_ltm_collection(self) -> None:
+        """
+        Ensure the user_ltm_memories collection exists with the correct vector dimension.
+        Safe to call on every startup — idempotent.
+        """
+        collections = await self.client.get_collections()
+        existing_names = {c.name for c in collections.collections}
+
+        if self._LTM_COLLECTION not in existing_names:
+            await self._create_ltm_collection()
+            return
+
+        # Validate dimension matches current embedding config
+        info = await self.client.get_collection(self._LTM_COLLECTION)
+        stored_dim: int | None = None
+        vectors_config = info.config.params.vectors
+        if isinstance(vectors_config, VectorParams):
+            stored_dim = vectors_config.size
+        elif isinstance(vectors_config, dict):
+            first_cfg = next(iter(vectors_config.values()), None)
+            if first_cfg is not None:
+                stored_dim = first_cfg.size
+
+        if stored_dim is not None and stored_dim != self.dim:
+            logger.warning(
+                "LTM collection has WRONG dimension — recreating",
+                stored_dim=stored_dim,
+                required_dim=self.dim,
+            )
+            await self.client.delete_collection(self._LTM_COLLECTION)
+            await self._create_ltm_collection()
+        else:
+            logger.info(
+                "Qdrant LTM collection OK",
+                collection=self._LTM_COLLECTION,
+                dim=stored_dim or self.dim,
+            )
+
 
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantManager:
