@@ -414,6 +414,17 @@ async def get_history(
     return history
 
 
+@router.delete("/chat/history/{conversation_id}", summary="Clear chat history for a session")
+async def delete_history(
+    conversation_id: str,
+    current_user: Optional[User] = Depends(get_current_user),
+):
+    """Clear the chat history from memory for a specific conversation ID."""
+    from app.agents.memory import clear_conversation_history
+    await clear_conversation_history(conversation_id)
+    return {"status": "success", "message": "Conversation history cleared"}
+
+
 @router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
 async def sync_memory(
     conversation_id: str,

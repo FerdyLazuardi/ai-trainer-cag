@@ -75,11 +75,12 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         if time_since_active < 5:   # Quick test: check if user was active in last 5 seconds
             await redis.delete(dedup_key)          # release lock so retry can happen
             logger.info(
-                "LTM sync: user still active, aborting",
+                "LTM sync: user still active, deferring task",
                 conversation_id=conversation_id,
                 seconds_since_active=round(time_since_active),
             )
-            return {"status": "aborted", "reason": "still_active"}
+            from arq import Retry
+            raise Retry(defer=10)
 
     # ── Step 3: Get session summary ───────────────────────────────────────────
     from app.agents.memory import get_or_summarize_history
@@ -95,6 +96,7 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
 
     if not summary and not recent_history:
         await redis.delete(dedup_key)
+        await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
         return {"status": "skipped", "reason": "no_history"}
 
     # Prefer the rolling summary; fallback to raw history concat (capped at 1000 chars)
@@ -115,6 +117,7 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     # ── Cleanup ───────────────────────────────────────────────────────────────
     await redis.delete(f"rag:last_active:{conversation_id}")
     await redis.delete(dedup_key)
+    await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
 
     logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
     return {"status": "synced"}

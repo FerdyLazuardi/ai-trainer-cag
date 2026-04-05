@@ -191,8 +191,11 @@ class QdrantLTMService:
         qdrant = get_qdrant_client()
         try:
             from qdrant_client.models import PointStruct
+            # Use deterministic UUID based on session_id so that multiple syncs 
+            # for the same session overwrite the single point.
+            deterministic_id = str(uuid.uuid5(uuid.NAMESPACE_OID, session_id))
             point = PointStruct(
-                id=str(uuid.uuid4()),
+                id=deterministic_id,
                 vector=vector,
                 payload=payload,
             )

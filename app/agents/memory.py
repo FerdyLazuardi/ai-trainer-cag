@@ -41,6 +41,26 @@ async def get_conversation_history(conversation_id: str) -> list[dict]:
         return []
 
 
+async def clear_conversation_history(conversation_id: str) -> None:
+    """
+    Clear conversation history and summary for a given session.
+    """
+    if not conversation_id:
+        return
+
+    redis = get_redis_client()
+    key = _conv_key(conversation_id)
+    summary_key = f"rag:summary:{conversation_id}"
+    last_active_key = f"rag:last_active:{conversation_id}"
+    scheduled_key = f"rag:ltm:scheduled:{conversation_id}"
+
+    try:
+        await redis.delete(key, summary_key, last_active_key, scheduled_key)
+        logger.info("Conversation history cleared", conversation_id=conversation_id)
+    except Exception as exc:
+        logger.warning("Failed to clear conversation history", error=str(exc))
+
+
 async def append_to_history(
     conversation_id: str,
     user_message: str,
