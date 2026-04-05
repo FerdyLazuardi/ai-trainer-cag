@@ -244,10 +244,10 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # Long-term memory section (Sprint 3)
     ltm_section = ""
     if profile.get("summary"):
-        topics_str = ", ".join(profile.get("topics", []))
+        course_names_str = ", ".join(profile.get("course_names", []))
         ltm_section = (
             f"\n\n<user_history>\n"
-            f"User pernah membahas: {topics_str}\n"
+            f"User pernah membahas materi: {course_names_str}\n"
             f"Konteks sesi sebelumnya: {profile['summary']}\n"
             f"</user_history>"
         )

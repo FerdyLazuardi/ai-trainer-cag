@@ -99,17 +99,32 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
         return {"status": "skipped", "reason": "no_history"}
 
-    # Prefer the rolling summary; fallback to raw history concat (capped at 1000 chars)
-    session_summary = summary if summary else " ".join(
-        [m["content"] for m in recent_history]
-    )[:1000]
+    # Generate a definitive session summary for LTM
+    from langchain_core.messages import HumanMessage
+    raw_tail = "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')[:300]}" for m in recent_history])
+    
+    prompt = (
+        "Buatlah ringkasan percakapan berikut dalam 1-2 kalimat pendek berbahasa Indonesia. "
+        "Fokus HANYA pada konteks, fakta inti, atau pertanyaan utama yang dibahas user. "
+        "Jangan memasukkan basa-basi, salam, atau saran pertanyaan lanjutan dari AI.\n\n"
+        f"Konteks Sebelumnya:\n{summary}\n\n"
+        f"Percakapan Terbaru:\n{raw_tail}\n\n"
+        "Ringkasan Sesi:"
+    )
+    
+    try:
+        resp = await cheap_llm.ainvoke([HumanMessage(content=prompt)])
+        session_summary = resp.content.strip()
+    except Exception as exc:
+        logger.warning(f"LTM sync: LLM summarization failed, falling back to raw concat: {exc}")
+        session_summary = summary if summary else raw_tail[:1000]
 
-    # ── Step 4+5: Extract topics + upsert to Qdrant ───────────────────────────
-    # Topic extraction is done inside qdrant_ltm.update() when new_topics=[]
+    # ── Step 4+5: Extract course names + upsert to Qdrant ───────────────────────────
+    # Course name extraction is done inside qdrant_ltm.update() when new_course_names=[]
     await qdrant_ltm.update(
         user_id=user_id,
         session_summary=session_summary,
-        new_topics=[],          # let _extract_topics() handle this via llm=
+        new_course_names=[],          # let _extract_course_names() handle this via llm=
         session_id=conversation_id,
         llm=cheap_llm,
     )

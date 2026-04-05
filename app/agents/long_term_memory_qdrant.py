@@ -32,7 +32,7 @@ from app.database.qdrant_client import get_qdrant_client
 
 _LTM_COLLECTION = "user_ltm_memories"
 _LTM_TOP_K = 2          # retrieve at most 2 past episodes per request
-_MAX_TOPICS = 15        # cap topics stored per episode
+_MAX_COURSE_NAMES = 3        # cap course names stored per episode
 
 
 class QdrantLTMService:
@@ -75,17 +75,17 @@ class QdrantLTMService:
         Returns:
             {
                 "summary": "<compact multi-episode context>",
-                "topics":  ["topic1", "topic2", ...]
+                "course_names":  ["Course A", "Course B", ...]
             }
         """
         if not is_real_user(user_id=user_id, role="moodle_user"):
-            return {"summary": "", "topics": []}
+            return {"summary": "", "course_names": []}
 
         try:
             query_vector = await self._embed(query)
         except Exception as exc:
             logger.warning("LTM: failed to embed query for retrieval", error=str(exc))
-            return {"summary": "", "topics": []}
+            return {"summary": "", "course_names": []}
 
         qdrant = get_qdrant_client()
         try:
@@ -99,53 +99,53 @@ class QdrantLTMService:
             results = response.points
         except Exception as exc:
             logger.warning("LTM: Qdrant search failed", user_id=user_id, error=str(exc))
-            return {"summary": "", "topics": []}
+            return {"summary": "", "course_names": []}
 
         if not results:
             logger.debug("LTM: no past episodes found", user_id=user_id)
-            return {"summary": "", "topics": []}
+            return {"summary": "", "course_names": []}
 
         # Aggregate episodes into compact context — one sentence per episode
         episode_lines: list[str] = []
-        all_topics: list[str] = []
+        all_course_names: list[str] = []
 
         for hit in results:
             payload = hit.payload or {}
             ep_summary = payload.get("session_summary", "").strip()
-            ep_topics: list[str] = payload.get("topics", [])
+            ep_course_names: list[str] = payload.get("course_names", [])
 
             if ep_summary:
                 episode_lines.append(f"- {ep_summary}")
-            all_topics.extend(ep_topics)
+            all_course_names.extend(ep_course_names)
 
         if not episode_lines:
-            return {"summary": "", "topics": []}
+            return {"summary": "", "course_names": []}
 
-        # Deduplicate topics while preserving order
+        # Deduplicate course names while preserving order
         seen: set[str] = set()
-        unique_topics: list[str] = []
-        for t in all_topics:
+        unique_course_names: list[str] = []
+        for t in all_course_names:
             if t not in seen:
                 seen.add(t)
-                unique_topics.append(t)
+                unique_course_names.append(t)
 
         combined_summary = "\n".join(episode_lines)
         logger.info(
             "LTM: loaded semantic episodes",
             user_id=user_id,
             episodes=len(episode_lines),
-            topics=len(unique_topics),
+            course_names=len(unique_course_names),
         )
         return {
             "summary": combined_summary,
-            "topics": unique_topics[:_MAX_TOPICS],
+            "course_names": unique_course_names[:_MAX_COURSE_NAMES],
         }
 
     async def update(
         self,
         user_id: str,
         session_summary: str,
-        new_topics: list[str],
+        new_course_names: list[str],
         session_id: str,
         llm=None,
     ) -> None:
@@ -159,19 +159,19 @@ class QdrantLTMService:
         Args:
             user_id:         Moodle user identifier.
             session_summary: Summarised text of the session (from STM worker).
-            new_topics:      Topics extracted by the caller (or empty list).
+            new_course_names:Course names extracted by the caller (or empty list).
             session_id:      conversation_id for deduplication & audit.
-            llm:             Optional cheap LLM for topic extraction fallback.
+            llm:             Optional cheap LLM for course name extraction fallback.
         """
         if not is_real_user(user_id=user_id, role="moodle_user"):
             return
         if not session_summary or not session_summary.strip():
             return
 
-        # Extract topics if not supplied
-        topics = new_topics or []
-        if not topics and llm:
-            topics = await self._extract_topics(session_summary, llm)
+        # Extract course names if not supplied
+        course_names = new_course_names or []
+        if not course_names and llm:
+            course_names = await self._extract_course_names(session_summary, llm)
 
         # Embed the session summary
         try:
@@ -183,7 +183,7 @@ class QdrantLTMService:
         payload = {
             "user_id": user_id,
             "session_summary": session_summary[:2000],   # hard cap for safety
-            "topics": topics[:_MAX_TOPICS],
+            "course_names": course_names[:_MAX_COURSE_NAMES],
             "session_id": session_id,
             "created_at": time.time(),                   # float epoch for index
         }
@@ -208,31 +208,32 @@ class QdrantLTMService:
                 "LTM: episode persisted to Qdrant",
                 user_id=user_id,
                 session_id=session_id,
-                topics=len(topics),
+                course_names=len(course_names),
             )
         except Exception as exc:
             logger.warning("LTM: Qdrant upsert failed", user_id=user_id, error=str(exc))
 
-    async def _extract_topics(self, summary: str, llm) -> list[str]:
+    async def _extract_course_names(self, summary: str, llm) -> list[str]:
         """
-        Use the cheap LLM to extract a short list of topic keywords from the summary.
-        Returns a list of short strings (max 15 topics).
+        Use the cheap LLM to extract a short list of Course Names from the summary.
+        Returns a list of short strings (max 3 course names).
         Falls back to empty list on error.
         """
         try:
             from langchain_core.messages import HumanMessage
             prompt = (
-                "Extract the main topics from the following conversation summary. "
-                "Return ONLY a comma-separated list of short topic keywords (max 15 items). "
-                "No explanations, no numbering — just keywords.\n\n"
-                f"Summary:\n{summary}\n\nTopics:"
+                "Ekstrak Nama Materi (Course Name) yang dibahas dari ringkasan percakapan berikut. "
+                "Contoh Course Name yang valid: 'Product Knowledge Amartha', 'Client Protection', dsb. "
+                "Kembalikan HANYA maksimal 3 Nama Materi yang dipisahkan dengan koma. "
+                "Tanpa penjelasan, tanpa nomor, tulis nama aslinya saja.\n\n"
+                f"Ringkasan:\n{summary}\n\nNama Materi:"
             )
             resp = await llm.ainvoke([HumanMessage(content=prompt)])
             raw = resp.content.strip()
-            topics = [t.strip() for t in raw.split(",") if t.strip()]
-            return topics[:_MAX_TOPICS]
+            course_names = [t.strip() for t in raw.split(",") if t.strip()]
+            return course_names[:_MAX_COURSE_NAMES]
         except Exception as exc:
-            logger.warning("LTM: topic extraction failed", error=str(exc))
+            logger.warning("LTM: course name extraction failed", error=str(exc))
             return []
 
 

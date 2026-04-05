@@ -154,7 +154,7 @@ async def chat(
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
 
-    ltm_profile = {"summary": "", "topics": []}
+    ltm_profile = {"summary": "", "course_names": []}
 
     if ltm_eligible:
         ltm_profile = await qdrant_ltm.load(user_id=user_id, query=resolved_query)
@@ -162,7 +162,7 @@ async def chat(
             logger.info(
                 "LTM profile loaded (semantic)",
                 user_id=user_id,
-                topics=len(ltm_profile.get("topics", [])),
+                course_names=len(ltm_profile.get("course_names", [])),
             )
         else:
             logger.debug("No relevant LTM episodes found for user", user_id=user_id)
