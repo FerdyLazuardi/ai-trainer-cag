@@ -13,6 +13,7 @@ from loguru import logger
 from app.config.settings import get_settings
 
 _initialized = False
+_last_chunk_config = (0, 0)
 
 
 def ensure_llamaindex_configured(
@@ -68,8 +69,11 @@ def ensure_llamaindex_configured(
             raise
 
     # ── Splitter (re-configurable per ingestion call) ───────────────────
-    Settings.text_splitter = TokenTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-    logger.debug("Text splitter configured", chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    global _last_chunk_config
+    if _last_chunk_config != (chunk_size, chunk_overlap):
+        Settings.text_splitter = TokenTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        logger.debug("Text splitter configured", chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        _last_chunk_config = (chunk_size, chunk_overlap)

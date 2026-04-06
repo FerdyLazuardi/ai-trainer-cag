@@ -280,7 +280,77 @@ body {
     height: 40px;
     border-radius: 50%;
     cursor: pointer;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.send-btn.cancel-mode {
+    background: #94a3b8;
 }
 
 #chat-messages::-webkit-scrollbar { width: 4px; }
 #chat-messages::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+/* ================= STREAMING CURSOR ================= */
+.streaming-cursor-inline {
+    display: inline-block;
+    animation: blink-cursor 0.8s step-end infinite;
+    color: var(--primary-color);
+    font-weight: 800;
+    margin-left: 2px;
+    vertical-align: baseline;
+}
+
+@keyframes blink-cursor {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* Smooth bubble growth during streaming */
+.bubble.ai.streaming {
+    transition: none;
+}
+
+.bubble.ai .content {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* ================= CODE BLOCKS IN CHAT ================= */
+.bubble .content pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 6px 0;
+}
+
+.bubble .content code {
+    font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12.5px;
+}
+
+.bubble .content p code,
+.bubble .content li code {
+    background: #f1f5f9;
+    color: #7D50A1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* ================= STREAMING STATUS INDICATOR ================= */
+.stream-status {
+    font-size: 10px;
+    color: #94a3b8;
+    padding: 2px 8px;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.stream-status.visible {
+    opacity: 1;
+}

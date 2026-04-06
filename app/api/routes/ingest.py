@@ -7,7 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from arq import create_pool
-from arq.connections import RedisSettings
+from arq.connections import RedisSettings, ArqRedis
 
 from app.api.schemas import IngestRequest, IngestResponse
 from app.database.postgres import get_db, AsyncSessionLocal
@@ -20,14 +20,23 @@ from app.api.auth import get_current_user, User
 router = APIRouter()
 settings = get_settings()
 
-async def get_arq_redis():
-    """Returns an arq pool connected to Redis."""
-    return await create_pool(RedisSettings(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        database=settings.redis_db,
-        password=settings.redis_password if settings.redis_password else None,
-    ))
+# ── ARQ Singleton Pool ────────────────────────────────────────────────────────
+# A single, long-lived pool shared across all requests instead of creating a
+# new TCP connection per enqueue call (prevents Redis connection exhaustion).
+_arq_pool: ArqRedis | None = None
+
+async def get_arq_redis() -> ArqRedis:
+    """Return the shared singleton ARQ Redis pool, creating it on first call."""
+    global _arq_pool
+    if _arq_pool is None:
+        _arq_pool = await create_pool(RedisSettings(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            database=settings.redis_db,
+            password=settings.redis_password if settings.redis_password else None,
+        ))
+        logger.info("ARQ Redis pool created (singleton)")
+    return _arq_pool
 
 # ... (keep existing ingest endpoint) ...
 @router.post("/ingest", response_model=IngestResponse, summary="Ingest a document into the RAG system")
@@ -129,7 +138,7 @@ async def moodle_sync(
         target_sections=request.target_sections,
         force_reingest=request.force_reingest
     )
-    await redis.close()
+    # Note: do NOT close the pool — it's a shared singleton
 
     return MoodleSyncResponse(
         message="Moodle sync task has been successfully enqueued to the persistent background worker."
@@ -147,7 +156,7 @@ async def enqueue_dummy_task(
     logger.info(f"Dummy task enqueued by user: {current_user.username}")
     redis = await get_arq_redis()
     job = await redis.enqueue_job('dummy_task', name=name)
-    await redis.close()
+    # Note: do NOT close the pool — it's a shared singleton
     return {"message": f"Dummy task enqueued for {name}", "job_id": job.job_id}
 
 

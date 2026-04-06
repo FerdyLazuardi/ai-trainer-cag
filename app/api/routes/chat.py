@@ -1,35 +1,44 @@
-"""
-POST /chat endpoint — the primary RAG pipeline entrypoint.
-
-Langfuse v4 Tracing Strategy (CLEAN DASHBOARD):
-- ONE root trace per user request using start_as_current_observation()
-- All LangGraph sub-operations (classifier, rag_node, generate_node, ChatOpenAI)
-  are nested INSIDE that single root trace.
-- Dashboard shows only 1 row per user request; click to see full detail.
-- Cache hits also get their own single trace tagged "cache_hit".
-"""
+import asyncio
+import json
 import time
 import uuid
+import datetime
 from typing import Optional
+from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.memory import append_to_history, get_conversation_history, resolve_numeric_query
+# Moved inline imports to file-level
+from langchain_core.messages import HumanMessage, AIMessage
+from langfuse import get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
+
+from app.agents.memory import (
+    append_to_history,
+    get_conversation_history,
+    resolve_numeric_query,
+    get_or_summarize_history,
+    clear_conversation_history
+)
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
-from app.database.models import AgentLog
-from app.database.postgres import get_db, AsyncSessionLocal
+from app.database.postgres import get_db
 from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
 from app.observability import get_langfuse_client
 from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
+from app.llm.client import get_cheap_llm
+from app.api.user_utils import is_real_user
+from app.agents.long_term_memory_qdrant import qdrant_ltm
+from app.database.redis_client import get_redis_client
+from app.api.routes.ingest import get_arq_redis
 
 router = APIRouter()
 settings = get_settings()
-
 
 def _flush_langfuse():
     """Background: flush Langfuse so traces are sent immediately."""
@@ -40,95 +49,59 @@ def _flush_langfuse():
         except Exception as e:
             logger.warning(f"Langfuse flush error: {e}")
 
+async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
+    redis_client = get_redis_client()
+    # Update last_active timestamp on every message (rolling window)
+    await redis_client.set(f"rag:last_active:{conv_id}", str(time.time()), ex=86400)
 
-@router.post("/chat", response_model=ChatResponse, summary="Ask a question using the RAG pipeline")
-async def chat(
-    request: ChatRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ChatResponse:
-    """
-    Process a user query through the full Hybrid RAG pipeline.
-    Creates exactly ONE Langfuse trace per request (clean dashboard).
-    Click any trace to see all internal steps nested inside.
-    """
-    start_time = time.perf_counter()
-    conversation_id = request.conversation_id or str(uuid.uuid4())
+    # Deduplication: only enqueue if no task is already queued for this conversation
+    sched_key = f"rag:ltm:scheduled:{conv_id}"
+    already_scheduled = await redis_client.exists(sched_key)
+    if already_scheduled:
+        logger.debug("AFK LTM sync already scheduled, skipping", conversation_id=conv_id)
+        return
 
-    # Resolve numeric query to follow-up question if applicable
-    resolved_query = await resolve_numeric_query(request.query, conversation_id)
+    try:
+        arq_redis = await get_arq_redis()
+        await arq_redis.enqueue_job(
+            'sync_ltm_task',
+            conv_id,
+            u_id,
+            _defer_by=datetime.timedelta(seconds=10)
+        )
+        await arq_redis.close()
+        # Mark as scheduled (TTL slightly > 10s so key covers the defer window)
+        await redis_client.set(sched_key, "1", ex=60)
+        logger.debug("AFK LTM sync scheduled", conversation_id=conv_id)
+    except Exception as e:
+        logger.warning(f"Failed to schedule AFK LTM sync: {e}")
 
-    logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
+async def _verify_conversation_ownership(conversation_id: str, current_user: User):
+    """Ensure the user owns this conversation before accessing history."""
+    redis = get_redis_client()
+    owner_key = f"rag:conv_owner:{conversation_id}"
+    stored_owner = await redis.get(owner_key)
+    if stored_owner:
+        if stored_owner != current_user.user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
+    else:
+        # If no owner is stored, set the current user as owner
+        await redis.set(owner_key, current_user.user_id, ex=86400*7) # Expire in 7 days
 
-    # ── 1. Cache check ────────────────────────────────────────────────────
+async def _prepare_rag_context(
+    request: ChatRequest, 
+    current_user: User, 
+    conversation_id: str,
+    resolved_query: str
+) -> dict:
+    """Shared context preparation for both /chat and /chat/stream."""
+    
+    # Check cache first
     cached = await get_cached_response(resolved_query, course_id=request.course_id)
     if cached:
-        latency_ms = (time.perf_counter() - start_time) * 1000
+        return {"cached": cached}
 
-        # Official Langfuse v4 context manager pattern (from langfuse.com/docs/observability/sdk/instrumentation)
-        try:
-            from langfuse import get_client, propagate_attributes
-            langfuse = get_client()  # use the official global client, not the custom singleton
-            with langfuse.start_as_current_observation(
-                as_type="generation",
-                name="peped-chat",
-                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
-            ) as root_obs:
-                with propagate_attributes(
-                    trace_name="peped-chat",  # this is what sets the label in the dashboard
-                    session_id=conversation_id,
-                    user_id=conversation_id,
-                    tags=["api-chat", settings.app_env, "cache-hit"],
-                ):
-                    root_obs.update(
-                        output=cached["answer"],
-                        usage={"input": 0, "output": 0},
-                        metadata={
-                            "latency_ms": round(latency_ms, 2),
-                            "cache_hit": True,
-                            "env": settings.app_env,
-                        },
-                    )
-        except Exception as e:
-            logger.warning(f"Langfuse cache-hit trace failed: {e}")
-
-        background_tasks.add_task(_flush_langfuse)
-
-        background_tasks.add_task(
-            batch_logger.add_log,
-            {
-                "conversation_id": conversation_id,
-                "query": request.query,
-                "rewritten_query": resolved_query,
-                "answer": cached["answer"],
-                "chunks_retrieved": 0,
-                "latency_ms": round(latency_ms, 2),
-                "cache_hit": True,
-            }
-        )
-
-        # FIX: Append to history EVEN for cache hits, so follow-up queries aren't stuck on old context
-        await append_to_history(
-            conversation_id=conversation_id,
-            user_message=resolved_query,
-            assistant_message=cached["answer"],
-        )
-
-        return ChatResponse(
-            answer=cached["answer"],
-            sources=[SourceReference(**s) for s in cached["sources"]],
-            conversation_id=conversation_id,
-            resolved_query=resolved_query if resolved_query != request.query else None,
-            cached=True,
-            latency_ms=round(latency_ms, 2),
-        )
-
-    # ── 2. Build message history ──────────────────────────────────────────
-    from langchain_core.messages import HumanMessage, AIMessage
-    from app.agents.memory import get_or_summarize_history
-    from app.llm.client import get_cheap_llm
-
+    # Build message history
     summary, recent_history = await get_or_summarize_history(
         conversation_id=conversation_id,
         llm=get_cheap_llm(),
@@ -143,54 +116,116 @@ async def chat(
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
 
-    # ── 2b. Long-Term Memory (LTM): Semantic per-request retrieval ──────────
-    # Uses QdrantLTMService: embeds the current query and retrieves the top-2
-    # most semantically relevant past episodes for this user.
-    # Per-request retrieval (not just new_session) ensures the most relevant
-    # context is always injected, regardless of session state.
-    from app.api.user_utils import is_real_user
-    from app.agents.long_term_memory_qdrant import qdrant_ltm
-
+    # Long-Term Memory (LTM)
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
-
     ltm_profile = {"summary": "", "course_names": []}
 
     if ltm_eligible:
         ltm_profile = await qdrant_ltm.load(user_id=user_id, query=resolved_query)
-        if ltm_profile["summary"]:
-            logger.info(
-                "LTM profile loaded (semantic)",
-                user_id=user_id,
-                course_names=len(ltm_profile.get("course_names", [])),
-            )
-        else:
-            logger.debug("No relevant LTM episodes found for user", user_id=user_id)
 
-    rag_graph = get_rag_graph()
     initial_state = {
         "messages": messages,
         "conversation_id": conversation_id,
         "conversation_summary": summary,
         "user_profile": ltm_profile,
     }
+    
+    return {"cached": None, "initial_state": initial_state}
 
-    # ── 3. Run RAG pipeline inside a SINGLE Langfuse trace ────────────────
-    #
-    # Official Langfuse v4 context manager pattern:
-    # https://langfuse.com/docs/observability/sdk/instrumentation#context-manager
-    #
-    #   langfuse = get_client()   ← must use the official get_client(), not custom singleton
-    #   with langfuse.start_as_current_observation(as_type="span", name="...") as obs:
-    #       with propagate_attributes(trace_name="...", session_id=..., user_id=...):
-    #           handler = CallbackHandler()   ← inherits the active OTel context automatically
-    #           result = await graph.ainvoke(..., config={"callbacks": [handler]})
-    #
-    # trace_name in propagate_attributes = the display name in the Langfuse dashboard.
-    # All LangGraph sub-steps nest inside ONE trace row. Token usage visible in detail.
+def _extract_sources(retrieved_context: list) -> list:
+    sources = []
+    if retrieved_context:
+        for c in retrieved_context:
+            if c.get("source") and c.get("source") != "Unknown":
+                sources.append({
+                    "chunk_id": c.get("chunk_id") or str(uuid.uuid4()),
+                    "document_id": c.get("document_id") or "Unknown",
+                    "source": c.get("source"),
+                    "title": c.get("course_name") or c.get("title") or "Unknown",
+                    "chunk_index": c.get("chunk_index") or 0,
+                    "score": c.get("score") or 0.0,
+                })
+    return sources
 
-    from langfuse.langchain import CallbackHandler
-    from langfuse import get_client, propagate_attributes
+def _auto_detect_course_id(retrieved_context: list, request_course_id: Optional[int]) -> Optional[int]:
+    effective_course_id = request_course_id
+    if effective_course_id in (None, 0) and retrieved_context:
+        cids = [c.get("course_id") for c in retrieved_context if c.get("course_id") not in (None, "", 0)]
+        if cids:
+            try:
+                effective_course_id = int(Counter(cids).most_common(1)[0][0])
+            except (ValueError, TypeError):
+                pass
+    return effective_course_id
+
+
+@router.post("/chat", response_model=ChatResponse, summary="Ask a question using the RAG pipeline")
+async def chat(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChatResponse:
+    start_time = time.perf_counter()
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    await _verify_conversation_ownership(conversation_id, current_user)
+
+    resolved_query = await resolve_numeric_query(request.query, conversation_id)
+    logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
+
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    cached = context.get("cached")
+
+    if cached:
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        try:
+            langfuse = get_client()
+            with langfuse.start_as_current_observation(
+                as_type="generation",
+                name="peped-chat",
+                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
+            ) as root_obs:
+                with propagate_attributes(
+                    trace_name="peped-chat",
+                    session_id=conversation_id,
+                    user_id=current_user.user_id,
+                    tags=["api-chat", settings.app_env, "cache-hit"],
+                ):
+                    root_obs.update(
+                        output=cached["answer"],
+                        usage={"input": 0, "output": 0},
+                        metadata={"latency_ms": round(latency_ms, 2), "cache_hit": True, "env": settings.app_env},
+                    )
+        except Exception as e:
+            logger.warning(f"Langfuse cache-hit trace failed: {e}")
+
+        background_tasks.add_task(_flush_langfuse)
+        background_tasks.add_task(
+            batch_logger.add_log,
+            {
+                "conversation_id": conversation_id,
+                "query": request.query,
+                "rewritten_query": resolved_query,
+                "answer": cached["answer"],
+                "chunks_retrieved": 0,
+                "latency_ms": round(latency_ms, 2),
+                "cache_hit": True,
+            }
+        )
+        await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+
+        return ChatResponse(
+            answer=cached["answer"],
+            sources=[SourceReference(**s) for s in cached["sources"]],
+            conversation_id=conversation_id,
+            resolved_query=resolved_query if resolved_query != request.query else None,
+            cached=True,
+            latency_ms=round(latency_ms, 2),
+        )
+
+    initial_state = context["initial_state"]
+    rag_graph = get_rag_graph()
 
     langfuse_handler = None
     trace_id = None
@@ -204,7 +239,7 @@ async def chat(
         with propagate_attributes(
             trace_name="peped-chat",
             session_id=conversation_id,
-            user_id=conversation_id,
+            user_id=current_user.user_id,
             tags=["api-chat", settings.app_env],
             metadata={
                 "cache_hit": False,
@@ -213,33 +248,21 @@ async def chat(
                 "resolved_query": resolved_query,
             }
         ):
-            # NO wrapper observation here!
-            # The CallbackHandler natively creates a TRACE (like in the LangGraph screenshot)
-            # This TRACE natively tracks duration, cost, and tokens accurately.
             langfuse_handler = CallbackHandler()
-
             result = await rag_graph.ainvoke(
                 initial_state,
-                config={
-                    "run_name": "peped-chat",
-                    "callbacks": [langfuse_handler],
-                },
+                config={"run_name": "peped-chat", "callbacks": [langfuse_handler]},
             )
 
-            # Compute latency
             latency_ms = (time.perf_counter() - start_time) * 1000
-
-            # Get final answer
             final_message = result["messages"][-1]
             answer = final_message.content if hasattr(final_message, "content") else str(final_message)
 
-            # Override the trace I/O from raw state to clean query/answer
             langfuse.set_current_trace_io(
                 input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
                 output={"answer": answer}
             )
 
-        # Capture trace_id for scoring
         if hasattr(langfuse_handler, "last_trace_id"):
             trace_id = langfuse_handler.last_trace_id
 
@@ -248,12 +271,14 @@ async def chat(
         background_tasks.add_task(_flush_langfuse)
         raise HTTPException(status_code=500, detail="RAG pipeline failed") from exc
 
-    # ── 4. Extract retrieval info from state ──────────────────────────────
-    rewritten_query = resolved_query
+    rewritten_query = result.get("rewritten_query") or resolved_query
+    resolved_query = rewritten_query
+    intent = result.get("intent", "KNOWLEDGE")
+    
     actual_chunks = 0
     max_chunk_score = None
-
     retrieved_context = result.get("retrieved_context") or []
+    
     if retrieved_context:
         real_chunks = [c for c in retrieved_context if c.get("source") not in (None, "", "None")]
         actual_chunks = len(real_chunks) if real_chunks else len(retrieved_context)
@@ -261,86 +286,45 @@ async def chat(
         if scores:
             max_chunk_score = max(scores)
 
-    # ── 4.1 Auto-detect course_id from retrieved chunks ───────────────────
-    # If user didn't send course_id (or sent 0 from test UI), extract it from the 
-    # Knowledge_Base chunk metadata (each point in Qdrant KB has course_id in payload).
-    effective_course_id = request.course_id
-    if effective_course_id in (None, 0) and retrieved_context:
-        # Pick the most frequent course_id from top chunks (majority vote)
-        from collections import Counter
-        cids = [
-            c.get("course_id") for c in retrieved_context
-            if c.get("course_id") not in (None, "", 0)
-        ]
-        if cids:
-            most_common = Counter(cids).most_common(1)[0][0]
-            try:
-                effective_course_id = int(most_common)
-            except (ValueError, TypeError):
-                pass
-            logger.info("Auto-detected course_id from chunks", course_id=effective_course_id)
+    effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
+    sources = _extract_sources(retrieved_context)
 
-    # ── 5. Log Retriever Score to Langfuse ────────────────────────────────
-    if trace_id and max_chunk_score is not None:
+    if trace_id and retrieved_context:
         try:
             from langfuse import get_client as _get_lf
             _lf = _get_lf()
-            logger.info(f"Submitting max_chunk_score={max_chunk_score} to trace_id={trace_id}")
-            _lf.score(
-                trace_id=trace_id,
-                name="retriever_max_score",
-                value=float(max_chunk_score),
-            )
+
+            # ── Hybrid scores (pre-Cohere, raw LlamaIndex dense+BM25) ──
+            hybrid_scores = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
+            # ── Cohere scores (post-rerank) — same as final .score ──
+            cohere_scores  = [c.get("cohere_score") for c in retrieved_context if isinstance(c.get("cohere_score"), (int, float))]
+
+            if hybrid_scores:
+                _lf.score(trace_id=trace_id, name="retriever_hybrid_max",  value=round(max(hybrid_scores), 4))
+                _lf.score(trace_id=trace_id, name="retriever_hybrid_avg",  value=round(sum(hybrid_scores) / len(hybrid_scores), 4))
+            if cohere_scores:
+                _lf.score(trace_id=trace_id, name="retriever_cohere_max",  value=round(max(cohere_scores), 4))
+                _lf.score(trace_id=trace_id, name="retriever_cohere_avg",  value=round(sum(cohere_scores) / len(cohere_scores), 4))
+            if max_chunk_score is not None:
+                _lf.score(trace_id=trace_id, name="retriever_max_score",   value=float(max_chunk_score))
         except Exception as e:
-            logger.warning(f"Failed to submit Langfuse score: {e}")
+            logger.warning(f"Failed to submit Langfuse retrieval scores: {e}")
 
-    # ── 6. Flush Langfuse in background ───────────────────────────────────
     background_tasks.add_task(_flush_langfuse)
-
-    # ── 7. Store cache + conversation memory ──────────────────────────────
-    # Map retrieved context to SourceReference objects for the response
-    sources = []
-    if retrieved_context:
-        for c in retrieved_context:
-            # Only include chunks that have a source (avoid empty/placeholder chunks)
-            if c.get("source") and c.get("source") != "Unknown":
-                sources.append(
-                    SourceReference(
-                        chunk_id=c.get("chunk_id") or str(uuid.uuid4()),
-                        document_id=c.get("document_id") or "Unknown",
-                        source=c.get("source"),
-                        title=c.get("course_name") or c.get("title") or "Unknown",
-                        chunk_index=c.get("chunk_index") or 0,
-                        score=c.get("score") or 0.0,
-                    )
-                )
-
-    background_tasks.add_task(
-        set_cached_response,
-        query=resolved_query,
-        answer=answer,
-        sources=[s.model_dump() for s in sources],    )
-
-    background_tasks.add_task(
-        set_cached_response,
-        query=resolved_query,
-        answer=answer,
-        sources=[s.model_dump() for s in sources],
-        course_id=effective_course_id,
-    )
+    if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS"):
+        background_tasks.add_task(
+            set_cached_response,
+            query=resolved_query,
+            answer=answer,
+            sources=sources, # we can pass dict directly since the schema validation handles it
+            course_id=effective_course_id,
+        )
     background_tasks.add_task(
         append_to_history,
         conversation_id=conversation_id,
         user_message=resolved_query,
         assistant_message=answer,
     )
-
-    # ── 7b. Long-Term Memory (LTM) Architecture ─────────────────────────
-    # LTM updates are no longer performed per-turn to optimize cost and latency.
-    # Synchronization is now handled by a background worker after a 30-minute
-    # period of user inactivity (AFK), utilizing cost-efficient models (Gemini Flash).
-
-    # ── 8. Log to PostgreSQL ──────────────────────────────────────────────
     background_tasks.add_task(
         batch_logger.add_log,
         {
@@ -353,7 +337,7 @@ async def chat(
             "cache_hit": False,
         }
     )
-
+    
     logger.info(
         "Chat response sent",
         query=request.query[:60],
@@ -362,47 +346,11 @@ async def chat(
         max_chunk_score=max_chunk_score,
     )
     
-    # ── 9. Schedule AFK LTM Sync (30 minutes, deduplicated) ─────────────────
-    # One deferred arq task per conversation — dedup via Redis NX key.
-    # If user sends multiple messages, only ONE task reaches the worker;
-    # all others are skipped via the dedup_key guard in sync_ltm_task.
-    async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
-        from app.database.redis_client import get_redis_client
-        from app.api.routes.ingest import get_arq_redis
-        import time
-        import datetime
-
-        redis_client = get_redis_client()
-        # Update last_active timestamp on every message (rolling window)
-        await redis_client.set(f"rag:last_active:{conv_id}", str(time.time()), ex=86400)
-
-        # Deduplication: only enqueue if no task is already queued for this conversation
-        sched_key = f"rag:ltm:scheduled:{conv_id}"
-        already_scheduled = await redis_client.exists(sched_key)
-        if already_scheduled:
-            logger.debug("AFK LTM sync already scheduled, skipping", conversation_id=conv_id)
-            return
-
-        try:
-            arq_redis = await get_arq_redis()
-            await arq_redis.enqueue_job(
-                'sync_ltm_task',
-                conv_id,
-                u_id,
-                _defer_by=datetime.timedelta(seconds=10)
-            )
-            await arq_redis.close()
-            # Mark as scheduled (TTL slightly > 10s so key covers the defer window)
-            await redis_client.set(sched_key, "1", ex=60)
-            logger.debug("AFK LTM sync scheduled", conversation_id=conv_id)
-        except Exception as e:
-            logger.warning(f"Failed to schedule AFK LTM sync: {e}")
-
     background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
 
     return ChatResponse(
         answer=answer,
-        sources=sources,
+        sources=[SourceReference(**s) for s in sources],
         conversation_id=conversation_id,
         resolved_query=resolved_query if resolved_query != request.query else None,
         cached=False,
@@ -415,9 +363,9 @@ async def get_history(
     conversation_id: str,
     current_user: Optional[User] = Depends(get_current_user),
 ) -> list[dict]:
-    """Retrieve the chat history from memory for a specific conversation ID."""
-    history = await get_conversation_history(conversation_id)
-    return history
+    if current_user:
+        await _verify_conversation_ownership(conversation_id, current_user)
+    return await get_conversation_history(conversation_id)
 
 
 @router.delete("/chat/history/{conversation_id}", summary="Clear chat history for a session")
@@ -425,8 +373,8 @@ async def delete_history(
     conversation_id: str,
     current_user: Optional[User] = Depends(get_current_user),
 ):
-    """Clear the chat history from memory for a specific conversation ID."""
-    from app.agents.memory import clear_conversation_history
+    if current_user:
+        await _verify_conversation_ownership(conversation_id, current_user)
     await clear_conversation_history(conversation_id)
     return {"status": "success", "message": "Conversation history cleared"}
 
@@ -437,37 +385,156 @@ async def sync_memory(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Deprecated: Frontend trigger for LTM sync is no longer required.
-    LTM is now automatically handled by the AFK 30-minute worker.
-    """
     return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
-tional[User] = Depends(get_current_user),
-) -> list[dict]:
-    """Retrieve the chat history from memory for a specific conversation ID."""
-    history = await get_conversation_history(conversation_id)
-    return history
 
 
-@router.delete("/chat/history/{conversation_id}", summary="Clear chat history for a session")
-async def delete_history(
-    conversation_id: str,
-    current_user: Optional[User] = Depends(get_current_user),
-):
-    """Clear the chat history from memory for a specific conversation ID."""
-    from app.agents.memory import clear_conversation_history
-    await clear_conversation_history(conversation_id)
-    return {"status": "success", "message": "Conversation history cleared"}
-
-
-@router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
-async def sync_memory(
-    conversation_id: str,
-    background_tasks: BackgroundTasks,
+@router.post("/chat/stream", summary="Stream a RAG response via Server-Sent Events")
+async def chat_stream(
+    request: ChatRequest,
+    req: Request,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Deprecated: Frontend trigger for LTM sync is no longer required.
-    LTM is now automatically handled by the AFK 30-minute worker.
-    """
-    return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
+    start_time = time.perf_counter()
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    await _verify_conversation_ownership(conversation_id, current_user)
+
+    resolved_query = await resolve_numeric_query(request.query, conversation_id)
+    logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
+
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    cached = context.get("cached")
+
+    if cached:
+        async def _stream_cached():
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            if resolved_query != request.query:
+                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+            words = cached["answer"].split(" ")
+            chunk_size = 4
+            for i in range(0, len(words), chunk_size):
+                chunk = " ".join(words[i:i + chunk_size])
+                if i > 0:
+                    chunk = " " + chunk
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+                await asyncio.sleep(0.02)
+
+            sources_list = list(cached.get("sources", []))
+            yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
+
+            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+
+        return StreamingResponse(_stream_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    initial_state = context["initial_state"]
+    rag_graph = get_rag_graph()
+
+    async def _stream_rag():
+        nonlocal resolved_query
+        full_answer = ""
+        retrieved_context = []
+        intent = "KNOWLEDGE"
+
+        try:
+            langfuse = get_client()
+            with propagate_attributes(
+                trace_name="peped-chat-stream",
+                session_id=conversation_id,
+                user_id=current_user.user_id,
+                tags=["api-chat-stream", settings.app_env],
+                metadata={
+                    "cache_hit": False,
+                    "env": settings.app_env,
+                    "original_query": request.query,
+                    "resolved_query": resolved_query,
+                    "streaming": True,
+                }
+            ):
+                langfuse_handler = CallbackHandler()
+                config = {"run_name": "peped-chat-stream", "callbacks": [langfuse_handler]}
+
+                if resolved_query != request.query:
+                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
+                    kind = event.get("event", "")
+
+                    if kind == "on_chain_end" and event.get("name") == "rag_node":
+                        output = event.get("data", {}).get("output", {})
+                        if isinstance(output, dict) and "retrieved_context" in output:
+                            retrieved_context = output["retrieved_context"] or []
+
+                    if kind == "on_chain_end" and event.get("name") == "pre_processor":
+                        output = event.get("data", {}).get("output", {})
+                        if isinstance(output, dict):
+                            if "intent" in output:
+                                intent = output.get("intent")
+                            if "rewritten_query" in output:
+                                new_rewrite = output.get("rewritten_query")
+                                if new_rewrite and new_rewrite != resolved_query:
+                                    resolved_query = new_rewrite
+                                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                    if kind == "on_chat_model_stream":
+                        node_name = event.get("metadata", {}).get("langgraph_node")
+                        if node_name in ("generate_node", "greeting", "ambiguity", "malicious"):
+                            chunk = event.get("data", {}).get("chunk")
+                            if chunk and hasattr(chunk, "content") and chunk.content:
+                                token = chunk.content
+                                full_answer += token
+                                yield f"data: {json.dumps({'token': token})}\n\n"
+
+                if await req.is_disconnected():
+                    logger.info("Client disconnected during stream", conversation_id=conversation_id)
+                    return
+
+        except Exception as exc:
+            logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
+            yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
+            return
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        sources = _extract_sources(retrieved_context)
+
+        # ── Langfuse: log hybrid + Cohere scores for stream endpoint ──
+        try:
+            langfuse_stream = get_client()
+            cur_trace_id = getattr(langfuse_handler, "last_trace_id", None) if langfuse_handler else None
+
+            hybrid_scores_s = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
+            cohere_scores_s  = [c.get("cohere_score")  for c in retrieved_context if isinstance(c.get("cohere_score"),  (int, float))]
+
+            if cur_trace_id:
+                if hybrid_scores_s:
+                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_hybrid_max",  value=round(max(hybrid_scores_s), 4))
+                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_hybrid_avg",  value=round(sum(hybrid_scores_s) / len(hybrid_scores_s), 4))
+                if cohere_scores_s:
+                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_cohere_max",  value=round(max(cohere_scores_s), 4))
+                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_cohere_avg",  value=round(sum(cohere_scores_s) / len(cohere_scores_s), 4))
+        except Exception as _lf_err:
+            logger.warning(f"Stream Langfuse score logging failed: {_lf_err}")
+
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
+
+        try:
+            effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
+            if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS"):
+                await set_cached_response(query=resolved_query, answer=full_answer, sources=sources, course_id=effective_course_id)
+            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
+            await batch_logger.add_log({
+                "conversation_id": conversation_id,
+                "query": request.query,
+                "rewritten_query": resolved_query,
+                "answer": full_answer,
+                "chunks_retrieved": len(retrieved_context),
+                "latency_ms": round(latency_ms, 2),
+                "cache_hit": False,
+            })
+            await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+            # Fix: use asyncio.create_task instead of bare sync call inside async generator
+            asyncio.create_task(asyncio.to_thread(_flush_langfuse))
+        except Exception as bg_err:
+            logger.warning(f"Stream background task error: {bg_err}")
+
+    return StreamingResponse(_stream_rag(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

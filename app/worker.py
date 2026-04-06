@@ -45,7 +45,7 @@ async def shutdown(ctx: dict):
 
 async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[str, Any]:
     """
-    arq background task: persist a new LTM episode to Qdrant after 30-min AFK.
+    arq background task: persist a new LTM episode to Qdrant after 10-second AFK.
 
     Flow:
         1. Guard: check Redis dedup key — skip if another task already ran.

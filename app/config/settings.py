@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
     postgres_password: str = "admin"
-    postgres_pool_size: int = 20
-    postgres_max_overflow: int = 40
+    postgres_pool_size: int = 5
+    postgres_max_overflow: int = 10
 
     @computed_field  # type: ignore[misc]
     @property
@@ -106,8 +106,7 @@ class Settings(BaseSettings):
     # ─── Security ───────────────────────────────────────────────────────────
     jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"
     jwt_algorithm: str = "HS256"
-    rate_limit_per_minute: int = 10
-    rate_limit_guest_per_minute: int = 3
+    rate_limit_per_minute: int = 20
 
 
 @lru_cache(maxsize=1)

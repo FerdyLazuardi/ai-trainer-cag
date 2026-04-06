@@ -252,8 +252,12 @@ async def get_or_summarize_history(
         "Updated Summary:"
     )
     
-    resp = await llm.ainvoke([HM(content=prompt)])
-    new_summary = resp.content.strip()
+    try:
+        resp = await llm.ainvoke([HM(content=prompt)])
+        new_summary = resp.content.strip()
+    except Exception as exc:
+        logger.warning(f"Failed to generate batch summary: {exc}")
+        new_summary = old_summary
 
     # 5. Persist the updated consolidated summary to Redis.
     await redis.set(summary_key, new_summary, ex=settings.conversation_ttl_seconds)

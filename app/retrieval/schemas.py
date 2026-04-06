@@ -9,7 +9,8 @@ class RetrievedChunk:
     """Unified result schema returned by any retriever."""
     chunk_id: str
     text: str
-    score: float                     # normalized relevance score [0, 1]
+    score: float                     # normalized relevance score [0, 1] — Cohere score if reranked
+    hybrid_score: float = 0.0        # raw LlamaIndex hybrid (dense + sparse BM25) score before reranking
     document_id: str = ""
     source: str = ""
     title: str = ""
@@ -26,4 +27,5 @@ class RetrievedChunk:
             "title": self.title,
             "chunk_index": self.chunk_index,
             "score": round(self.score, 4),
+            "hybrid_score": round(self.hybrid_score, 4),
         }

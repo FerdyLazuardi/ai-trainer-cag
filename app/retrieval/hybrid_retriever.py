@@ -14,6 +14,16 @@ from app.retrieval.schemas import RetrievedChunk
 
 settings = get_settings()
 
+_index_cache: dict[str, VectorStoreIndex] = {}
+
+def _get_cached_index(collection_name: str) -> VectorStoreIndex:
+    """Singleton VectorStoreIndex per collection to avoid regenerating on every call."""
+    if collection_name not in _index_cache:
+        qdrant = get_qdrant_client()
+        vector_store = qdrant.get_vector_store(collection_name, enable_hybrid=True)
+        _index_cache[collection_name] = VectorStoreIndex.from_vector_store(vector_store)
+    return _index_cache[collection_name]
+
 
 async def hybrid_search(
     query: str,
@@ -37,25 +47,13 @@ async def hybrid_search(
     """
     ensure_llamaindex_configured()
     k = top_k or settings.retrieval_top_k
-    qdrant = get_qdrant_client()
 
     # Use the specified collection or the Knowledge_Base default
     collection_name = collection or settings.qdrant_kb_collection
 
-    # 1. Initialize LlamaIndex Qdrant Vector Store
-    vector_store = QdrantVectorStore(
-        aclient=qdrant.client,
-        collection_name=collection_name,
-        enable_hybrid=True,
-        fastembed_sparse_model="Qdrant/bm25",
-        dense_vector_name="text-dense",
-        sparse_vector_name="text-sparse",
-    )
+    index = _get_cached_index(collection_name)
 
-    # 2. Setup VectorStoreIndex
-    index = VectorStoreIndex.from_vector_store(vector_store)
-
-    # 3. Use Retriever
+    # Use Retriever
     retriever = index.as_retriever(
         similarity_top_k=k,
     )
@@ -73,11 +71,13 @@ async def hybrid_search(
         # Build rich metadata dict: include frontmatter + any other non-standard fields
         extra_meta = {k: v for k, v in payload.items() if k not in
                       ("document_id", "source", "title", "chunk_index", "token_count")}
+        raw_score = float(node_score.score) if node_score.score else 0.0
         chunks.append(
             RetrievedChunk(
                 chunk_id=node.node_id,
                 text=node.text,
-                score=float(node_score.score) if node_score.score else 0.0,
+                score=raw_score,
+                hybrid_score=raw_score,   # preserve native LlamaIndex hybrid score (dense+BM25)
                 document_id=payload.get("document_id", ""),
                 source=payload.get("source", ""),
                 title=payload.get("title", ""),

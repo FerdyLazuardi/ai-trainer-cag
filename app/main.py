@@ -36,7 +36,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await batch_logger.start()
 
     # ── Langfuse v4 Observability (MUST init first, before any LLM calls) ──
-    print(f"[STARTUP] Langfuse keys: PUB={bool(settings.langfuse_public_key)}, SEC={bool(settings.langfuse_secret_key)}", flush=True)
     if settings.langfuse_public_key and settings.langfuse_secret_key:
         try:
             import os
@@ -52,13 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 debug=settings.app_debug,
             )
             set_langfuse_client(lf)
-            print("[STARTUP] Langfuse v4 initialized OK", flush=True)
             logger.info("Langfuse v4 initialized (OTEL auto-instrumentation active)")
         except Exception as e:
-            print(f"[STARTUP] Langfuse init FAILED: {e}", flush=True)
             logger.warning(f"Langfuse init failed (tracing disabled): {e}")
     else:
-        print("[STARTUP] Langfuse keys missing — tracing disabled", flush=True)
         logger.warning("Langfuse keys not set — tracing disabled")
 
     # Initialize PostgreSQL tables
@@ -70,9 +66,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await redis.ping()
     logger.info("Redis connection established")
 
-    # Initialize Qdrant collection
+    import asyncio
+    # Wait for Qdrant to be ready (docker race condition fix)
     qdrant = get_qdrant_client()
-    await qdrant.ensure_collection()
+    qdrant_ready = False
+    for _ in range(15):
+        try:
+            await qdrant.ensure_collection()
+            qdrant_ready = True
+            break
+        except Exception as e:
+            logger.warning(f"Waiting for Qdrant... ({e})")
+            await asyncio.sleep(2)
+            
+    if not qdrant_ready:
+        logger.error("Failed to connect to Qdrant after 30 seconds.")
+        raise RuntimeError("Qdrant connection failed.")
+        
     logger.info("Qdrant collection ready", collection=settings.qdrant_collection)
 
     # Initialize Knowledge_Base collection for Moodle ingestion

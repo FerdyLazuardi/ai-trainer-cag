@@ -309,31 +309,20 @@ async def _ingest_markdown(
     except Exception as e:
         logger.warning(f"Could not get collection info: {e}")
 
-    vector_store = QdrantVectorStore(
-        aclient=qdrant.client,
-        collection_name=settings.qdrant_kb_collection,
-        enable_hybrid=True,
-        fastembed_sparse_model="Qdrant/bm25",
-        dense_vector_name="text-dense",
-        sparse_vector_name="text-sparse",
-    )
+    vector_store = qdrant.get_vector_store(settings.qdrant_kb_collection, enable_hybrid=True)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
     logger.info("Starting Qdrant node insertion", points=len(nodes), collection=settings.qdrant_kb_collection)
-    print(f"DEBUG: Starting Qdrant node insertion into {settings.qdrant_kb_collection} with {len(nodes)} nodes", flush=True)
     
     try:
         index = VectorStoreIndex(nodes=[], storage_context=storage_context, show_progress=False)
         await index.ainsert_nodes(nodes)
         logger.info("Qdrant ainsert_nodes completed successfully")
-        print("DEBUG: Qdrant ainsert_nodes completed successfully", flush=True)
         
         # Verify immediately
         info = await qdrant.client.get_collection(settings.qdrant_kb_collection)
         logger.info(f"Verified point count in {settings.qdrant_kb_collection}: {info.points_count}")
-        print(f"DEBUG: Verified point count: {info.points_count}", flush=True)
     except Exception as e:
         logger.error(f"Failed to insert into Qdrant: {e}")
-        print(f"DEBUG ERROR: Failed to insert into Qdrant: {e}", flush=True)
         import traceback
         traceback.print_exc()
         raise e

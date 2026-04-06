@@ -1,6 +1,5 @@
 """
 JWT Authentication logic for validating tokens issued by Moodle LMS.
-Supports Moodle Users, Guest Mode, and Development Bypass.
 """
 import jwt
 import uuid
@@ -28,13 +27,23 @@ async def get_current_user(
 ) -> User:
     """
     Dependency to validate JWT token and return the current user.
-    Refactored to ALWAYS fallback to Guest instead of raising 401,
-    preventing CORS blocks on cross-origin requests.
     """
     user: Optional[User] = None
     
     # ── 1. Attempt JWT Authentication ─────────────────────────────────────
-    if credentials and credentials.credentials:
+    if not credentials or not credentials.credentials:
+        # Development Bypass
+        if settings.app_env == "development":
+            logger.info("Development bypass active: Authenticating as Dev User")
+            user = User(user_id="dev_user_123", role="moodle_user", username="Dev User")
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authentication token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    if not user:
         token = credentials.credentials
         try:
             payload = jwt.decode(
@@ -47,39 +56,32 @@ async def get_current_user(
             role: str = payload.get("role", "moodle_user")
             username: str = payload.get("username", "Moodle User")
             
-            if user_id and user_id.strip():
-                user = User(user_id=user_id, role=role, username=username)
+            if not user_id or not user_id.strip():
+                raise ValueError("Invalid user_id in token payload")
+                
+            user = User(user_id=user_id, role=role, username=username)
         except jwt.ExpiredSignatureError:
-            logger.warning("Token expired, falling back to guest")
+            logger.warning("Token expired")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
         except jwt.InvalidTokenError:
-            logger.warning("Invalid token, falling back to guest")
+            logger.warning("Invalid token")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         except Exception as e:
             logger.error(f"Unexpected auth error: {e}")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed")
 
-    # ── 2. Handle Guest / Fallback Mode ───────────────────────────────────
-    if not user:
-        # Generate a semi-stable guest ID for the session if possible
-        # For now using a random ID, but identified as Guest.
-        guest_id = str(uuid.uuid4())[:8]
-        user = User(
-            user_id=f"guest_{guest_id}",
-            role="guest",
-            username="Guest User"
-        )
-        
-        if settings.app_env == "development":
-            logger.info(f"Accessing as Guest User: {user.user_id}")
-
-    # ── 3. Role-Based Rate Limiting ───────────────────────────────────────
-    # We still keep rate limiting but avoid 401s for CORS stability.
+    # ── 2. Role-Based Rate Limiting ───────────────────────────────────────
     redis = get_redis_client()
     rate_limit_key = f"rate_limit:{user.user_id}"
-    limit = settings.rate_limit_per_minute if user.role != "guest" else settings.rate_limit_guest_per_minute
+    limit = settings.rate_limit_per_minute
     
     try:
-        request_count = await redis.incr(rate_limit_key)
-        if request_count == 1:
-            await redis.expire(rate_limit_key, 60)
+        # Atomic pipeline: incr + expire in a single round-trip to avoid TOCTOU
+        pipe = redis.pipeline()
+        pipe.incr(rate_limit_key)
+        pipe.expire(rate_limit_key, 60)
+        results = await pipe.execute()
+        request_count = results[0]
         
         if request_count > limit:
             logger.warning(f"Rate limit exceeded for {user.user_id}")

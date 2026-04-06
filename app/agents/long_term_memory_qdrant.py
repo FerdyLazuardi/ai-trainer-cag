@@ -14,7 +14,7 @@ Load strategy (per-request, query-aware):
   3. Concatenate & summarise them into a compact context string (token-efficient).
   4. Inject into system prompt as <user_history>.
 
-Update strategy (AFK 30-min worker):
+Update strategy (AFK 10-second worker):
   1. Receive session summary from get_or_summarize_history().
   2. Extract topics via LLM (cheap model).
   3. Embed the summary.

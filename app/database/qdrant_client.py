@@ -78,54 +78,42 @@ class QdrantManager:
             dim=self.dim,
         )
 
-    async def ensure_collection(self) -> None:
-        """
-        Ensure the Qdrant collection exists and has the correct vector dimension.
-
-        Logic:
-        - Collection does not exist  → create it.
-        - Collection exists, correct dim → nothing to do.
-        - Collection exists, WRONG dim  → delete it and recreate (vectors must be
-          re-ingested after this).
-        """
+    async def _validate_or_create_collection(self, name: str, create_fn) -> None:
+        """Shared logic for ensure_*_collection() methods."""
         collections = await self.client.get_collections()
         existing_names = {c.name for c in collections.collections}
 
-        if self.collection not in existing_names:
-            # Fresh install — just create.
-            await self._create_collection()
+        if name not in existing_names:
+            await create_fn()
             return
 
-        # Collection exists — verify the stored vector dimension matches config.
-        info = await self.client.get_collection(self.collection)
+        info = await self.client.get_collection(name)
         stored_dim: int | None = None
-
-        # Support both named-vector and single-vector collection layouts.
         vectors_config = info.config.params.vectors
         if isinstance(vectors_config, VectorParams):
             stored_dim = vectors_config.size
         elif isinstance(vectors_config, dict):
-            # Named-vector layout: pick any entry (all should share the same dim)
             first_cfg = next(iter(vectors_config.values()), None)
             if first_cfg is not None:
                 stored_dim = first_cfg.size
 
         if stored_dim is not None and stored_dim != self.dim:
             logger.warning(
-                "Qdrant collection has WRONG dimension — recreating",
-                collection=self.collection,
+                f"Collection {name} has WRONG dimension — recreating",
                 stored_dim=stored_dim,
                 required_dim=self.dim,
             )
-            await self.client.delete_collection(self.collection)
-            await self._create_collection()
+            await self.client.delete_collection(name)
+            await create_fn()
         else:
             logger.info(
-                "Qdrant collection OK",
-                collection=self.collection,
+                f"Collection {name} OK",
                 dim=stored_dim or self.dim,
             )
 
+    async def ensure_collection(self) -> None:
+        """Ensure the main Qdrant collection exists and has the correct vector dimension."""
+        await self._validate_or_create_collection(self.collection, self._create_collection)
 
     async def _create_kb_collection(self) -> None:
         """Create the Knowledge_Base Qdrant collection with hybrid search and metadata indexes."""
@@ -167,30 +155,7 @@ class QdrantManager:
 
     async def ensure_kb_collection(self) -> None:
         """Ensure the Knowledge_Base collection exists and has the correct vector dimension."""
-        kb_col = settings.qdrant_kb_collection
-        collections = await self.client.get_collections()
-        existing_names = {c.name for c in collections.collections}
-
-        if kb_col not in existing_names:
-            await self._create_kb_collection()
-            return
-
-        info = await self.client.get_collection(kb_col)
-        stored_dim: int | None = None
-        vectors_config = info.config.params.vectors
-        if isinstance(vectors_config, VectorParams):
-            stored_dim = vectors_config.size
-        elif isinstance(vectors_config, dict):
-            first_cfg = next(iter(vectors_config.values()), None)
-            if first_cfg is not None:
-                stored_dim = first_cfg.size
-
-        if stored_dim is not None and stored_dim != self.dim:
-            logger.warning("Knowledge_Base collection has WRONG dimension — recreating", stored_dim=stored_dim)
-            await self.client.delete_collection(kb_col)
-            await self._create_kb_collection()
-        else:
-            logger.info("Qdrant Knowledge_Base collection OK", collection=kb_col, dim=stored_dim or self.dim)
+        await self._validate_or_create_collection(settings.qdrant_kb_collection, self._create_kb_collection)
 
     # ── Long-Term Memory Collection ───────────────────────────────────────────
 
@@ -241,38 +206,19 @@ class QdrantManager:
         Ensure the user_ltm_memories collection exists with the correct vector dimension.
         Safe to call on every startup — idempotent.
         """
-        collections = await self.client.get_collections()
-        existing_names = {c.name for c in collections.collections}
+        await self._validate_or_create_collection(self._LTM_COLLECTION, self._create_ltm_collection)
 
-        if self._LTM_COLLECTION not in existing_names:
-            await self._create_ltm_collection()
-            return
-
-        # Validate dimension matches current embedding config
-        info = await self.client.get_collection(self._LTM_COLLECTION)
-        stored_dim: int | None = None
-        vectors_config = info.config.params.vectors
-        if isinstance(vectors_config, VectorParams):
-            stored_dim = vectors_config.size
-        elif isinstance(vectors_config, dict):
-            first_cfg = next(iter(vectors_config.values()), None)
-            if first_cfg is not None:
-                stored_dim = first_cfg.size
-
-        if stored_dim is not None and stored_dim != self.dim:
-            logger.warning(
-                "LTM collection has WRONG dimension — recreating",
-                stored_dim=stored_dim,
-                required_dim=self.dim,
-            )
-            await self.client.delete_collection(self._LTM_COLLECTION)
-            await self._create_ltm_collection()
-        else:
-            logger.info(
-                "Qdrant LTM collection OK",
-                collection=self._LTM_COLLECTION,
-                dim=stored_dim or self.dim,
-            )
+    def get_vector_store(self, collection_name: str, enable_hybrid: bool = True):
+        """Unified factory for QdrantVectorStore instantiation to avoid DRY violations."""
+        from llama_index.vector_stores.qdrant import QdrantVectorStore
+        return QdrantVectorStore(
+            aclient=self.client,
+            collection_name=collection_name,
+            enable_hybrid=enable_hybrid,
+            fastembed_sparse_model="Qdrant/bm25" if enable_hybrid else None,
+            dense_vector_name="text-dense" if enable_hybrid else None,
+            sparse_vector_name="text-sparse" if enable_hybrid else None,
+        )
 
 
 @lru_cache(maxsize=1)
