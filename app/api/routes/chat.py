@@ -76,17 +76,33 @@ async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
     except Exception as e:
         logger.warning(f"Failed to schedule AFK LTM sync: {e}")
 
+DEV_BYPASS_USER_ID = "dev_user_123"
+
 async def _verify_conversation_ownership(conversation_id: str, current_user: User):
-    """Ensure the user owns this conversation before accessing history."""
+    """Ensure the user owns this conversation before accessing history.
+    
+    Migration note: if the stored owner is the dev bypass user (dev_user_123),
+    the real authenticated user is allowed to take over ownership seamlessly.
+    This handles the shift from no-JWT to JWT-authenticated requests.
+    """
     redis = get_redis_client()
     owner_key = f"rag:conv_owner:{conversation_id}"
     stored_owner = await redis.get(owner_key)
+    
     if stored_owner:
-        if stored_owner != current_user.user_id:
+        # Allow real user to reclaim a conversation previously owned by dev bypass
+        if stored_owner == DEV_BYPASS_USER_ID and current_user.user_id != DEV_BYPASS_USER_ID:
+            logger.info(
+                "Migrating conversation ownership from dev_user to real user",
+                conversation_id=conversation_id,
+                new_owner=current_user.user_id,
+            )
+            await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
+        elif stored_owner != current_user.user_id:
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
     else:
-        # If no owner is stored, set the current user as owner
-        await redis.set(owner_key, current_user.user_id, ex=86400*7) # Expire in 7 days
+        # No owner yet — claim it
+        await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
 
 async def _prepare_rag_context(
     request: ChatRequest, 

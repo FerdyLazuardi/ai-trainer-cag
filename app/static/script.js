@@ -546,23 +546,25 @@ async function send() {
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log("Request cancelled by user.");
-            const wrap = document.getElementById("typing-id");
-            if (wrap) wrap.remove();
+            removeTyping();
             return;
         }
         console.error("Stream Error:", err);
-        // Only clean up typing indicator if streaming hadn't started yet
-        // (if it had started, createStreamBubble() already replaced the typing dots)
-        if (!streamWrap) {
-            removeTyping();
-        }
 
         if (err.message === "RATE_LIMIT") {
+            removeTyping();
             addMessage("⏳ Sabar dulu ya! Kamu udah ngelebihin batas 20 chat per menit. Tunggu sebentar lagi baru tanya lagi. 😊", "ai");
             return;
         }
 
         // ── Fallback: try non-streaming endpoint ──
+        // Jangan removeTyping() dulu — biarkan dots tetap tampil selama fallback request
+        // Kalau streaming sudah mulai (streamWrap ada), typing sudah digantikan bubble — tetap lanjut
+        if (!streamWrap) {
+            // Pastikan typing dots tetap ada / tampilkan ulang untuk fallback
+            if (!document.getElementById("typing-id")) showTyping();
+        }
+
         try {
             console.log("Falling back to non-streaming /chat endpoint...");
             const fallbackRes = await fetch(`${baseUrl}/api/v1/chat`, {
@@ -580,8 +582,7 @@ async function send() {
             }
 
             const data = await fallbackRes.json();
-
-            // Biarkan UI natural, tidak mengubah prompt original dari user
+            removeTyping(); // hapus dots SETELAH response tiba
 
             const reply = data?.answer || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
             streamMessageFallback(reply, "ai");
@@ -589,9 +590,11 @@ async function send() {
         } catch (fallbackErr) {
             if (fallbackErr.name === 'AbortError') {
                 console.log("Fallback request cancelled by user.");
+                removeTyping();
                 return;
             }
             console.error("Fallback also failed:", fallbackErr);
+            removeTyping();
             if (fallbackErr.message === "RATE_LIMIT") {
                 addMessage("⏳ Sabar dulu ya! Kamu udah ngelebihin batas 20 chat per menit. Tunggu sebentar lagi baru tanya lagi. 😊", "ai");
             } else {
