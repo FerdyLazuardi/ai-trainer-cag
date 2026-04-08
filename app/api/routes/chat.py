@@ -221,7 +221,7 @@ async def chat(
                 with propagate_attributes(
                     trace_name="peped-chat",
                     session_id=conversation_id,
-                    user_id=current_user.user_id,
+                    user_id=f"{current_user.username} (ID: {current_user.user_id})",
                     tags=["api-chat", settings.app_env, "cache-hit"],
                 ):
                     root_obs.update(
@@ -271,7 +271,7 @@ async def chat(
         with propagate_attributes(
             trace_name="peped-chat",
             session_id=conversation_id,
-            user_id=current_user.user_id,
+            user_id=f"{current_user.username} (ID: {current_user.user_id})",
             tags=["api-chat", settings.app_env],
             metadata={
                 "cache_hit": False,
@@ -473,7 +473,7 @@ async def chat_stream(
             with propagate_attributes(
                 trace_name="peped-chat-stream",
                 session_id=conversation_id,
-                user_id=current_user.user_id,
+                user_id=f"{current_user.username} (ID: {current_user.user_id})",
                 tags=["api-chat-stream", settings.app_env],
                 metadata={
                     "cache_hit": False,
