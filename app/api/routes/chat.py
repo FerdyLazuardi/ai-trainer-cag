@@ -69,7 +69,6 @@ async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
             u_id,
             _defer_by=datetime.timedelta(seconds=10)
         )
-        await arq_redis.close()
         # Mark as scheduled (TTL slightly > 10s so key covers the defer window)
         await redis_client.set(sched_key, "1", ex=60)
         logger.debug("AFK LTM sync scheduled", conversation_id=conv_id)
@@ -89,6 +88,13 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
     owner_key = f"rag:conv_owner:{conversation_id}"
     stored_owner = await redis.get(owner_key)
     
+    logger.info(
+        "Checking ownership", 
+        conversation_id=conversation_id, 
+        current_user_id=current_user.user_id, 
+        stored_owner=stored_owner
+    )
+    
     if stored_owner:
         # Allow real user to reclaim a conversation previously owned by dev bypass
         if stored_owner == DEV_BYPASS_USER_ID and current_user.user_id != DEV_BYPASS_USER_ID:
@@ -99,11 +105,21 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
             )
             await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
         elif stored_owner != current_user.user_id:
+            logger.error(
+                "Ownership mismatch 403",
+                conversation_id=conversation_id,
+                current_user_id=current_user.user_id,
+                stored_owner=stored_owner
+            )
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
     else:
         # No owner yet — claim it
+        logger.info(
+            "Claiming conversation ownership",
+            conversation_id=conversation_id,
+            new_owner=current_user.user_id
+        )
         await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
-
 async def _prepare_rag_context(
     request: ChatRequest, 
     current_user: User, 
