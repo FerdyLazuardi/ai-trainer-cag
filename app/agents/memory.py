@@ -246,7 +246,8 @@ async def get_or_summarize_history(
     
     prompt = (
         "Refine the following conversation summary to include the key points from the new dialogue segment. "
-        "Maintain a concise, 2-3 sentence overview in the same language.\n\n"
+        "Maintain a concise, 2-3 sentence overview. "
+        "Write the summary in the dominant language of the conversation (English or Indonesian).\n\n"
         f"Existing Summary:\n{old_summary}\n\n"
         f"New context to integrate:\n{old_text}\n\n"
         "Updated Summary:"

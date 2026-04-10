@@ -105,19 +105,19 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     raw_tail = "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')[:300]}" for m in recent_history])
     
     prompt = (
-        "Analisis percakapan berikut dan berikan output dalam format JSON strict dengan struktur berikut:\n"
+        "Analyze the following conversation and output a STRICT JSON object with this structure:\n"
         "{\n"
-        '  "summary": "Ringkasan 1-2 kalimat fokus pada topik/fakta yang dibahas",\n'
+        '  "summary": "A 1-2 sentence summary of the core facts or topics discussed. Write this in the dominant language of the conversation (English or Indonesian).",\n'
         '  "preferences": {\n'
-        '    "role": "Jabatan/profesi user jika disebutkan (misal: Loan Officer), null jika tidak ada",\n'
-        '    "preferred_tone": "Gaya bahasa yang diminta (misal: formal, santai, dsb), null jika tidak ada",\n'
-        '    "formatting_pref": "Format jawaban yang diminta (misal: bullet points, paragraf pendek, dsb), null jika tidak ada",\n'
-        '    "custom_instructions": "Instruksi spesifik lainnya, null jika tidak ada"\n'
+        '    "role": "User\'s job/role if mentioned (e.g., Loan Officer), else null",\n'
+        '    "preferred_tone": "Requested tone (e.g., formal, casual), else null",\n'
+        '    "formatting_pref": "Requested format (e.g., bullet points), else null",\n'
+        '    "custom_instructions": "Other specific instructions, else null"\n'
         "  }\n"
         "}\n\n"
-        f"Konteks Sebelumnya:\n{summary}\n\n"
-        f"Percakapan Terbaru:\n{raw_tail}\n\n"
-        "Output JSON:"
+        f"Previous Context:\n{summary}\n\n"
+        f"Recent Conversation:\n{raw_tail}\n\n"
+        "JSON Output:"
     )
     
     session_summary = ""
