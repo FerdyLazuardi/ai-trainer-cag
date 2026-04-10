@@ -99,25 +99,73 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
         return {"status": "skipped", "reason": "no_history"}
 
-    # Generate a definitive session summary for LTM
+    # Generate a definitive session summary for LTM and extract preferences
     from langchain_core.messages import HumanMessage
+    import json
     raw_tail = "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')[:300]}" for m in recent_history])
     
     prompt = (
-        "Buatlah ringkasan percakapan berikut dalam 1-2 kalimat pendek berbahasa Indonesia. "
-        "Fokus HANYA pada konteks, fakta inti, atau pertanyaan utama yang dibahas user. "
-        "Jangan memasukkan basa-basi, salam, atau saran pertanyaan lanjutan dari AI.\n\n"
+        "Analisis percakapan berikut dan berikan output dalam format JSON strict dengan struktur berikut:\n"
+        "{\n"
+        '  "summary": "Ringkasan 1-2 kalimat fokus pada topik/fakta yang dibahas",\n'
+        '  "preferences": {\n'
+        '    "role": "Jabatan/profesi user jika disebutkan (misal: Loan Officer), null jika tidak ada",\n'
+        '    "preferred_tone": "Gaya bahasa yang diminta (misal: formal, santai, dsb), null jika tidak ada",\n'
+        '    "formatting_pref": "Format jawaban yang diminta (misal: bullet points, paragraf pendek, dsb), null jika tidak ada",\n'
+        '    "custom_instructions": "Instruksi spesifik lainnya, null jika tidak ada"\n'
+        "  }\n"
+        "}\n\n"
         f"Konteks Sebelumnya:\n{summary}\n\n"
         f"Percakapan Terbaru:\n{raw_tail}\n\n"
-        "Ringkasan Sesi:"
+        "Output JSON:"
     )
     
+    session_summary = ""
+    prefs_data = None
     try:
         resp = await cheap_llm.ainvoke([HumanMessage(content=prompt)])
-        session_summary = resp.content.strip()
+        content = resp.content.strip()
+        # Remove markdown code blocks if any
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+        
+        parsed = json.loads(content)
+        session_summary = parsed.get("summary", "")
+        prefs_data = parsed.get("preferences", {})
     except Exception as exc:
-        logger.warning(f"LTM sync: LLM summarization failed, falling back to raw concat: {exc}")
+        logger.warning(f"LTM sync: LLM summarization/extraction failed, falling back to raw concat: {exc}")
         session_summary = summary if summary else raw_tail[:1000]
+
+    # Save preferences to PostgreSQL if any were detected
+    if prefs_data and any(prefs_data.values()):
+        try:
+            from app.database.postgres import AsyncSessionLocal
+            from app.database.models import UserProfile
+            
+            async with AsyncSessionLocal() as session:
+                user_profile = await session.get(UserProfile, user_id)
+                if not user_profile:
+                    user_profile = UserProfile(user_id=user_id)
+                    session.add(user_profile)
+                
+                if prefs_data.get("role"):
+                    user_profile.role = prefs_data["role"]
+                if prefs_data.get("preferred_tone"):
+                    user_profile.preferred_tone = prefs_data["preferred_tone"]
+                if prefs_data.get("formatting_pref"):
+                    user_profile.formatting_pref = prefs_data["formatting_pref"]
+                if prefs_data.get("custom_instructions"):
+                    user_profile.custom_instructions = prefs_data["custom_instructions"]
+                    
+                await session.commit()
+                logger.info("LTM sync: User preferences updated in PostgreSQL", user_id=user_id)
+        except Exception as exc:
+            logger.error(f"LTM sync: Failed to save preferences to PostgreSQL: {exc}")
 
     # ── Step 4+5: Extract course names + upsert to Qdrant ───────────────────────────
     # Course name extraction is done inside qdrant_ltm.update() when new_course_names=[]

@@ -23,3 +23,5 @@ class RAGState(TypedDict):
     rewritten_query: Optional[str]
     conversation_summary: Optional[str]  # Sprint 2 — short-term session summary
     user_profile: Optional[dict]         # Sprint 3 — long-term user memory
+    user_preferences: Optional[dict]     # Sprint 4 — persistent user preferences from SQL
+

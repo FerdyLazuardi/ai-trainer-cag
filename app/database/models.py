@@ -105,5 +105,23 @@ class AgentLog(Base):
         return f"<AgentLog id={self.id} query={self.query[:40]!r} latency={self.latency_ms}ms>"
 
 
+class UserProfile(Base):
+    """Stores persistent user preferences derived from conversation history."""
+
+    __tablename__ = "user_profiles"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    role: Mapped[str] = mapped_column(String(128), nullable=True)
+    preferred_tone: Mapped[str] = mapped_column(String(64), nullable=True)
+    formatting_pref: Mapped[str] = mapped_column(String(64), nullable=True)
+    custom_instructions: Mapped[str] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserProfile user_id={self.user_id} role={self.role!r}>"
+
+
 
 

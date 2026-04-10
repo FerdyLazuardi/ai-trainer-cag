@@ -246,8 +246,27 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     if summary:
         summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>"
 
+    # Persistent user preferences (Sprint 4)
+    pref_section = ""
+    prefs = state.get("user_preferences")
+    if prefs:
+        pref_lines = []
+        if prefs.get("role"):
+            pref_lines.append(f"Role/Jabatan User: {prefs['role']}")
+        if prefs.get("preferred_tone"):
+            pref_lines.append(f"Gaya Bahasa yang Diinginkan: {prefs['preferred_tone']}")
+        if prefs.get("formatting_pref"):
+            pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
+        if prefs.get("custom_instructions"):
+            pref_lines.append(f"Instruksi Tambahan: {prefs['custom_instructions']}")
+            
+        if pref_lines:
+            pref_str = "\n".join(pref_lines)
+            pref_section = f"\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n{pref_str}\n</user_preferences>"
+
     full_system = (
         f"{SYSTEM_PROMPT}"
+        f"{pref_section}"
         f"{ltm_section}"
         f"{summary_section}"
         f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"

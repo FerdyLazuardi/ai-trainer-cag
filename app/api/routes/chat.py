@@ -25,6 +25,7 @@ from app.agents.memory import (
 )
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.database.postgres import get_db
+from app.database.models import UserProfile
 from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
@@ -124,7 +125,8 @@ async def _prepare_rag_context(
     request: ChatRequest, 
     current_user: User, 
     conversation_id: str,
-    resolved_query: str
+    resolved_query: str,
+    db: AsyncSession
 ) -> dict:
     """Shared context preparation for both /chat and /chat/stream."""
     
@@ -152,15 +154,26 @@ async def _prepare_rag_context(
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
     ltm_profile = {"summary": "", "course_names": []}
+    user_pref_dict = None
 
     if ltm_eligible:
         ltm_profile = await qdrant_ltm.load(user_id=user_id, query=resolved_query)
+        # Fetch persistent preferences
+        user_profile_obj = await db.get(UserProfile, user_id)
+        if user_profile_obj:
+            user_pref_dict = {
+                "role": user_profile_obj.role,
+                "preferred_tone": user_profile_obj.preferred_tone,
+                "formatting_pref": user_profile_obj.formatting_pref,
+                "custom_instructions": user_profile_obj.custom_instructions
+            }
 
     initial_state = {
         "messages": messages,
         "conversation_id": conversation_id,
         "conversation_summary": summary,
         "user_profile": ltm_profile,
+        "user_preferences": user_pref_dict,
     }
     
     return {"cached": None, "initial_state": initial_state}
@@ -206,7 +219,7 @@ async def chat(
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
     logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
     cached = context.get("cached")
 
     if cached:
@@ -434,7 +447,7 @@ async def chat_stream(
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
     logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
     cached = context.get("cached")
 
     if cached:
