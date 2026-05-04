@@ -14,16 +14,16 @@ settings = get_settings()
 
 @lru_cache(maxsize=1)
 def get_llm() -> ChatOpenAI:
-    """Return the singleton LLM client configured for OpenRouter."""
+    """Return the singleton LLM client configured for OpenRouter/Ollama."""
     return ChatOpenAI(
         model=settings.llm_model,
-        openai_api_key=settings.openrouter_api_key,
-        openai_api_base=settings.openrouter_base_url,
+        openai_api_key="ollama",
+        openai_api_base=settings.ollama_base_url,
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         request_timeout=60,
         max_retries=3,
-        # OpenRouter-specific headers for app attribution
+        # OpenRouter-specific headers for app attribution (ignored by Ollama)
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent",
