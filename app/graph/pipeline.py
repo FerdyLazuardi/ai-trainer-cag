@@ -13,7 +13,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config.settings import get_settings
 from app.graph.state import RAGState
@@ -164,11 +163,6 @@ async def _handle_malicious(state: RAGState, config: RunnableConfig):
     ]
     from langchain_core.messages import AIMessage
     return {"messages": [AIMessage(content=responses[0])]}
-
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
-async def _invoke_llm_with_retry(llm, messages, config):
-    return await llm.ainvoke(messages, config=config)
 
 
 async def _rag_node(state: RAGState, config: RunnableConfig):
