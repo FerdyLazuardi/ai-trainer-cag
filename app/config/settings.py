@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_embedding_url: str | None = None
     ollama_base_url: str = "http://172.16.10.2:11434/v1"

@@ -271,7 +271,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 
     llm = get_llm()
     messages = [SystemMessage(content=full_system)] + list(state["messages"])
-    response = await _invoke_llm_with_retry(llm, messages, config)
+    response = await llm.ainvoke(messages, config=config)
     return {"messages": [response]}
 
 

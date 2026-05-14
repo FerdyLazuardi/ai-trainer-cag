@@ -34,13 +34,14 @@ def ensure_llamaindex_configured(
         # ── Embedding model (one-time) ──────────────────────────────────
         logger.info("Initializing LlamaIndex embedding model", model=settings.embedding_model)
         
-        # Validate API key
-        if not settings.openrouter_api_key:
-            raise ValueError("OPENROUTER_API_KEY is not set in environment variables")
+        # Determine the correct API key for embeddings
+        emb_api_key = settings.openrouter_embedding_key or settings.openrouter_api_key
+        if not emb_api_key:
+            raise ValueError("Neither OPENROUTER_EMBEDDING_KEY nor OPENROUTER_API_KEY is set in environment variables")
         
         kwargs = {
             "model": settings.embedding_model,
-            "api_key": settings.openrouter_api_key,
+            "api_key": emb_api_key,
         }
         
         # OpenRouter uses OpenAI-compatible API
