@@ -107,7 +107,7 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     prompt = (
         "Analyze the following conversation and output a STRICT JSON object with this structure:\n"
         "{\n"
-        '  "summary": "A 1-2 sentence summary of the core facts or topics discussed. Write this in the dominant language of the conversation (English or Indonesian).",\n'
+        '  "summary": "Summarize ALL distinct topics discussed. MAX 30 WORDS. Use ultra-short telegraphic style (drop a/an/the/filler). Example: \'User ask Amartha products AND Client Protection rules.\'",\n'
         '  "preferences": {\n'
         '    "role": "User\'s job/role if mentioned (e.g., Loan Officer), else null",\n'
         '    "preferred_tone": "Requested tone (e.g., formal, casual), else null",\n'
@@ -123,7 +123,12 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     session_summary = ""
     prefs_data = None
     try:
-        resp = await cheap_llm.ainvoke([HumanMessage(content=prompt)])
+        from langfuse.langchain import CallbackHandler
+        lf_handler = CallbackHandler()
+        resp = await cheap_llm.ainvoke(
+            [HumanMessage(content=prompt)],
+            config={"callbacks": [lf_handler], "run_name": "peped-ltm-sync-summarize"}
+        )
         content = resp.content.strip()
         # Remove markdown code blocks if any
         if content.startswith("```json"):
