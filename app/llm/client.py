@@ -37,7 +37,7 @@ def get_cheap_llm() -> ChatOpenAI:
     """Return a cheaper, faster LLM for background tasks like memory summarization."""
     # Using Gemini 2.5 Flash via 9Router for cost-efficiency
     return ChatOpenAI(
-        model="openrouter/google/gemini-2.0-flash-001",
+        model="google/gemini-2.0-flash-lite-001",
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=0.3,

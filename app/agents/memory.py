@@ -99,46 +99,31 @@ async def append_to_history(
         logger.warning("Failed to update conversation history", error=str(exc))
 
 
+import re
+
 def extract_follow_up_questions(assistant_message: str) -> list[str]:
     """
     Extract follow-up questions from assistant message.
-    
-    Parses the assistant message to find the "**Apa kamu penasaran tentang:**" section
-    and extracts numbered questions (1., 2., 3.).
-    
-    Args:
-        assistant_message: The assistant's response text
-        
-    Returns:
-        List of question texts (without numbers). Empty list if no follow-ups found.
     """
     if not assistant_message:
         return []
     
     try:
-        # Look for the follow-up section marker
-        marker = "**Apa kamu penasaran tentang:**"
-        if marker not in assistant_message:
-            return []
-        
-        # Extract the section after the marker
-        section_start = assistant_message.index(marker) + len(marker)
-        section = assistant_message[section_start:]
-        
-        # Parse lines starting with "1.", "2.", "3."
+        # Robust search for the follow-up section
+        match = re.search(r'penasaran tentang.*?:?\*?\*?\s*(.*)', assistant_message, re.IGNORECASE | re.DOTALL)
+        if match:
+            lines = match.group(1).strip().split('\n')
+        else:
+            # Fallback: scan the last few lines for a numbered list
+            lines = assistant_message.strip().split('\n')[-10:]
+            
         questions = []
-        lines = section.split('\n')
-        
         for line in lines:
             line = line.strip()
-            # Check if line starts with "1.", "2.", or "3."
-            for num in ['1.', '2.', '3.']:
-                if line.startswith(num):
-                    # Extract question text (remove the number prefix)
-                    question_text = line[len(num):].strip()
-                    if question_text:
-                        questions.append(question_text)
-                    break
+            # Match "1. " or "1) " or "**1.**" etc.
+            match_num = re.match(r'^(?:\*\*)?([1-5])[\.\)]\s*(?:\*\*)?(.*)', line)
+            if match_num:
+                questions.append(match_num.group(2).strip())
         
         return questions
     except Exception as exc:
@@ -254,7 +239,12 @@ async def get_or_summarize_history(
     )
     
     try:
-        resp = await llm.ainvoke([HM(content=prompt)])
+        from langfuse.langchain import CallbackHandler
+        lf_handler = CallbackHandler()
+        resp = await llm.ainvoke(
+            [HM(content=prompt)],
+            config={"callbacks": [lf_handler], "run_name": "peped-rolling-summarization"}
+        )
         new_summary = resp.content.strip()
     except Exception as exc:
         logger.warning(f"Failed to generate batch summary: {exc}")

@@ -221,6 +221,8 @@ class QdrantLTMService:
         """
         try:
             from langchain_core.messages import HumanMessage
+            from langfuse.langchain import CallbackHandler
+            lf_handler = CallbackHandler()
             prompt = (
                 "Ekstrak Nama Materi (Course Name) yang dibahas dari ringkasan percakapan berikut. "
                 "Contoh Course Name yang valid: 'Product Knowledge Amartha', 'Client Protection', dsb. "
@@ -228,7 +230,10 @@ class QdrantLTMService:
                 "Tanpa penjelasan, tanpa nomor, tulis nama aslinya saja.\n\n"
                 f"Ringkasan:\n{summary}\n\nNama Materi:"
             )
-            resp = await llm.ainvoke([HumanMessage(content=prompt)])
+            resp = await llm.ainvoke(
+                [HumanMessage(content=prompt)],
+                config={"callbacks": [lf_handler], "run_name": "peped-ltm-extract-courses"}
+            )
             raw = resp.content.strip()
             course_names = [t.strip() for t in raw.split(",") if t.strip()]
             return course_names[:_MAX_COURSE_NAMES]
