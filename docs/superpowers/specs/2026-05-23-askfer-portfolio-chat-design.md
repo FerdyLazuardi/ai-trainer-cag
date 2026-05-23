@@ -15,7 +15,7 @@ Add a new public-facing chat endpoint **Askfer** that answers questions about Fe
 1. `POST /api/v1/askfer/stream` returns an SSE stream answering project/CV questions in first-person as Ferdy.
 2. `POST /api/v1/askfer/sync` (admin-secret protected) ingests homepage + 10 projects + CV PDF into a new Qdrant collection `Personal_Portfolio`.
 3. Existing `/api/v1/chat` and `/api/v1/chat/stream` continue to work unchanged, still hitting the `Knowledge_Base` collection.
-4. Rate limit by IP: 15 req/min/IP for `/askfer/stream`; the 16th request within a minute gets HTTP 429.
+4. Rate limit by IP: 10 req/min/IP for `/askfer/stream`; the 11th request within a minute gets HTTP 429.
 5. Off-scope query → polite redirect; not-found query → honest "tanya via LinkedIn/email".
 6. Bilingual auto-detect: English query → English response; Indonesian query → Indonesian response.
 7. Source citations dedupe per project URL (one chunk-set per project surfaces as one source).
@@ -82,7 +82,7 @@ portfolio_homepage_url: str = "https://ferdy-fadhil-lazuardi.my.id/"
 portfolio_project_url_pattern: str = r"^https://ferdy-fadhil-lazuardi\.my\.id/projects/[^/]+/?$"
 portfolio_cv_url: str = "https://ferdy-fadhil-lazuardi.my.id/CV%20-%20Ferdy%20Fadhil%20Lazuardi.pdf"
 askfer_admin_secret: str = Field(default="", alias="ASKFER_ADMIN_SECRET")
-askfer_rate_limit_per_minute: int = 15
+askfer_rate_limit_per_minute: int = 10
 ```
 
 ### Collection configuration
@@ -311,7 +311,7 @@ logger.info("Qdrant Personal_Portfolio collection ready")
 
 | Endpoint | Method | Auth | Rate limit |
 |---|---|---|---|
-| `/api/v1/askfer/stream` | POST | none | 15/min per IP |
+| `/api/v1/askfer/stream` | POST | none | 10/min per IP |
 | `/api/v1/askfer/sync` | POST | `X-Admin-Secret` header | n/a |
 
 ### CORS
