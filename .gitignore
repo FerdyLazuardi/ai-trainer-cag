@@ -12,9 +12,17 @@ docs/
 .venv
 .venv_new/
 .env
+/.claude
+
+.scripts
 
 # Editor settings
 .vscode/
+
+.scripts/
+.tests/
+scripts/
+tests/
 
 # Logs & temporary files
 logs/

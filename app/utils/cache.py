@@ -24,15 +24,20 @@ _SEMANTIC_THRESHOLD = 0.88  # 92% cosine similarity threshold
 _semantic_collection_ready = False
 
 
-def _cache_key(query: str, course_id: int | None = None) -> str:
-    """Generate a deterministic Redis key from the query string and course_id."""
+def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
+    """Generate a deterministic Redis key from the query string and course_id.
+
+    `namespace` lets parallel personas (a-pedi vs askfer) share the cache infra
+    without polluting each other. Default 'rag' preserves existing A-Pedi keys
+    byte-identically.
+    """
     query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()[:16]
     cid_str = str(course_id) if course_id and course_id > 0 else 'global'
-    return f"{_PREFIX}{cid_str}:{query_hash}"
+    return f"{namespace}:cache:{cid_str}:{query_hash}"
 
 
 async def _ensure_semantic_collection() -> None:
-    """Ensure the semantic_cache collection exists in Qdrant with course_id index."""
+    """Ensure the semantic_cache collection exists in Qdrant with course_id + namespace indexes."""
     global _semantic_collection_ready
     if _semantic_collection_ready:
         return
@@ -50,15 +55,19 @@ async def _ensure_semantic_collection() -> None:
         )
         logger.info("semantic_cache collection created")
 
-    # Always ensure course_id index exists (idempotent — Qdrant ignores if already present)
-    try:
-        await qdrant.client.create_payload_index(
-            collection_name="semantic_cache",
-            field_name="course_id",
-            field_schema=qdrant_models.PayloadSchemaType.INTEGER,
-        )
-    except Exception:
-        pass  # Index already exists
+    # Always ensure indexes exist (idempotent — Qdrant ignores if already present)
+    for field, schema in [
+        ("course_id", qdrant_models.PayloadSchemaType.INTEGER),
+        ("namespace", qdrant_models.PayloadSchemaType.KEYWORD),
+    ]:
+        try:
+            await qdrant.client.create_payload_index(
+                collection_name="semantic_cache",
+                field_name=field,
+                field_schema=schema,
+            )
+        except Exception:
+            pass  # Index already exists
 
     _semantic_collection_ready = True
 
@@ -82,24 +91,36 @@ def _log_cache_event(hit: bool, course_id: int | None, score: float | None = Non
         logger.warning("Failed to log cache event to langfuse", error=str(e))
 
 
-async def get_cached_response(query: str, course_id: int | None = None) -> dict | None:
+async def get_cached_response(
+    query: str,
+    course_id: int | None = None,
+    query_embedding: list[float] | None = None,
+    cache_namespace: str = "rag",
+) -> dict | None:
     """
     Retrieve a cached RAG response for the given query.
     1. Checks Redis for an exact string match.
     2. Checks Qdrant for a semantic match (e.g. "what is X" vs "explain X").
+
+    `cache_namespace` isolates parallel personas (default 'rag' = A-Pedi).
+    Semantic matches are filtered by the same namespace, so Askfer queries
+    cannot pull A-Pedi answers and vice-versa.
+
+    If `query_embedding` is supplied, the embedding API call for the semantic
+    lookup is skipped — caller can reuse the same vector elsewhere.
     """
     # Normalize 0 to None
     if course_id == 0:
         course_id = None
-        
+
     # 1. Exact match (Redis)
     redis = get_redis_client()
-    key = _cache_key(query, course_id)
+    key = _cache_key(query, course_id, namespace=cache_namespace)
     try:
         raw = await redis.get(key)
         if raw:
             data = json.loads(raw)
-            logger.info("Redis Exact Cache HIT", query=query[:60], course_id=course_id)
+            logger.info("Redis Exact Cache HIT", query=query[:60], course_id=course_id, namespace=cache_namespace)
             _log_cache_event(hit=True, course_id=course_id, score=1.0)
             return data
     except Exception as exc:
@@ -108,25 +129,27 @@ async def get_cached_response(query: str, course_id: int | None = None) -> dict 
     # 2. Semantic match (Qdrant)
     try:
         await _ensure_semantic_collection()
-        ensure_llamaindex_configured()
-        
-        # Embed the incoming query
-        query_embedding = await Settings.embed_model.aget_query_embedding(query)
+
+        if query_embedding is None:
+            ensure_llamaindex_configured()
+            query_embedding = await Settings.embed_model.aget_query_embedding(query)
+
         qdrant = get_qdrant_client()
-        
-        query_filter = None
-        if course_id is not None and course_id > 0:
-            # Strict: only match cached answers for this specific course
-            query_filter = qdrant_models.Filter(
-                must=[
-                    qdrant_models.FieldCondition(
-                        key="course_id",
-                        match=qdrant_models.MatchValue(value=course_id)
-                    )
-                ]
+
+        must_clauses = [
+            qdrant_models.FieldCondition(
+                key="namespace",
+                match=qdrant_models.MatchValue(value=cache_namespace),
             )
-        # When course_id is None, search ALL cached responses (no filter).
-        # The similarity threshold ensures only semantically relevant matches return.
+        ]
+        if course_id is not None and course_id > 0:
+            must_clauses.append(
+                qdrant_models.FieldCondition(
+                    key="course_id",
+                    match=qdrant_models.MatchValue(value=course_id),
+                )
+            )
+        query_filter = qdrant_models.Filter(must=must_clauses)
 
         search_result = await qdrant.client.query_points(
             collection_name="semantic_cache",
@@ -136,17 +159,17 @@ async def get_cached_response(query: str, course_id: int | None = None) -> dict 
             score_threshold=_SEMANTIC_THRESHOLD,
             query_filter=query_filter
         )
-        
+
         if search_result.points:
             best_hit = search_result.points[0]
-            logger.info("Qdrant Semantic Cache HIT", query=query[:60], score=round(best_hit.score, 4), course_id=course_id)
+            logger.info("Qdrant Semantic Cache HIT", query=query[:60], score=round(best_hit.score, 4), course_id=course_id, namespace=cache_namespace)
             _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
             return best_hit.payload
-            
+
     except Exception as exc:
         logger.warning("Semantic cache GET failed", error=str(exc))
 
-    logger.debug("Cache MISS", query=query[:60], course_id=course_id)
+    logger.debug("Cache MISS", query=query[:60], course_id=course_id, namespace=cache_namespace)
     _log_cache_event(hit=False, course_id=course_id)
     return None
 
@@ -157,35 +180,42 @@ async def set_cached_response(
     sources: list[dict],
     course_id: int | None = None,
     ttl: int | None = None,
+    query_embedding: list[float] | None = None,
+    cache_namespace: str = "rag",
 ) -> None:
     """
     Store a RAG response in both Redis (with TTL) and Qdrant caches.
+
+    `cache_namespace` isolates parallel personas. Default 'rag' preserves the
+    A-Pedi key/payload format byte-identically.
+
+    If `query_embedding` is supplied, the embedding API call is skipped.
     """
-    # Normalize 0 to None
-    if course_id == 0:
-        course_id = None
-        
-    # Validate response before caching
+    # Cheap rejections first — avoid embedding work for short/error responses.
     if len(answer) < 100:
         logger.debug("Skipping cache write: response too short", length=len(answer))
         return
-        
+
     lower_answer = answer.lower()
     error_phrases = ["maaf saya tidak", "terjadi kesalahan", "maaf, aku tidak menemukan", "maaf, saya tidak menemukan"]
     if any(phrase in lower_answer for phrase in error_phrases):
         logger.debug("Skipping cache write: response contains error phrase")
         return
 
+    # Normalize 0 to None
+    if course_id == 0:
+        course_id = None
+
     # 1. Set Exact match (Redis)
     redis = get_redis_client()
-    key = _cache_key(query, course_id)
+    key = _cache_key(query, course_id, namespace=cache_namespace)
     ttl_ = ttl or settings.cache_query_ttl_seconds
-    
+
     # Base payload
-    payload = {"answer": answer, "sources": sources}
+    payload = {"answer": answer, "sources": sources, "namespace": cache_namespace}
     if course_id:  # This correctly handles both None and 0
         payload["course_id"] = int(course_id)
-    
+
     try:
         await redis.set(key, json.dumps(payload), ex=ttl_)
     except Exception as exc:
@@ -194,11 +224,13 @@ async def set_cached_response(
     # 2. Set Semantic match (Qdrant)
     try:
         await _ensure_semantic_collection()
-        ensure_llamaindex_configured()
-        
-        query_embedding = await Settings.embed_model.aget_query_embedding(query)
+
+        if query_embedding is None:
+            ensure_llamaindex_configured()
+            query_embedding = await Settings.embed_model.aget_query_embedding(query)
+
         qdrant = get_qdrant_client()
-        
+
         point_id = str(uuid.uuid4())
         await qdrant.client.upsert(
             collection_name="semantic_cache",
@@ -211,7 +243,7 @@ async def set_cached_response(
                 )
             ]
         )
-        logger.debug(f"Semantic Cache SET for query='{query[:60]}' course_id={course_id}")
+        logger.debug(f"Semantic Cache SET for query='{query[:60]}' course_id={course_id} namespace={cache_namespace}")
     except Exception as exc:
         logger.warning("Semantic cache SET failed", error=str(exc))
 

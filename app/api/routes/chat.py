@@ -41,6 +41,10 @@ from app.api.routes.ingest import get_arq_redis
 router = APIRouter()
 settings = get_settings()
 
+# Module-level set to keep references to background stream tasks alive
+# (prevents GC from cancelling them mid-flight after the SSE generator returns).
+_stream_bg_tasks: set[asyncio.Task] = set()
+
 def _flush_langfuse():
     """Background: flush Langfuse so traces are sent immediately."""
     lf = get_langfuse_client()
@@ -122,18 +126,36 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
         )
         await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
 async def _prepare_rag_context(
-    request: ChatRequest, 
-    current_user: User, 
+    request: ChatRequest,
+    current_user: User,
     conversation_id: str,
     resolved_query: str,
     db: AsyncSession
 ) -> dict:
-    """Shared context preparation for both /chat and /chat/stream."""
-    
+    """Shared context preparation for both /chat and /chat/stream.
+
+    Computes the query embedding ONCE and reuses it for both the semantic
+    cache lookup and the LTM lookup, avoiding redundant embedding API calls.
+    """
+    from llama_index.core import Settings as LISettings
+    from app.config.embedding_config import ensure_llamaindex_configured
+
+    # Embed once — reused by cache lookup, LTM lookup, and cache write.
+    try:
+        ensure_llamaindex_configured()
+        query_embedding = await LISettings.embed_model.aget_query_embedding(resolved_query)
+    except Exception as exc:
+        logger.warning(f"Failed to compute query embedding once: {exc}")
+        query_embedding = None
+
     # Check cache first
-    cached = await get_cached_response(resolved_query, course_id=request.course_id)
+    cached = await get_cached_response(
+        resolved_query,
+        course_id=request.course_id,
+        query_embedding=query_embedding,
+    )
     if cached:
-        return {"cached": cached}
+        return {"cached": cached, "query_embedding": query_embedding}
 
     # Build message history
     summary, recent_history = await get_or_summarize_history(
@@ -157,7 +179,11 @@ async def _prepare_rag_context(
     user_pref_dict = None
 
     if ltm_eligible:
-        ltm_profile = await qdrant_ltm.load(user_id=user_id, query=resolved_query)
+        ltm_profile = await qdrant_ltm.load(
+            user_id=user_id,
+            query=resolved_query,
+            query_embedding=query_embedding,
+        )
         # Fetch persistent preferences
         user_profile_obj = await db.get(UserProfile, user_id)
         if user_profile_obj:
@@ -175,8 +201,8 @@ async def _prepare_rag_context(
         "user_profile": ltm_profile,
         "user_preferences": user_pref_dict,
     }
-    
-    return {"cached": None, "initial_state": initial_state}
+
+    return {"cached": None, "initial_state": initial_state, "query_embedding": query_embedding}
 
 def _extract_sources(retrieved_context: list) -> list:
     sources = []
@@ -221,6 +247,7 @@ async def chat(
 
     context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
     cached = context.get("cached")
+    query_embedding = context.get("query_embedding")
 
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -228,11 +255,11 @@ async def chat(
             langfuse = get_client()
             with langfuse.start_as_current_observation(
                 as_type="generation",
-                name="peped-chat",
+                name="a-pedi-chat",
                 input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
             ) as root_obs:
                 with propagate_attributes(
-                    trace_name="peped-chat",
+                    trace_name="a-pedi-chat",
                     session_id=conversation_id,
                     user_id=f"{current_user.username} (ID: {current_user.user_id})",
                     tags=["api-chat", settings.app_env, "cache-hit"],
@@ -282,7 +309,7 @@ async def chat(
         langfuse = get_client()
 
         with propagate_attributes(
-            trace_name="peped-chat",
+            trace_name="a-pedi-chat",
             session_id=conversation_id,
             user_id=f"{current_user.username} (ID: {current_user.user_id})",
             tags=["api-chat", settings.app_env],
@@ -296,7 +323,7 @@ async def chat(
             langfuse_handler = CallbackHandler()
             result = await rag_graph.ainvoke(
                 initial_state,
-                config={"run_name": "peped-chat", "callbacks": [langfuse_handler]},
+                config={"run_name": "a-pedi-chat", "callbacks": [langfuse_handler]},
             )
 
             latency_ms = (time.perf_counter() - start_time) * 1000
@@ -326,7 +353,7 @@ async def chat(
     
     if retrieved_context:
         real_chunks = [c for c in retrieved_context if c.get("source") not in (None, "", "None")]
-        actual_chunks = len(real_chunks) if real_chunks else len(retrieved_context)
+        actual_chunks = len(real_chunks)
         scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
         if scores:
             max_chunk_score = max(scores)
@@ -342,7 +369,7 @@ async def chat(
             # ── Hybrid scores (pre-Cohere, raw LlamaIndex dense+BM25) ──
             hybrid_scores = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
             # ── Cohere scores (post-rerank) — same as final .score ──
-            cohere_scores  = [c.get("cohere_score") for c in retrieved_context if isinstance(c.get("cohere_score"), (int, float))]
+            cohere_scores  = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
 
             if hybrid_scores:
                 _lf.score(trace_id=trace_id, name="retriever_hybrid_max",  value=round(max(hybrid_scores), 4))
@@ -363,6 +390,7 @@ async def chat(
             answer=answer,
             sources=sources, # we can pass dict directly since the schema validation handles it
             course_id=effective_course_id,
+            query_embedding=query_embedding,
         )
     background_tasks.add_task(
         append_to_history,
@@ -449,6 +477,7 @@ async def chat_stream(
 
     context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
     cached = context.get("cached")
+    query_embedding = context.get("query_embedding")
 
     if cached:
         async def _stream_cached():
@@ -484,7 +513,7 @@ async def chat_stream(
         try:
             langfuse = get_client()
             with propagate_attributes(
-                trace_name="peped-chat-stream",
+                trace_name="a-pedi-chat-stream",
                 session_id=conversation_id,
                 user_id=f"{current_user.username} (ID: {current_user.user_id})",
                 tags=["api-chat-stream", settings.app_env],
@@ -497,10 +526,17 @@ async def chat_stream(
                 }
             ):
                 langfuse_handler = CallbackHandler()
-                config = {"run_name": "peped-chat-stream", "callbacks": [langfuse_handler]}
+                config = {"run_name": "a-pedi-chat-stream", "callbacks": [langfuse_handler]}
 
                 if resolved_query != request.query:
                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                token_count = 0
+                # Buffer tokens after the follow-up marker so we can validate and rebuild
+                # the "Penasaran tentang" block before the user sees it.
+                FOLLOWUP_MARKER = "**Penasaran tentang:**"
+                yielded_through = 0
+                buffering_followups = False
 
                 async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
                     kind = event.get("event", "")
@@ -528,11 +564,52 @@ async def chat_stream(
                             if chunk and hasattr(chunk, "content") and chunk.content:
                                 token = chunk.content
                                 full_answer += token
-                                yield f"data: {json.dumps({'token': token})}\n\n"
+                                token_count += 1
 
-                if await req.is_disconnected():
-                    logger.info("Client disconnected during stream", conversation_id=conversation_id)
-                    return
+                                # Only buffer follow-ups for KNOWLEDGE generation; other handlers don't emit the marker.
+                                if not buffering_followups and node_name == "generate_node":
+                                    marker_idx = full_answer.find(FOLLOWUP_MARKER, yielded_through)
+                                    if marker_idx != -1:
+                                        # Emit everything up to (but not including) the marker, then stop streaming.
+                                        pending = full_answer[yielded_through:marker_idx]
+                                        if pending:
+                                            yield f"data: {json.dumps({'token': pending})}\n\n"
+                                        yielded_through = marker_idx
+                                        buffering_followups = True
+
+                                if not buffering_followups:
+                                    yield f"data: {json.dumps({'token': token})}\n\n"
+                                    yielded_through = len(full_answer)
+
+                                # Periodic disconnect check — bail out early if user closed the tab.
+                                if token_count % 10 == 0 and await req.is_disconnected():
+                                    logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                                    return
+
+                # Stream finished: validate the buffered follow-up block (if any) and emit rebuilt version.
+                if buffering_followups:
+                    try:
+                        from app.agents.memory import extract_follow_up_questions
+                        from app.retrieval.followup_validator import validate_followups, render_followup_block
+
+                        buffered = full_answer[yielded_through:]
+                        candidates = extract_follow_up_questions(buffered)
+                        validated = await validate_followups(candidates) if candidates else []
+                        rebuilt = render_followup_block(validated)
+                        if rebuilt:
+                            # Insert blank line before block for visual separation
+                            emit = f"\n\n{rebuilt}" if not full_answer[:yielded_through].endswith("\n") else rebuilt
+                            yield f"data: {json.dumps({'token': emit})}\n\n"
+                            # Reflect the validated block in full_answer for downstream cache/history.
+                            full_answer = full_answer[:yielded_through].rstrip() + "\n\n" + rebuilt
+                        else:
+                            full_answer = full_answer[:yielded_through].rstrip()
+                    except Exception as exc:
+                        logger.warning(f"Stream follow-up validation failed, emitting unvalidated: {exc}")
+                        # Fail-open: emit the original buffered text
+                        unvalidated = full_answer[yielded_through:]
+                        if unvalidated:
+                            yield f"data: {json.dumps({'token': unvalidated})}\n\n"
 
         except Exception as exc:
             logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
@@ -548,7 +625,7 @@ async def chat_stream(
             cur_trace_id = getattr(langfuse_handler, "last_trace_id", None) if langfuse_handler else None
 
             hybrid_scores_s = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            cohere_scores_s  = [c.get("cohere_score")  for c in retrieved_context if isinstance(c.get("cohere_score"),  (int, float))]
+            cohere_scores_s  = [c.get("score")  for c in retrieved_context if isinstance(c.get("score"),  (int, float))]
 
             if cur_trace_id:
                 if hybrid_scores_s:
@@ -565,7 +642,13 @@ async def chat_stream(
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
             if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS"):
-                await set_cached_response(query=resolved_query, answer=full_answer, sources=sources, course_id=effective_course_id)
+                await set_cached_response(
+                    query=resolved_query,
+                    answer=full_answer,
+                    sources=sources,
+                    course_id=effective_course_id,
+                    query_embedding=query_embedding,
+                )
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
             await batch_logger.add_log({
                 "conversation_id": conversation_id,
@@ -577,8 +660,10 @@ async def chat_stream(
                 "cache_hit": False,
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
-            # Fix: use asyncio.create_task instead of bare sync call inside async generator
-            asyncio.create_task(asyncio.to_thread(_flush_langfuse))
+            # Tracked task set so Python doesn't GC mid-flight after the SSE generator returns.
+            task = asyncio.create_task(asyncio.to_thread(_flush_langfuse))
+            _stream_bg_tasks.add(task)
+            task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as bg_err:
             logger.warning(f"Stream background task error: {bg_err}")
 

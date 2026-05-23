@@ -1,11 +1,15 @@
 import asyncio
+import os
 from typing import Any
 from arq.connections import RedisSettings
 from loguru import logger
 
+from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.database.postgres import AsyncSessionLocal
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
+from app.ingestion.portfolio_sync import sync_portfolio_knowledge_base
+from app.observability import set_langfuse_client, get_langfuse_client
 
 settings = get_settings()
 
@@ -35,13 +39,65 @@ async def dummy_task(ctx: dict, name: str) -> str:
     await asyncio.sleep(1)
     return f"Hello, {name}! Task completed."
 
+
+async def sync_portfolio_task(ctx: dict, force_reingest: bool = False) -> dict[str, Any]:
+    """arq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
+    logger.info(f"Starting Askfer portfolio sync via arq", force_reingest=force_reingest)
+    try:
+        async with AsyncSessionLocal() as session:
+            summary = await sync_portfolio_knowledge_base(
+                session=session,
+                force_reingest=force_reingest,
+            )
+            await session.commit()
+            logger.info(f"arq portfolio sync completed: {summary}")
+            return summary
+    except Exception as exc:
+        logger.error(f"arq portfolio sync failed: {exc}")
+        raise
+
 async def startup(ctx: dict):
     """Initialize resources for the worker."""
+    setup_logging(debug=settings.app_debug)
     logger.info("Worker starting up...")
+
+    if settings.langfuse_public_key and settings.langfuse_secret_key:
+        try:
+            os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+            os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+            os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+
+            from langfuse import Langfuse
+            lf = Langfuse(
+                public_key=settings.langfuse_public_key,
+                secret_key=settings.langfuse_secret_key,
+                host=settings.langfuse_host,
+                debug=settings.app_debug,
+            )
+            set_langfuse_client(lf)
+            logger.info("Worker Langfuse v4 initialized")
+        except Exception as e:
+            logger.warning(f"Worker Langfuse init failed: {e}")
+    else:
+        logger.warning("Worker Langfuse keys not set — tracing disabled")
+
+    try:
+        from app.config.embedding_config import ensure_llamaindex_configured
+        ensure_llamaindex_configured()
+        logger.info("Worker embedding model pre-warmed")
+    except Exception as e:
+        logger.warning(f"Worker embedding pre-warm failed: {e}")
+
 
 async def shutdown(ctx: dict):
     """Cleanup resources for the worker."""
     logger.info("Worker shutting down...")
+    lf = get_langfuse_client()
+    if lf:
+        try:
+            lf.flush()
+        except Exception as e:
+            logger.warning(f"Worker Langfuse flush failed: {e}")
 
 async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[str, Any]:
     """
@@ -99,51 +155,64 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
         return {"status": "skipped", "reason": "no_history"}
 
-    # Generate a definitive session summary for LTM and extract preferences
+    # Generate a definitive session summary for LTM and extract preferences via structured output
     from langchain_core.messages import HumanMessage
-    import json
+    from pydantic import BaseModel, Field
+
+    class LTMSummaryResult(BaseModel):
+        summary: str = Field(
+            description=(
+                "All distinct topics discussed in the session. Max 30 words. "
+                "Telegraphic style — drop articles (a/an/the) for token efficiency, "
+                "since this is internal stored memory not shown to users. "
+                "Example: 'User asked about Amartha products and Client Protection rules.'"
+            )
+        )
+        role: str | None = Field(
+            default=None,
+            description="User's job/role if mentioned (e.g., 'Loan Officer'), else null."
+        )
+        preferred_tone: str | None = Field(
+            default=None,
+            description="Tone the user explicitly requested (e.g., 'formal', 'casual'), else null."
+        )
+        formatting_pref: str | None = Field(
+            default=None,
+            description="Output format the user explicitly requested (e.g., 'bullet points'), else null."
+        )
+        custom_instructions: str | None = Field(
+            default=None,
+            description="Any other specific instructions the user gave, else null."
+        )
+
     raw_tail = "\n".join([f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')[:300]}" for m in recent_history])
-    
+
     prompt = (
-        "Analyze the following conversation and output a STRICT JSON object with this structure:\n"
-        "{\n"
-        '  "summary": "Summarize ALL distinct topics discussed. MAX 30 WORDS. Use ultra-short telegraphic style (drop a/an/the/filler). Example: \'User ask Amartha products AND Client Protection rules.\'",\n'
-        '  "preferences": {\n'
-        '    "role": "User\'s job/role if mentioned (e.g., Loan Officer), else null",\n'
-        '    "preferred_tone": "Requested tone (e.g., formal, casual), else null",\n'
-        '    "formatting_pref": "Requested format (e.g., bullet points), else null",\n'
-        '    "custom_instructions": "Other specific instructions, else null"\n'
-        "  }\n"
-        "}\n\n"
+        "Analyze the following conversation and produce a structured session summary "
+        "plus any user preferences inferred from it.\n\n"
         f"Previous Context:\n{summary}\n\n"
-        f"Recent Conversation:\n{raw_tail}\n\n"
-        "JSON Output:"
+        f"Recent Conversation:\n{raw_tail}"
     )
-    
+
     session_summary = ""
     prefs_data = None
     try:
         from langfuse.langchain import CallbackHandler
         lf_handler = CallbackHandler()
-        resp = await cheap_llm.ainvoke(
+        structured = cheap_llm.with_structured_output(LTMSummaryResult)
+        result = await structured.ainvoke(
             [HumanMessage(content=prompt)],
-            config={"callbacks": [lf_handler], "run_name": "peped-ltm-sync-summarize"}
+            config={"callbacks": [lf_handler], "run_name": "a-pedi-ltm-sync-summarize"}
         )
-        content = resp.content.strip()
-        # Remove markdown code blocks if any
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
-        
-        parsed = json.loads(content)
-        session_summary = parsed.get("summary", "")
-        prefs_data = parsed.get("preferences", {})
+        session_summary = result.summary or ""
+        prefs_data = {
+            "role": result.role,
+            "preferred_tone": result.preferred_tone,
+            "formatting_pref": result.formatting_pref,
+            "custom_instructions": result.custom_instructions,
+        }
     except Exception as exc:
-        logger.warning(f"LTM sync: LLM summarization/extraction failed, falling back to raw concat: {exc}")
+        logger.warning(f"LTM sync: structured summarization failed, falling back to raw concat: {exc}")
         session_summary = summary if summary else raw_tail[:1000]
 
     # Save preferences to PostgreSQL if any were detected
@@ -198,6 +267,6 @@ class WorkerSettings:
         database=settings.redis_db,
         password=settings.redis_password if settings.redis_password else None,
     )
-    functions = [sync_moodle_task, dummy_task, sync_ltm_task]
+    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task]
     on_startup = startup
     on_shutdown = shutdown

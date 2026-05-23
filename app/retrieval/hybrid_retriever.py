@@ -28,8 +28,6 @@ def _get_cached_index(collection_name: str) -> VectorStoreIndex:
 async def hybrid_search(
     query: str,
     top_k: int | None = None,
-    bm25_weight: float | None = None,  # Kept for signature compatibility
-    vector_weight: float | None = None, # Kept for signature compatibility
     collection: str | None = None,      # Optional: override collection
 ) -> list[RetrievedChunk]:
     """
@@ -38,8 +36,6 @@ async def hybrid_search(
     Args:
         query: User query.
         top_k: Number of final results after fusion.
-        bm25_weight: Ignored
-        vector_weight: Ignored
         collection: Qdrant collection name. Defaults to settings.qdrant_kb_collection.
 
     Returns:

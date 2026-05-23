@@ -79,10 +79,26 @@ async def ingest_document(
         # If it's markdown, we use MarkdownNodeParser to split by headers (H1, H2, H3)
         # Otherwise, we fallback to the global Settings.text_splitter
         is_markdown = source.lower().endswith(".md") or text.strip().startswith("#")
-        
+
         if is_markdown:
             parser = MarkdownNodeParser()
-            nodes = parser.get_nodes_from_documents([llama_doc])
+            header_nodes = parser.get_nodes_from_documents([llama_doc])
+
+            # Defense-in-depth: re-split any oversized (>600 token) header section.
+            nodes = []
+            for n in header_nodes:
+                if count_tokens(n.text) > 600:
+                    sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
+                    sub_nodes = Settings.text_splitter.get_nodes_from_documents([sub_doc])
+                    logger.info(
+                        "Oversized header section re-split via TokenTextSplitter",
+                        document_id=document_id,
+                        original_tokens=count_tokens(n.text),
+                        sub_chunks=len(sub_nodes),
+                    )
+                    nodes.extend(sub_nodes)
+                else:
+                    nodes.append(n)
             logger.info("Text parsed via MarkdownNodeParser (Headers)", document_id=document_id)
         else:
             nodes = Settings.text_splitter.get_nodes_from_documents([llama_doc])

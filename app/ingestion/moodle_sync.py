@@ -123,13 +123,13 @@ async def _download_file(client: httpx.AsyncClient, url: str) -> bytes:
 async def _delete_stale_documents(session: AsyncSession, course_id: int, current_filenames: list[str]):
     """
     Delete documents in DB/Qdrant for this course that are no longer present in Moodle.
-    This ensures that when files are renamed or deleted in Moodle, they are removed from our RAG.
+    Batched: one Qdrant delete + one PG bulk delete + one cache flush per course
+    instead of N round-trips per stale document.
     """
     from sqlalchemy import select
     from sqlalchemy.sql import text
 
     # Find documents for this course_id (from metadata JSON)
-    # Note: we check both string and int versions to be safe with different JSON encoders
     from sqlalchemy import or_
     stmt = select(Document).where(
         or_(
@@ -137,39 +137,47 @@ async def _delete_stale_documents(session: AsyncSession, course_id: int, current
             text("metadata->>'course_id' = :cid_int")
         )
     ).params(cid_str=str(course_id), cid_int=str(course_id))
-    
+
     result = await session.execute(stmt)
     docs = result.scalars().all()
 
-    for doc in docs:
-        if doc.source not in current_filenames:
-            logger.info("Deleting stale document (not in Moodle anymore)", source=doc.source, course_id=course_id)
-            
-            # 1. Delete from Qdrant
-            qdrant = get_qdrant_client()
-            try:
-                await qdrant.client.delete(
-                    collection_name=settings.qdrant_kb_collection,
-                    points_selector=qdrant_models.FilterSelector(
-                        filter=qdrant_models.Filter(
-                            must=[qdrant_models.FieldCondition(
-                                key="document_id",
-                                match=qdrant_models.MatchValue(value=str(doc.id)),
-                            )]
-                        )
-                    ),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to delete stale Qdrant points for {doc.source}", error=str(e))
+    stale_docs = [d for d in docs if d.source not in current_filenames]
+    if not stale_docs:
+        return
 
-            # 2. Delete from PG (chunks will be deleted by FK cascade)
-            await session.delete(doc)
-            
-            # 3. Flush course cache
-            from app.utils.cache import flush_cache_by_course
-            await flush_cache_by_course(course_id)
-    
+    stale_ids = [str(d.id) for d in stale_docs]
+    logger.info(
+        "Deleting stale documents in batch (not in Moodle anymore)",
+        course_id=course_id,
+        count=len(stale_ids),
+        sources=[d.source for d in stale_docs],
+    )
+
+    # 1. Single Qdrant delete via MatchAny — one round-trip for all stale docs.
+    qdrant = get_qdrant_client()
+    try:
+        await qdrant.client.delete(
+            collection_name=settings.qdrant_kb_collection,
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[qdrant_models.FieldCondition(
+                        key="document_id",
+                        match=qdrant_models.MatchAny(any=stale_ids),
+                    )]
+                )
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to batch-delete stale Qdrant points for course {course_id}", error=str(e))
+
+    # 2. PG: delete docs in one go (chunks cascade).
+    for d in stale_docs:
+        await session.delete(d)
     await session.flush()
+
+    # 3. Single cache flush for the course (deduplicated).
+    from app.utils.cache import flush_cache_by_course
+    await flush_cache_by_course(course_id)
 
 
 async def _ingest_markdown(
@@ -274,7 +282,25 @@ async def _ingest_markdown(
     # ── 3. Split by Markdown Headers (H1 / H2 / H3) ─────────────────────
     ensure_llamaindex_configured(chunk_size=512, chunk_overlap=50)
     parser = MarkdownNodeParser()
-    nodes = parser.get_nodes_from_documents([llama_doc])
+    header_nodes = parser.get_nodes_from_documents([llama_doc])
+
+    # Defense-in-depth: if any single header section is oversized (> 600 tokens),
+    # re-split it via the configured TokenTextSplitter so it doesn't dilute retrieval.
+    from llama_index.core import Settings as LISettings
+    nodes = []
+    for n in header_nodes:
+        if count_tokens(n.text) > 600:
+            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
+            sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
+            logger.info(
+                "Oversized header section re-split via TokenTextSplitter",
+                source=filename,
+                original_tokens=count_tokens(n.text),
+                sub_chunks=len(sub_nodes),
+            )
+            nodes.extend(sub_nodes)
+        else:
+            nodes.append(n)
 
     # Filter out empty or whitespace-only nodes
     original_node_count = len(nodes)

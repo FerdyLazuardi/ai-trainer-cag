@@ -18,6 +18,8 @@ class BatchLogger:
         self.redis_key = "agent_log_buffer"
         self._stop_event = asyncio.Event()
         self._flush_task: Optional[asyncio.Task] = None
+        self._flush_lock = asyncio.Lock()
+        self._inflight: set[asyncio.Task] = set()
 
     async def start(self):
         """Start the background flushing task."""
@@ -59,8 +61,11 @@ class BatchLogger:
             # For simplicity, we check the length and flush if it's > batch_size.
             list_len = await redis.llen(self.redis_key)
             if list_len >= self.batch_size:
-                # Trigger an immediate background flush without blocking the request
-                asyncio.create_task(self.flush())
+                # Trigger an immediate background flush without blocking the request.
+                # Track the task so Python doesn't GC it mid-flight.
+                task = asyncio.create_task(self.flush())
+                self._inflight.add(task)
+                task.add_done_callback(self._inflight.discard)
         except Exception as e:
             logger.error(f"Failed to buffer log to Redis: {e}")
 
@@ -78,53 +83,54 @@ class BatchLogger:
                 await asyncio.sleep(1)  # Prevent tight loop on errors
 
     async def flush(self):
-        """Flush logs from Redis to PostgreSQL."""
-        redis = get_redis_client()
-        temp_key = f"{self.redis_key}:temp"
-        
-        try:
-            # check if redis is available
-            await redis.ping()
-            
-            # Handle previously failed flushes if temp key exists
-            if not await redis.exists(temp_key):
-                if await redis.llen(self.redis_key) == 0:
+        """Flush logs from Redis to PostgreSQL. Serialized via flush_lock."""
+        async with self._flush_lock:
+            redis = get_redis_client()
+            temp_key = f"{self.redis_key}:temp"
+
+            try:
+                # check if redis is available
+                await redis.ping()
+
+                # Handle previously failed flushes if temp key exists
+                if not await redis.exists(temp_key):
+                    if await redis.llen(self.redis_key) == 0:
+                        return
+                    # Atomic rename to prepare for processing
+                    await redis.rename(self.redis_key, temp_key)
+
+                # Get all logs from temp list
+                raw_logs = await redis.lrange(temp_key, 0, -1)
+                if not raw_logs:
+                    await redis.delete(temp_key)
                     return
-                # Atomic rename to prepare for processing
-                await redis.rename(self.redis_key, temp_key)
-            
-            # Get all logs from temp list
-            raw_logs = await redis.lrange(temp_key, 0, -1)
-            if not raw_logs:
+
+                logger.info(f"Flushing {len(raw_logs)} logs from Redis to PostgreSQL")
+
+                logs_to_insert = []
+                for raw_log in raw_logs:
+                    try:
+                        log_data = json.loads(raw_log)
+                        # Convert isoformat string back to datetime
+                        if "created_at" in log_data and isinstance(log_data["created_at"], str):
+                            log_data["created_at"] = datetime.fromisoformat(log_data["created_at"])
+                        logs_to_insert.append(log_data)
+                    except Exception as e:
+                        logger.error(f"Error parsing log from Redis: {e}")
+
+                if logs_to_insert:
+                    async with AsyncSessionLocal() as session:
+                        await session.execute(insert(AgentLog), logs_to_insert)
+                        await session.commit()
+                    logger.info(f"Successfully flushed {len(logs_to_insert)} logs to PostgreSQL")
+
+                # Clean up temp key only after successful DB commit
                 await redis.delete(temp_key)
-                return
 
-            logger.info(f"Flushing {len(raw_logs)} logs from Redis to PostgreSQL")
-            
-            logs_to_insert = []
-            for raw_log in raw_logs:
-                try:
-                    log_data = json.loads(raw_log)
-                    # Convert isoformat string back to datetime
-                    if "created_at" in log_data and isinstance(log_data["created_at"], str):
-                        log_data["created_at"] = datetime.fromisoformat(log_data["created_at"])
-                    logs_to_insert.append(log_data)
-                except Exception as e:
-                    logger.error(f"Error parsing log from Redis: {e}")
-
-            if logs_to_insert:
-                async with AsyncSessionLocal() as session:
-                    await session.execute(insert(AgentLog), logs_to_insert)
-                    await session.commit()
-                logger.info(f"Successfully flushed {len(logs_to_insert)} logs to PostgreSQL")
-            
-            # Clean up temp key only after successful DB commit
-            await redis.delete(temp_key)
-                
-        except Exception as e:
-            if "no such key" in str(e).lower():
-                return
-            logger.error(f"Error during BatchLogger flush: {e}")
+            except Exception as e:
+                if "no such key" in str(e).lower():
+                    return
+                logger.error(f"Error during BatchLogger flush: {e}")
 
 # Singleton instance
 batch_logger = BatchLogger()

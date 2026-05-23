@@ -157,6 +157,50 @@ class QdrantManager:
         """Ensure the Knowledge_Base collection exists and has the correct vector dimension."""
         await self._validate_or_create_collection(settings.qdrant_kb_collection, self._create_kb_collection)
 
+    # ── Personal Portfolio Collection (Askfer) ───────────────────────────────
+
+    async def _create_personal_collection(self) -> None:
+        """Create the Personal_Portfolio Qdrant collection (hybrid dense+sparse)
+        for Askfer — chunks scraped from portfolio website + CV PDF."""
+        pc = settings.qdrant_personal_collection
+        await self.client.create_collection(
+            collection_name=pc,
+            vectors_config={
+                "text-dense": VectorParams(
+                    size=self.dim,
+                    distance=Distance.COSINE,
+                )
+            },
+            sparse_vectors_config={
+                "text-sparse": models.SparseVectorParams(
+                    modifier=models.Modifier.IDF,
+                )
+            },
+            hnsw_config=HnswConfigDiff(
+                m=16,
+                ef_construct=100,
+            ),
+            on_disk_payload=True,
+        )
+        for field, schema in [
+            ("doc_type", PayloadSchemaType.KEYWORD),
+            ("document_id", PayloadSchemaType.KEYWORD),
+            ("source", PayloadSchemaType.KEYWORD),
+            ("project_slug", PayloadSchemaType.KEYWORD),
+        ]:
+            await self.client.create_payload_index(
+                collection_name=pc,
+                field_name=field,
+                field_schema=schema,
+            )
+        logger.info("Qdrant Personal_Portfolio collection created", collection=pc, dim=self.dim)
+
+    async def ensure_personal_collection(self) -> None:
+        """Ensure the Personal_Portfolio collection exists with correct dimension."""
+        await self._validate_or_create_collection(
+            settings.qdrant_personal_collection, self._create_personal_collection
+        )
+
     # ── Long-Term Memory Collection ───────────────────────────────────────────
 
     _LTM_COLLECTION = "user_ltm_memories"

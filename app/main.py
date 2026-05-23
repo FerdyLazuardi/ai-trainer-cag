@@ -13,7 +13,7 @@ from loguru import logger
 
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
-from app.api.routes import chat, ingest
+from app.api.routes import chat, ingest, askfer
 from app.api.auth import get_current_user
 from app.observability import set_langfuse_client, get_langfuse_client
 
@@ -93,6 +93,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await qdrant.ensure_ltm_collection()
     logger.info("Qdrant LTM collection ready (user_ltm_memories)")
 
+    # Initialize Personal_Portfolio collection (Askfer)
+    await qdrant.ensure_personal_collection()
+    logger.info("Qdrant Personal_Portfolio collection ready", collection=settings.qdrant_personal_collection)
+
     yield
 
     # Shutdown
@@ -128,6 +132,7 @@ def create_app() -> FastAPI:
     # ─── Routes ─────────────────────────────────────────────────────────────
     app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
     app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
+    app.include_router(askfer.router, prefix="/api/v1", tags=["Askfer"])
 
     # Mount static files correctly
     import os
@@ -154,6 +159,15 @@ def create_app() -> FastAPI:
             with open(index_path, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
         return {"message": "UI files not found."}
+
+    @app.get("/askfer-ui", summary="Askfer Portfolio Chat UI (Development)")
+    async def askfer_ui():
+        """Serve the Askfer dev preview chat interface."""
+        askfer_path = os.path.join(static_dir, "askfer.html")
+        if os.path.exists(askfer_path):
+            with open(askfer_path, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+        return {"message": "Askfer UI files not found."}
         
     @app.get("/health", summary="Health Check")
     async def health_check() -> dict:

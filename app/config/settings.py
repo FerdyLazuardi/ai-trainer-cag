@@ -40,14 +40,6 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
-    @computed_field  # type: ignore[misc]
-    @property
-    def postgres_dsn_sync(self) -> str:
-        return (
-            f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
     # ─── Redis ──────────────────────────────────────────────────────────────
     redis_host: str = "localhost"
     redis_port: int = 6379
@@ -92,18 +84,35 @@ class Settings(BaseSettings):
 
     # ─── Context Engineering ────────────────────────────────────────────────
     max_context_tokens: int = 6000
-    retrieval_top_k: int = 20
+    retrieval_top_k: int = 15
     reranked_top_k: int = 5
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
 
+    # ─── Follow-up validation ───────────────────────────────────────────────
+    followup_validation_enabled: bool = True
+    followup_validation_threshold: float = 0.5
+
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    cache_query_ttl_seconds: int = 300
+    cache_query_ttl_seconds: int = 1800
     conversation_ttl_seconds: int = 3600
 
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
+
+    # ─── Askfer (Portfolio Chat) ────────────────────────────────────────────
+    qdrant_personal_collection: str = "Personal_Portfolio"
+    portfolio_sitemap_url: str = "https://ferdy-fadhil-lazuardi.my.id/sitemap.xml"
+    portfolio_homepage_url: str = "https://ferdy-fadhil-lazuardi.my.id/"
+    portfolio_project_url_pattern: str = r"^https://ferdy-fadhil-lazuardi\.my\.id/projects/[^/]+/?$"
+    portfolio_cv_url: str = "https://ferdy-fadhil-lazuardi.my.id/CV%20-%20Ferdy%20Fadhil%20Lazuardi.pdf"
+    askfer_admin_secret: str = Field(default="", alias="ASKFER_ADMIN_SECRET")
+    askfer_rate_limit_per_minute: int = 10
+    # Token-budget tuning — Askfer is stateless, so we can keep retrieval lean.
+    askfer_retrieval_top_k: int = 8
+    askfer_reranked_top_k: int = 3
+    askfer_chunk_text_max_chars: int = 600
 
     # ─── Security ───────────────────────────────────────────────────────────
     jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"

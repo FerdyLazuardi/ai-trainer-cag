@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Askfer — Ferdy's Portfolio Chat (Dev)</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --accent: #38bdf8;
+            --accent-2: #818cf8;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .wrap {
+            width: 100%;
+            max-width: 720px;
+            padding: 24px;
+        }
+        h1 {
+            margin: 0 0 4px 0;
+            font-size: 22px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .sub {
+            color: var(--muted);
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+        #log {
+            background: var(--panel);
+            border-radius: 12px;
+            padding: 16px;
+            height: 460px;
+            overflow-y: auto;
+            font-size: 14px;
+            line-height: 1.5;
+            border: 1px solid #334155;
+        }
+        .msg { margin-bottom: 16px; }
+        .msg .role {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .msg.user .role { color: var(--accent); }
+        .msg.askfer .role { color: var(--accent-2); }
+        .msg pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin: 0;
+            font-family: inherit;
+        }
+        .sources {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .sources a { color: var(--accent); text-decoration: none; }
+        .input-row {
+            margin-top: 12px;
+            display: flex;
+            gap: 8px;
+        }
+        textarea {
+            flex: 1;
+            background: var(--panel);
+            border: 1px solid #334155;
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: none;
+        }
+        button {
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+            color: #0f172a;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <h1>Askfer</h1>
+        <div class="sub">Ferdy's portfolio chat — dev preview · POST /api/v1/askfer/stream</div>
+        <div id="log"></div>
+        <div class="input-row">
+            <textarea id="prompt" rows="2" placeholder="Ask about Ferdy's projects, tech stack, experience..."></textarea>
+            <button id="send" onclick="send()">Send</button>
+        </div>
+        <div class="meta">Stateless · No auth · Rate limit 10/min/IP</div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById("log");
+        const promptEl = document.getElementById("prompt");
+        const btn = document.getElementById("send");
+
+        promptEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
+        });
+
+        function appendMessage(role, label) {
+            const div = document.createElement("div");
+            div.className = "msg " + role;
+            div.innerHTML = `<div class="role">${label}</div><pre></pre><div class="sources"></div>`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+            return {
+                pre: div.querySelector("pre"),
+                sources: div.querySelector(".sources"),
+            };
+        }
+
+        async function send() {
+            const query = promptEl.value.trim();
+            if (!query) return;
+            btn.disabled = true;
+            promptEl.value = "";
+
+            appendMessage("user", "You").pre.textContent = query;
+            const out = appendMessage("askfer", "Askfer");
+
+            try {
+                const res = await fetch("/api/v1/askfer/stream", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query }),
+                });
+                if (!res.ok) {
+                    out.pre.textContent = `Error: HTTP ${res.status}`;
+                    btn.disabled = false;
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    let sepIdx;
+                    while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+                        const block = buffer.slice(0, sepIdx);
+                        buffer = buffer.slice(sepIdx + 2);
+                        const eventMatch = block.match(/^event:\s*(\S+)/m);
+                        const dataMatch = block.match(/^data:\s*(.*)$/m);
+                        if (!dataMatch) continue;
+                        const data = JSON.parse(dataMatch[1]);
+
+                        if (eventMatch && eventMatch[1] === "done") {
+                            if (data.sources && data.sources.length) {
+                                out.sources.innerHTML = "Sources: " + data.sources.map(
+                                    (s) => `<a href="${s.url}" target="_blank">${s.title}</a>`
+                                ).join(" · ");
+                            }
+                        } else if (eventMatch && eventMatch[1] === "error") {
+                            out.pre.textContent += "\n[Error: " + data.error + "]";
+                        } else if (data.token) {
+                            out.pre.textContent += data.token;
+                            logEl.scrollTop = logEl.scrollHeight;
+                        }
+                    }
+                }
+            } catch (err) {
+                out.pre.textContent = "Network error: " + err.message;
+            } finally {
+                btn.disabled = false;
+                promptEl.focus();
+            }
+        }
+    </script>
+</body>
+</html>

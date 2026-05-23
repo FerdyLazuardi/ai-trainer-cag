@@ -16,7 +16,7 @@
                 <div class="header-info">
                     <div class="online-dot"></div>
                     <div style="display:flex; flex-direction:column;">
-                        <span>Peped AI Trainer</span>
+                        <span>A-Pedi AI Trainer</span>
                         <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
                     </div>
                 </div>
@@ -120,8 +120,8 @@ function toggleChat() {
             // ===== CLOSE =====
             chatBox.classList.remove("animate__fadeInUp");
             chatBox.classList.add("animate__fadeOutDown");
-            
-            setTimeout(() => { 
+
+            setTimeout(() => {
                 chatBox.style.display = "none";
                 // Tampilkan kembali bubble button saat chat ditutup
                 toggleBtn.style.opacity = "1";
@@ -143,36 +143,36 @@ function showIntro() {
         : 'A-Team';
 
     addAIResponse(
-        `Hi **${nama}**! Aku **Peped**. ` +
+        `Hi **${nama}**! Aku **A-Pedi**. ` +
         `Ada yang bisa aku bantu hari ini terkait materi Amarthapedia? 😊`
     );
 }
 
 async function loadHistory() {
-    // Selalu tampilkan intro pertama kali
+
     setTimeout(showIntro, 100);
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-    const headers = { 
+    const headers = {
         "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true" 
+        "ngrok-skip-browser-warning": "true"
     };
-    
+
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
-    
+
     try {
         const sessionId = getSessionId();
         const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
             method: "GET",
             headers: headers
         });
-        
+
         if (!res.ok) throw new Error("No history found");
-        
+
         const history = await res.json();
-        
+
         if (history && history.length > 0) {
             // Tunggu sedikit agar intro muncul duluan sebelum history
             setTimeout(() => {
@@ -192,11 +192,11 @@ async function clearChat() {
     if (confirm("Yakin mau hapus semua chat history?")) {
         const sessionId = getSessionId();
         const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-        const headers = { 
+        const headers = {
             "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true" 
+            "ngrok-skip-browser-warning": "true"
         };
-        
+
         if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
             headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
         }
@@ -246,7 +246,7 @@ function addMessage(text, type) {
     wrap.appendChild(bubble);
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
-    
+
     return wrap;
 }
 
@@ -326,17 +326,17 @@ function createStreamBubble() {
             bubble.classList.add("streaming");
             const typingDiv = bubble.querySelector(".typing");
             if (typingDiv) typingDiv.remove();
-            
+
             bubble.appendChild(contentDiv);
             bubble.appendChild(timeSpan);
         }
     } else {
         wrap = document.createElement("div");
         wrap.className = "msg ai";
-        
+
         bubble = document.createElement("div");
         bubble.className = "bubble ai streaming";
-        
+
         bubble.appendChild(contentDiv);
         bubble.appendChild(timeSpan);
         wrap.appendChild(bubble);
@@ -386,11 +386,11 @@ async function send() {
         ? API_BASE_URL
         : "";
 
-    const headers = { 
+    const headers = {
         "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true" 
+        "ngrok-skip-browser-warning": "true"
     };
-    
+
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -449,12 +449,12 @@ async function send() {
             if (_displayedText.length < _targetText.length) {
                 const remaining = _targetText.length - _displayedText.length;
                 // Reveal chunk by chunk to catch up smoothly
-                const chunkSize = Math.max(1, Math.floor(remaining / 4)); 
+                const chunkSize = Math.max(1, Math.floor(remaining / 4));
                 _displayedText += _targetText.substring(_displayedText.length, _displayedText.length + chunkSize);
-                
+
                 // Add inline cursor BEFORE parsing markdown so it stays inside paragraph blocks <p>
                 const renderText = _displayedText + '<span class="streaming-cursor-inline">▍</span>';
-                
+
                 const tempDiv = document.createElement("div");
                 tempDiv.innerHTML = marked.parse(renderText);
                 tempDiv.querySelectorAll("a").forEach(link => {
@@ -464,15 +464,15 @@ async function send() {
                 contentDiv.innerHTML = tempDiv.innerHTML;
                 messages.scrollTop = messages.scrollHeight;
             }
-            
+
             if (_streamActive || _displayedText.length < _targetText.length) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
+                finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, A-Pedi bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
             }
         }
-        
+
         smoothStreamWorker();
 
         while (true) {
@@ -537,7 +537,7 @@ async function send() {
                 }
             }
         }
-        
+
         // Signal stream logic is finished receiving
         _streamActive = false;
 
@@ -584,7 +584,7 @@ async function send() {
             const data = await fallbackRes.json();
             removeTyping(); // hapus dots SETELAH response tiba
 
-            const reply = data?.answer || "Wah, Peped bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
+            const reply = data?.answer || "Wah, A-Pedi bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
             streamMessageFallback(reply, "ai");
 
         } catch (fallbackErr) {
@@ -620,7 +620,7 @@ function streamMessageFallback(fullText, type) {
 
     const contentDiv = document.createElement("div");
     contentDiv.className = "content";
-    
+
     const timeSpan = document.createElement("span");
     timeSpan.className = "time";
     timeSpan.textContent = getTime();
@@ -632,7 +632,7 @@ function streamMessageFallback(fullText, type) {
 
     let currentText = "";
     let i = 0;
-    
+
     const speed = Math.max(10, Math.min(30, 2000 / fullText.length));
 
     function typeChar() {

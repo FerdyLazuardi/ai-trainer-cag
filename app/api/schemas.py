@@ -63,3 +63,22 @@ class IngestResponse(BaseModel):
     chunks_count: int
     total_tokens: int
     message: str = "Document ingested successfully"
+
+
+# ─── Askfer (Portfolio Chat) ──────────────────────────────────────────────────
+
+class AskferRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=1000, description="Visitor question")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"query": "What did you build in the Agent Network project?"}
+        }
+    }
+
+
+class AskferSyncRequest(BaseModel):
+    force_reingest: bool = Field(
+        default=False,
+        description="Re-process all portfolio docs even if content_hash matches.",
+    )

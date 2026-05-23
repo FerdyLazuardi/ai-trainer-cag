@@ -64,13 +64,14 @@ class QdrantLTMService:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    async def load(self, user_id: str, query: str) -> dict:
+    async def load(self, user_id: str, query: str, query_embedding: list[float] | None = None) -> dict:
         """
         Semantic retrieval of the most relevant past episodes for this user.
 
         Args:
             user_id: Moodle user identifier.
             query:   The user's current query (used as the retrieval key).
+            query_embedding: Optional pre-computed embedding to avoid duplicate API call.
 
         Returns:
             {
@@ -81,11 +82,14 @@ class QdrantLTMService:
         if not is_real_user(user_id=user_id, role="moodle_user"):
             return {"summary": "", "course_names": []}
 
-        try:
-            query_vector = await self._embed(query)
-        except Exception as exc:
-            logger.warning("LTM: failed to embed query for retrieval", error=str(exc))
-            return {"summary": "", "course_names": []}
+        if query_embedding is None:
+            try:
+                query_vector = await self._embed(query)
+            except Exception as exc:
+                logger.warning("LTM: failed to embed query for retrieval", error=str(exc))
+                return {"summary": "", "course_names": []}
+        else:
+            query_vector = query_embedding
 
         qdrant = get_qdrant_client()
         try:
@@ -232,7 +236,7 @@ class QdrantLTMService:
             )
             resp = await llm.ainvoke(
                 [HumanMessage(content=prompt)],
-                config={"callbacks": [lf_handler], "run_name": "peped-ltm-extract-courses"}
+                config={"callbacks": [lf_handler], "run_name": "a-pedi-ltm-extract-courses"}
             )
             raw = resp.content.strip()
             course_names = [t.strip() for t in raw.split(",") if t.strip()]

@@ -16,8 +16,10 @@ def get_llm() -> ChatOpenAI:
     """Return the singleton LLM client configured for 9Router/OpenRouter."""
     return ChatOpenAI(
         model=settings.llm_model,
+
         # openai_api_key="ollama",
         # openai_api_base=settings.ollama_base_url,
+        
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=settings.llm_temperature,
