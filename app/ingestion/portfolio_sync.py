@@ -942,3 +942,27 @@ async def sync_portfolio_knowledge_base(
 
     logger.info("Portfolio sync complete", **{k: v for k, v in summary.items() if k != "errors"})
     return summary
+
+
+# ─── CLI entry point ─────────────────────────────────────────────────────────
+# Run from container: `uv run python -m app.ingestion.portfolio_sync`
+# Or with force flag : `uv run python -m app.ingestion.portfolio_sync --force`
+
+async def _cli_main(force_reingest: bool) -> None:
+    from app.database.postgres import AsyncSessionLocal
+    print(f"Starting portfolio sync (force_reingest={force_reingest})...")
+    async with AsyncSessionLocal() as session:
+        result = await sync_portfolio_knowledge_base(session, force_reingest=force_reingest)
+        await session.commit()
+    print("=" * 50)
+    print("SYNC RESULT:")
+    for k, v in result.items():
+        print(f"  {k}: {v}")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    import sys
+    force = "--force" in sys.argv or "-f" in sys.argv
+    import asyncio
+    asyncio.run(_cli_main(force_reingest=force))
