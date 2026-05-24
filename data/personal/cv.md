@@ -4,7 +4,7 @@
 ## Page 1
 
 FERDY FADHIL LAZUARDI 
-Jakarta, Indonesia | +62 898-7863-920 | ferdy.lazuardi05@gmail.com | ferdy-fadhil-lazuardi.my.id/ | linkedin.com/in/ferdy10/ 
+Jakarta, Indonesia | +62 --- | ferdy.lazuardi05@gmail.com | ferdy-fadhil-lazuardi.my.id/ | linkedin.com/in/ferdy10/ 
 SUMMARY 
 Learning Designer with hands -on experience in end -to-end SCORM content development  using Articulate Storyline & Rise  and 
 Moodle LMS administration. Part of a team managing 208 courses for 10,000+ employees, contributing to a 65% completion rate 
