@@ -1,0 +1,41 @@
+{
+  "version": "1.1.0",
+  "updated": "2026-05-24",
+  "description": "FAQ chip queries for Askfer portfolio chat. Plain query strings only — pass to POST /api/v1/askfer/stream as the `query` field. All queries verified grounded against the Personal_Portfolio knowledge base.",
+  "queries": {
+    "default": [
+      "What makes you different from other learning designers?",
+      "Which project had the biggest impact?",
+      "How do you measure training success?",
+      "What's your tech stack?",
+      "How do you increase completion rate?",
+      "Tell me about a project that didn't work"
+    ],
+    "projects": [
+      "Tell me about Modal Cycle Zero",
+      "What's the AI Learning Assistant project?",
+      "Explain Training Client Protection (TCP)",
+      "What's BTS / Belajar Tulang Skuy?",
+      "Show me your Anti-Harassment course"
+    ],
+    "methodology": [
+      "How do you use Bloom's Taxonomy?",
+      "ADDIE vs SAM — when do you pick which?",
+      "How do you apply Cognitive Load Theory?",
+      "Walk me through your design process",
+      "How do you design for adult learners?"
+    ],
+    "metrics": [
+      "What's your average completion rate?",
+      "How many users have you reached?",
+      "What's your highest N-Gain?",
+      "How do you boost learner engagement?"
+    ],
+    "more": [
+      "Tell me about yourself",
+      "Which project are you most proud of?",
+      "How do you measure the impact of your training programs?",
+      "What are your essential tools as an L&D professional?"
+    ]
+  }
+}

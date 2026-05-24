@@ -125,6 +125,11 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     Loads `data/personal/profile.md` directly so the intro is grounded in the
     same single-source-of-truth as KNOWLEDGE answers — without going through
     retrieval (no embedding/Qdrant call needed for a greeting).
+
+    CRITICAL: this handler must NEVER make factual claims about specific
+    metrics, project names, dates, or numbers. The greeting path has no
+    retrieved <retrieved_context>, so any specific claim would be a
+    hallucination. Stay generic and pivot to inviting the user to ask.
     """
     import os
 
@@ -142,12 +147,23 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     llm = get_llm()
     sys = (
         f"{ASKFER_PERSONA}\n"
-        "Greet the visitor warmly and briefly introduce yourself as Ferdy. "
-        "Match the user's language (English default, switch to Indonesian if "
-        "they wrote in Indonesian). Keep it under 3 sentences. Lead with your "
-        "role focus (Learning Designer) drawn from the <profile> block — "
-        "do NOT generalize as 'professional in technology' or anything vague. "
-        "Mention you can answer questions about your projects, tech stack, and experience."
+        "GREETING-MODE — strict rules:\n"
+        "1. Greet the visitor warmly and briefly introduce yourself as Ferdy.\n"
+        "2. Lead with your role focus (Learning Designer) drawn from the "
+        "<profile> block. NEVER generalize as 'professional in technology' "
+        "or anything vague.\n"
+        "3. Match the user's language (English default, Indonesian if they "
+        "wrote in Indonesian). Keep under 3 sentences.\n"
+        "4. CRITICAL — DO NOT answer factual questions in this mode. If the "
+        "user's message contains a factual question (e.g. about specific "
+        "projects, N-Gain, completion rate, participant counts, dates, "
+        "scores, metrics, or any specific number), DO NOT answer it. "
+        "Instead, briefly redirect: 'Happy to dig into that — feel free "
+        "to ask directly!' / 'Boleh banget, silakan tanya langsung ya!'\n"
+        "5. NEVER fabricate project names, numbers, or metrics. Only "
+        "high-level role / team / location info from <profile> is allowed.\n"
+        "6. End by inviting them to ask about projects, tech stack, or "
+        "experience."
         f"{profile_block}"
     )
     response = await llm.ainvoke(
@@ -283,18 +299,24 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     chunks = state.get("retrieved_context") or []
 
     if chunks:
-        max_chars = _settings.askfer_chunk_text_max_chars
+        # Differential per-doc-type caps. Knowledge files can be long (1.5k+
+        # tokens each); without a cap a single Bloom or ADDIE query can blow
+        # past 3k tokens of context. Overview is the project index — needs to
+        # be mostly intact. Profile is short already so soft cap is safe.
+        DOC_TYPE_CAPS: dict[str, int] = {
+            "knowledge": 1200,
+            "overview": 1500,
+            "profile": 1500,
+        }
+        default_cap = _settings.askfer_chunk_text_max_chars
         context_lines = []
         for i, c in enumerate(chunks, 1):
             doc_type = c.get("doc_type") or "doc"
             label = c.get("title") or c.get("project_slug") or c.get("source") or doc_type
             text = c.get("text") or ""
-            # Don't truncate the overview/profile/knowledge docs — they are
-            # kept as single chunks at ingest time and rely on full text being
-            # passed to the LLM (overview = complete project list; profile =
-            # bio; knowledge = methodology/framework explainer).
-            if doc_type not in ("overview", "profile", "knowledge"):
-                text = text[:max_chars]
+            cap = DOC_TYPE_CAPS.get(doc_type, default_cap)
+            if len(text) > cap:
+                text = text[:cap].rstrip() + "..."
             context_lines.append(f"[{i}] ({doc_type}) {label}\n{text}")
         context_str = "\n\n---\n\n".join(context_lines)
     else:

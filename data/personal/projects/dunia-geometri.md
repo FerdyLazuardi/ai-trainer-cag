@@ -1,5 +1,7 @@
 # Dunia Geometri
 
+> **Engagement:** Paid **freelance** work commissioned by my **lecturer at Universitas Negeri Semarang (Unnes)** to develop interactive learning media for elementary schools. NOT a thesis / tugas akhir / skripsi project. NOT an internship — distributed and used by partner schools.
+
 ### Video Highlight
 
 ### Interactive Web Module

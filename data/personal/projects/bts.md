@@ -1,6 +1,8 @@
 # Belajar Tulang Skuy
 
-> Also known as: **BTS** (project slug / common abbreviation)
+> Also known as: **BTS** (project slug / common abbreviation).
+>
+> **Engagement:** Built during my **internship** at **BPTIK DIKBUD Jateng** (Dinas Pendidikan Provinsi Jawa Tengah). NOT freelance, NOT a paid commission, NOT a personal project — distributed to schools across Central Java.
 
 ### Video Highlight
 

@@ -1,5 +1,7 @@
 # Botani Quest
 
+> **Engagement:** Built during my **internship** at **BPTIK DIKBUD Jateng** (Dinas Pendidikan Provinsi Jawa Tengah). NOT freelance, NOT a paid commission, NOT a personal project — distributed to schools across Central Java.
+
 ### Video Highlight
 
 ### Interactive Web Module

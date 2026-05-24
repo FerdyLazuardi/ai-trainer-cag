@@ -5,6 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Askfer — Ferdy's Portfolio Chat (Dev)</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         :root {
             --bg: #0f172a;
@@ -62,12 +63,25 @@
         }
         .msg.user .role { color: var(--accent); }
         .msg.askfer .role { color: var(--accent-2); }
-        .msg pre {
+        .msg .body {
             white-space: pre-wrap;
             word-wrap: break-word;
             margin: 0;
             font-family: inherit;
         }
+        .msg .body p { margin: 0 0 8px 0; }
+        .msg .body p:last-child { margin-bottom: 0; }
+        .msg .body ul, .msg .body ol { margin: 4px 0 8px 0; padding-left: 20px; }
+        .msg .body li { margin-bottom: 4px; }
+        .msg .body a { color: var(--accent); text-decoration: underline; }
+        .msg .body code {
+            background: rgba(255,255,255,0.08);
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 13px;
+        }
+        .msg .body strong { color: var(--text); font-weight: 600; }
         .sources {
             margin-top: 8px;
             font-size: 12px;
@@ -131,13 +145,32 @@
         function appendMessage(role, label) {
             const div = document.createElement("div");
             div.className = "msg " + role;
-            div.innerHTML = `<div class="role">${label}</div><pre></pre><div class="sources"></div>`;
+            div.innerHTML = `<div class="role">${label}</div><div class="body"></div><div class="sources"></div>`;
             logEl.appendChild(div);
             logEl.scrollTop = logEl.scrollHeight;
             return {
-                pre: div.querySelector("pre"),
+                body: div.querySelector(".body"),
                 sources: div.querySelector(".sources"),
             };
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function renderMarkdown(el, raw) {
+            // marked.parse handles markdown including [text](url) and **bold**.
+            // Add target=_blank to all links so they open in new tab.
+            try {
+                const html = marked.parse(raw, { breaks: true });
+                el.innerHTML = html;
+                el.querySelectorAll("a").forEach((a) => {
+                    a.setAttribute("target", "_blank");
+                    a.setAttribute("rel", "noopener noreferrer");
+                });
+            } catch (e) {
+                el.textContent = raw;
+            }
         }
 
         async function send() {
@@ -146,8 +179,10 @@
             btn.disabled = true;
             promptEl.value = "";
 
-            appendMessage("user", "You").pre.textContent = query;
+            const userOut = appendMessage("user", "You");
+            userOut.body.textContent = query;
             const out = appendMessage("askfer", "Askfer");
+            let buffered = "";
 
             try {
                 const res = await fetch("/api/v1/askfer/stream", {
@@ -156,7 +191,7 @@
                     body: JSON.stringify({ query }),
                 });
                 if (!res.ok) {
-                    out.pre.textContent = `Error: HTTP ${res.status}`;
+                    out.body.textContent = `Error: HTTP ${res.status}`;
                     btn.disabled = false;
                     return;
                 }
@@ -180,21 +215,26 @@
                         const data = JSON.parse(dataMatch[1]);
 
                         if (eventMatch && eventMatch[1] === "done") {
+                            // Final render: parse the full buffered markdown.
+                            renderMarkdown(out.body, buffered);
                             if (data.sources && data.sources.length) {
                                 out.sources.innerHTML = "Sources: " + data.sources.map(
-                                    (s) => `<a href="${s.url}" target="_blank">${s.title}</a>`
+                                    (s) => `<a href="${s.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.title)}</a>`
                                 ).join(" · ");
                             }
                         } else if (eventMatch && eventMatch[1] === "error") {
-                            out.pre.textContent += "\n[Error: " + data.error + "]";
+                            buffered += "\n[Error: " + data.error + "]";
+                            renderMarkdown(out.body, buffered);
                         } else if (data.token) {
-                            out.pre.textContent += data.token;
+                            buffered += data.token;
+                            // Live re-render — cheap enough at chat-scale.
+                            renderMarkdown(out.body, buffered);
                             logEl.scrollTop = logEl.scrollHeight;
                         }
                     }
                 }
             } catch (err) {
-                out.pre.textContent = "Network error: " + err.message;
+                out.body.textContent = "Network error: " + err.message;
             } finally {
                 btn.disabled = false;
                 promptEl.focus();

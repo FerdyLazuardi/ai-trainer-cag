@@ -473,7 +473,7 @@ def _build_overview_markdown(summaries: list[dict]) -> str:
 async def _delete_stale_portfolio_docs(session: AsyncSession, current_sources: list[str]):
     """Delete docs in PG/Qdrant whose source isn't in `current_sources`."""
     stmt = select(Document).where(
-        sql_text("metadata->>'doc_type' IN ('homepage', 'project', 'cv')")
+        sql_text("metadata->>'doc_type' IN ('homepage', 'project', 'cv', 'profile', 'overview', 'knowledge')")
     )
     result = await session.execute(stmt)
     docs = result.scalars().all()
@@ -532,6 +532,27 @@ async def _ingest_portfolio_doc(
         return 0
 
     document_id = str(existing.id) if existing else str(uuid.uuid4())
+
+    # DEFENSIVE: nuke any pre-existing Qdrant chunks for this source BEFORE
+    # inserting, regardless of PG Document state. This prevents accumulation
+    # when Document rows and Qdrant points get out of sync (e.g., after a
+    # crash, manual delete, or a different test session). Cheap — single API
+    # call filtered by indexed `source` field.
+    qdrant_pre = get_qdrant_client()
+    try:
+        await qdrant_pre.client.delete(
+            collection_name=settings.qdrant_personal_collection,
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[qdrant_models.FieldCondition(
+                        key="source",
+                        match=qdrant_models.MatchValue(value=source_id),
+                    )]
+                )
+            ),
+        )
+    except Exception as e:
+        logger.warning("Defensive delete-by-source failed (continuing)", source=source_id, error=str(e))
 
     if existing:
         # Wipe stale chunks
