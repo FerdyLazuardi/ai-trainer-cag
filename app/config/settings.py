@@ -110,8 +110,8 @@ class Settings(BaseSettings):
     askfer_admin_secret: str = Field(default="", alias="ASKFER_ADMIN_SECRET")
     askfer_rate_limit_per_minute: int = 10
     # Token-budget tuning — Askfer is stateless, so we can keep retrieval lean.
-    askfer_retrieval_top_k: int = 8
-    askfer_reranked_top_k: int = 3
+    askfer_retrieval_top_k: int = 15
+    askfer_reranked_top_k: int = 4
     askfer_chunk_text_max_chars: int = 600
 
     # ─── Security ───────────────────────────────────────────────────────────

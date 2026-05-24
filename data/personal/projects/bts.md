@@ -1,5 +1,7 @@
 # Belajar Tulang Skuy
 
+> Also known as: **BTS** (project slug / common abbreviation)
+
 ### Video Highlight
 
 ## **Project Overview**

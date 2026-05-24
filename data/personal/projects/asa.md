@@ -1,5 +1,7 @@
 # Amartha System Architecture
 
+> Also known as: **ASA** (project slug / common abbreviation)
+
 ### Video Highlight
 
 ## **Project Overview**

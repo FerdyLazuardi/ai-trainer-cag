@@ -1,5 +1,7 @@
 # Training Client Protection
 
+> Also known as: **TCP** (project slug / common abbreviation), **Client Protection training**
+
 ### Video Highlight
 
 ## **Project Overview**

@@ -62,7 +62,22 @@ class AskferPreProcessorResult(BaseModel):
         description="Intent of the user's message."
     )
     rewritten_query: str = Field(
-        description="Echo the user's query verbatim (Askfer is stateless — no rewrite)."
+        description=(
+            "For KNOWLEDGE intent: rewrite the user's query into a clear, "
+            "retrieval-friendly form using formal vocabulary in the SAME "
+            "language as the user. Remove slang/colloquial verbs, fillers, "
+            "and contractions. "
+            "Examples: "
+            "'kamu pernah ngajar berapa orang?' → 'berapa banyak peserta yang "
+            "sudah belajar dari kursus saya?'. "
+            "'modal itu apa sih?' → 'apa itu project Modal Cycle Zero?'. "
+            "'ceritain dong project bts' → 'ceritakan tentang project Belajar "
+            "Tulang Skuy (BTS)'. "
+            "'gw udah kerja brp lama?' → 'sudah berapa lama saya bekerja "
+            "sebagai Learning Designer?'. "
+            "For non-KNOWLEDGE intents (GREETING / OFF_SCOPE / MALICIOUS): "
+            "echo the user's query verbatim."
+        )
     )
 
 
@@ -274,10 +289,11 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             doc_type = c.get("doc_type") or "doc"
             label = c.get("title") or c.get("project_slug") or c.get("source") or doc_type
             text = c.get("text") or ""
-            # Don't truncate the overview/profile docs — they are kept as
-            # single chunks at ingest time and rely on full text being passed
-            # to the LLM (overview = complete project list; profile = bio).
-            if doc_type not in ("overview", "profile"):
+            # Don't truncate the overview/profile/knowledge docs — they are
+            # kept as single chunks at ingest time and rely on full text being
+            # passed to the LLM (overview = complete project list; profile =
+            # bio; knowledge = methodology/framework explainer).
+            if doc_type not in ("overview", "profile", "knowledge"):
                 text = text[:max_chars]
             context_lines.append(f"[{i}] ({doc_type}) {label}\n{text}")
         context_str = "\n\n---\n\n".join(context_lines)

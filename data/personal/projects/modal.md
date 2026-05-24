@@ -1,5 +1,7 @@
 # Modal Cycle Zero
 
+> Also known as: **Modal** (short name), **Cycle Zero**
+
 ### Video Highlight
 
 ## **Project Overview**

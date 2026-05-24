@@ -49,6 +49,7 @@ PROFILE_MD_PATH = "data/personal/profile.md"
 LOCAL_HOMEPAGE_PATH = "data/personal/homepage.md"
 LOCAL_CV_PATH = "data/personal/cv.md"
 LOCAL_PROJECTS_DIR = "data/personal/projects"
+LOCAL_KNOWLEDGE_DIR = "data/personal/knowledge"
 
 
 def _read_local_md(path: str) -> str | None:
@@ -577,12 +578,21 @@ async def _ingest_portfolio_doc(
         doc_id=document_id,
         metadata={"document_id": document_id, "title": title, **metadata},
     )
-    parser = MarkdownNodeParser()
-    header_nodes = parser.get_nodes_from_documents([llama_doc])
+    # Overview, profile, and knowledge docs must stay as a SINGLE chunk so
+    # retrieval surfaces the complete content together.
+    is_single_chunk = metadata.get("doc_type") in ("overview", "profile", "knowledge")
 
-    # Overview and profile docs must stay as a SINGLE chunk so retrieval
-    # surfaces the complete content together (project list / bio paragraph).
-    is_single_chunk = metadata.get("doc_type") in ("overview", "profile")
+    if is_single_chunk:
+        # Bypass MarkdownNodeParser entirely — header-splitting would split
+        # multi-section knowledge files (H2/H3) into many chunks. Single-chunk
+        # doc types are kept whole regardless of internal headings.
+        from llama_index.core.schema import TextNode
+        header_nodes = [
+            TextNode(text=raw_markdown, metadata=dict(llama_doc.metadata or {}))
+        ]
+    else:
+        parser = MarkdownNodeParser()
+        header_nodes = parser.get_nodes_from_documents([llama_doc])
 
     nodes = []
     for n in header_nodes:
@@ -887,6 +897,49 @@ async def sync_portfolio_knowledge_base(
         except Exception as exc:
             logger.error("Profile doc ingestion failed", error=str(exc))
             summary["errors"].append(f"profile: {exc}")
+
+        # 4b. Editable knowledge files (data/personal/knowledge/*.md). One file
+        # per topic — methodologies, frameworks, opinions Askfer should be able
+        # to answer about (e.g. "How do you use Bloom's Taxonomy?", "How do you
+        # apply ADDIE?"). Each file is ingested as a single chunk.
+        try:
+            if os.path.isdir(LOCAL_KNOWLEDGE_DIR):
+                knowledge_files = sorted(
+                    f for f in os.listdir(LOCAL_KNOWLEDGE_DIR) if f.endswith(".md")
+                )
+                for fname in knowledge_files:
+                    slug = fname[:-3]
+                    local_path = os.path.join(LOCAL_KNOWLEDGE_DIR, fname)
+                    local = _load_local_with_title(local_path, slug.replace("-", " ").title())
+                    if not local:
+                        continue
+                    md_text, title = local
+                    knowledge_source = f"portfolio://knowledge/{slug}"
+                    knowledge_meta = {
+                        "doc_type": "knowledge",
+                        "knowledge_slug": slug,
+                        "scraped_at": scraped_at,
+                        "source": knowledge_source,
+                    }
+                    try:
+                        k_chunks = await _ingest_portfolio_doc(
+                            raw_markdown=md_text,
+                            source_id=knowledge_source,
+                            title=title or slug,
+                            metadata=knowledge_meta,
+                            session=session,
+                            force_reingest=True,  # rebuild on every sync
+                        )
+                        current_sources.append(knowledge_source)
+                        if k_chunks > 0:
+                            summary["docs_processed"] += 1
+                            summary["chunks_ingested"] += k_chunks
+                    except Exception as exc:
+                        logger.error("Knowledge doc ingest failed", file=fname, error=str(exc))
+                        summary["errors"].append(f"knowledge/{fname}: {exc}")
+        except Exception as exc:
+            logger.error("Knowledge dir scan failed", error=str(exc))
+            summary["errors"].append(f"knowledge: {exc}")
 
         # 5. Build & ingest the OVERVIEW document
         # This single doc lists all projects grouped by org_label so a query like
