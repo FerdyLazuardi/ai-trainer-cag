@@ -1,51 +1,11 @@
-# Curriculum Vitae — Ferdy Fadhil Lazuardi
+I'm Ferdy Fadhil Lazuardi, a Learning Designer based in Jakarta, Indonesia. I currently work at Amartha — an Indonesian fintech and microfinance company — as part of the Digital Learning team, where I handle end-to-end SCORM content development, LMS administration, and AI-powered learning tools.
 
+What makes my work a bit different is that I sit at the intersection of instructional design and engineering. Most learning designers stop at Articulate Storyline or Rise 360 — I go further, building a RAG-based chatbot integrated directly into our corporate Moodle LMS, serving 10,000+ employees. I can write a learning objective in the morning and debug a FastAPI endpoint in the afternoon.
 
-## Page 1
+My background spans the full learning design cycle — from TNA and curriculum mapping to storyboarding, media production, and post-implementation evaluation. At Amartha, I contribute to a portfolio of 208 courses with a 65% completion rate and 3.64/4 satisfaction score, across diverse audiences ranging from field officers to head-office staff.
 
-FERDY FADHIL LAZUARDI 
-Jakarta, Indonesia | +62 --- | ferdy.lazuardi05@gmail.com | ferdy-fadhil-lazuardi.my.id/ | linkedin.com/in/ferdy10/ 
-SUMMARY 
-Learning Designer with hands -on experience in end -to-end SCORM content development  using Articulate Storyline & Rise  and 
-Moodle LMS administration. Part of a team managing 208 courses for 10,000+ employees, contributing to a 65% completion rate 
-and 3.64/4 satisfaction score. Currently developing an AI -powered learning assistant integrated into the corporate LMS to 
-modernize employee knowledge access. 
-PROFESSIONAL EXPERIENCE 
-Amartha Financial  Oct 2025 – Present 
-Learning Designer  
-• Developed end-to-end SCORM learning modules using Articulate Storyline and Rise, covering compliance, onboarding, 
-and operational training aligned with organizational objectives.  
-• Conducted TNA across HO and FO functions to inform content prioritization and learning path design.  
-• Supported LMS content administration on Moodle, contributing to 208 courses serving 10,000+ employees with 65% 
-completion rate and 3.64/4 satisfaction score. 
-• Led development of an AI-powered learning assistant (RAG-based chatbot) integrated into the corporate LMS 
-(Amarthapedia) to provide instant knowledge retrieval. Currently in testing, targeted launch July 2026.  
-• Produced diverse learning assets including instructional videos, infographics, and event promotional content to support 
-organizational learning and employee engagement. 
-Universitas Negeri Semarang  Jun 2024 – Jan 2025 
-Learning Designer 
-• Developed 5+ interactive learning media projects for elementary students (mathematics & science) using Articulate 
-Storyline, validated by subject matter experts with 91.6% content score and 95.1% media score. 
-• Achieved 92.5% usability score from teachers and 84.5% from students, with post-implementation test scores improving 
-from 46 to 76 (+30 points) and learning interest rated at 84.6%. 
-• Collaborated with lecturers and teachers across needs analysis, content validation, and classroom trials using the ADDIE 
-model. 
-BPTIK Pendidikan dan Kebudayaan Jawa Tengah Sep 2023 – Nov 2023 
-Learning Designer  
-• Developed an interactive educational game for elementary science (plant materials) using GDevelop, presented to 
-department leads. 
-• Produced animated instructional video on the human skeletal system for elementary students using Adobe After Effects. 
-EDUCATION 
-Universitas Negeri Semarang Oct 2020 - Jul 2025 
-Bachelor of Education (B.Ed.) in Educational Technology 
-Final Project: Interactive mathematics learning media development to improve student outcomes. 
-SKILLS 
-• Instructional Design: ADDIE, TNA, Bloom's Taxonomy, Learning Evaluation. 
-• LMS & E-Learning: Moodle, SCORM, Articulate Storyline, Articulate Rise. 
-• Design & Media: Adobe CC, Canva, Capcut, Figma, CorelDraw. 
-• AI & Technology: Python, RAG, AI Chatbot Development. 
-• Soft Skills: Creativity, Adaptability, Collaboration, Problem Solving. 
-CERTIFICATIONS: Junior Design Operator, BNSP (2024) | Fullstack Web Development, BTPN Syariah (2023) | UI/UX Design 
-Mastery, Skilvul (2022). 
-ACHIEVEMENTS: 1st Winner Poster Design Competition, UIN Surabaya (2021). 
-LANGUAGES: Indonesian (Native) | English (Intermediate).
+On the technical side I work with Python, AI tooling, and SCORM/xAPI standards. On the creative side I'm comfortable in Figma, CorelDraw, Adobe CC, and motion graphics. I speak Indonesian natively and English at a professional level.
+
+If you want to know more, my full CV and project portfolio are on this site — or just reach out directly at [ferdy.lazuardi05@gmail.com](mailto:ferdy.lazuardi05@gmail.com) or [LinkedIn](https://www.linkedin.com/in/ferdy10/).
+
+<!-- canary: rocket-2026-05-23 -->

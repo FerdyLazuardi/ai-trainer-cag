@@ -143,22 +143,28 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
 
 
 async def _handle_off_scope(state: RAGState, config: RunnableConfig):
-    """Polite scope redirect, bilingual auto."""
-    llm = get_llm()
-    sys = (
-        f"{ASKFER_PERSONA}\n"
-        "The user asked something OUTSIDE your scope (not about projects, tech "
-        "stack, experience, skills, education, or contact). Politely decline "
-        "in 1-2 sentences and steer them back to professional topics. "
-        "Match the user's language (EN default, ID if they wrote in Indonesian).\n"
-        "EN example: \"I keep this chat focused on my professional work. For other things, reach out directly via my homepage.\"\n"
-        "ID example: \"Aku fokus bahas kerjaan profesional aja di sini. Buat hal lain, kontak aku langsung ya.\""
-    )
-    response = await llm.ainvoke(
-        [SystemMessage(content=sys)] + list(state["messages"]),
-        config=config,
-    )
-    return {"messages": [response]}
+    """Polite scope redirect — canned bilingual response (no LLM call).
+
+    Bypassing the LLM here prevents two failure modes we kept seeing:
+      1. LLM "halu" — attempts to answer the off-scope question before declining.
+      2. Cost / latency for what is a fixed string anyway.
+    Bahasa picked from heuristic on the user's last message.
+    """
+    user_msg = state["messages"][-1].content if state["messages"] else ""
+    lang = _detect_user_language(user_msg)
+    if lang == "Indonesian":
+        msg = (
+            "Aku fokus bahas kerjaan profesional aja di sini — proyek, tech "
+            "stack, dan pengalaman. Buat hal lain, kontak aku langsung via "
+            "LinkedIn atau email ya."
+        )
+    else:
+        msg = (
+            "I keep this chat focused on my professional work — projects, "
+            "tech stack, and experience. For other things, reach out "
+            "directly via LinkedIn or email."
+        )
+    return {"messages": [AIMessage(content=msg)]}
 
 
 async def _handle_malicious(state: RAGState, config: RunnableConfig):

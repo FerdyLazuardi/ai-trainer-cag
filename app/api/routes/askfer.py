@@ -142,10 +142,11 @@ async def askfer_stream(
                 config = {"run_name": "askfer-stream", "callbacks": [langfuse_handler]}
 
                 token_count = 0
-                # Track which nodes finished — malicious uses a canned AIMessage
-                # (no LLM call → no on_chat_model_stream events) so we emit
-                # its content from on_chain_end instead.
-                malicious_emitted = False
+                # Track which terminal nodes finished. The malicious AND
+                # off_scope nodes both return canned AIMessages (no LLM call →
+                # no on_chat_model_stream events) so we emit their content
+                # from on_chain_end instead.
+                canned_emitted = False
 
                 async for event in askfer_graph.astream_events(initial_state, config=config, version="v2"):
                     kind = event.get("event", "")
@@ -160,12 +161,12 @@ async def askfer_stream(
                         if isinstance(out, dict) and "intent" in out:
                             intent = out["intent"]
 
-                    # Malicious node returns a canned AIMessage (no LLM stream).
-                    # Capture its content here and emit as a single token.
+                    # Canned-response nodes: emit their AIMessage content as a
+                    # single token chunk since no LLM stream fires for them.
                     if (
                         kind == "on_chain_end"
-                        and event.get("name") == "malicious"
-                        and not malicious_emitted
+                        and event.get("name") in ("malicious", "off_scope")
+                        and not canned_emitted
                     ):
                         out = event.get("data", {}).get("output", {})
                         msgs = out.get("messages") if isinstance(out, dict) else None
@@ -176,7 +177,7 @@ async def askfer_stream(
                             if content:
                                 full_answer += content
                                 yield f"data: {json.dumps({'token': content})}\n\n"
-                                malicious_emitted = True
+                                canned_emitted = True
 
                     if kind == "on_chat_model_stream":
                         node_name = event.get("metadata", {}).get("langgraph_node")
