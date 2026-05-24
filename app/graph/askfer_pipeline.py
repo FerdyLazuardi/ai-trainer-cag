@@ -33,6 +33,30 @@ from app.llm.client import get_llm
 _settings = get_settings()
 
 
+def _detect_user_language(text: str) -> str:
+    """Cheap heuristic language detector for the user's last message.
+
+    Returns 'Indonesian' if any common ID marker word is found, else 'English'.
+    Used to inject an explicit language directive at the end of the system
+    prompt so the LLM doesn't get pulled into Indonesian by bilingual context
+    (the overview doc + scraped pages mix both languages).
+    """
+    if not text:
+        return "English"
+    padded = " " + text.lower() + " "
+    id_markers = (
+        " kamu ", " saya ", " aku ", " apa ", " apakah ", " siapa ", " gimana ",
+        " bagaimana ", " kenapa ", " mengapa ", " dimana ", " di mana ",
+        " kapan ", " jelasin ", " jelaskan ", " ceritain ", " ceritakan ",
+        " yang ", " ini ", " itu ", " adalah ", " untuk ", " dengan ",
+        " dong ", " sih ", " nih ", " banget ", " sebagai ", " punya ",
+        " buat ", " bikin ", " kerja ", " dimana ", " gimana ",
+    )
+    if any(m in padded for m in id_markers):
+        return "Indonesian"
+    return "English"
+
+
 class AskferPreProcessorResult(BaseModel):
     intent: Literal["GREETING", "OFF_SCOPE", "MALICIOUS", "KNOWLEDGE"] = Field(
         description="Intent of the user's message."
@@ -81,14 +105,35 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
 
 
 async def _handle_greeting(state: RAGState, config: RunnableConfig):
-    """Friendly bilingual self-introduction."""
+    """Friendly bilingual self-introduction.
+
+    Loads `data/personal/profile.md` directly so the intro is grounded in the
+    same single-source-of-truth as KNOWLEDGE answers — without going through
+    retrieval (no embedding/Qdrant call needed for a greeting).
+    """
+    import os
+
+    profile_block = ""
+    profile_path = "data/personal/profile.md"
+    if os.path.exists(profile_path):
+        try:
+            with open(profile_path, "r", encoding="utf-8") as f:
+                profile_text = f.read().strip()
+            if profile_text:
+                profile_block = f"\n\n<profile>\n{profile_text}\n</profile>"
+        except Exception as exc:
+            logger.warning(f"Greeting: failed to load profile.md: {exc}")
+
     llm = get_llm()
     sys = (
         f"{ASKFER_PERSONA}\n"
         "Greet the visitor warmly and briefly introduce yourself as Ferdy. "
         "Match the user's language (English default, switch to Indonesian if "
-        "they wrote in Indonesian). Keep it under 3 sentences. Mention you can "
-        "answer questions about your projects, tech stack, and experience."
+        "they wrote in Indonesian). Keep it under 3 sentences. Lead with your "
+        "role focus (Learning Designer) drawn from the <profile> block — "
+        "do NOT generalize as 'professional in technology' or anything vague. "
+        "Mention you can answer questions about your projects, tech stack, and experience."
+        f"{profile_block}"
     )
     response = await llm.ainvoke(
         [SystemMessage(content=sys)] + list(state["messages"]),
@@ -129,9 +174,18 @@ async def _handle_malicious(state: RAGState, config: RunnableConfig):
 
 
 async def _rag_node(state: RAGState, config: RunnableConfig):
-    """Retrieve from Personal_Portfolio collection only."""
+    """Retrieve from Personal_Portfolio collection only.
+
+    Always prepends the `doc_type=profile` chunk (if it exists) to the
+    retrieved context. Profile is the single-source-of-truth for "who is
+    Ferdy" answers — without this prepend, BM25 ranking on a name-heavy
+    query like "ceritain soal Ferdy" gets dominated by CV chunks which
+    repeat the name in every page header.
+    """
     from app.retrieval.hybrid_retriever import hybrid_search
     from app.retrieval.reranker import rerank
+    from app.database.qdrant_client import get_qdrant_client
+    from qdrant_client import models as qm
 
     query_to_search = state.get("rewritten_query") or state["messages"][-1].content
     try:
@@ -140,11 +194,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
             top_k=_settings.askfer_retrieval_top_k,
             collection=_settings.qdrant_personal_collection,
         )
-        reranked = await rerank(
-            query=query_to_search,
-            chunks=docs,
-            top_k=_settings.askfer_reranked_top_k,
-        )
+        reranked = await rerank(query=query_to_search, chunks=docs, top_k=_settings.askfer_reranked_top_k)
 
         chunks = []
         for d in reranked:
@@ -160,6 +210,46 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "source": d.source or m.get("source", "Unknown"),
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })
+
+        # Always-prepend the profile chunk if it isn't already in the top-K.
+        if not any(c.get("doc_type") == "profile" for c in chunks):
+            try:
+                qdrant = get_qdrant_client()
+                profile_pts, _ = await qdrant.client.scroll(
+                    collection_name=_settings.qdrant_personal_collection,
+                    scroll_filter=qm.Filter(
+                        must=[qm.FieldCondition(key="doc_type", match=qm.MatchValue(value="profile"))]
+                    ),
+                    limit=1,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                if profile_pts:
+                    import json as _json
+                    payload = profile_pts[0].payload or {}
+                    nc_raw = payload.get("_node_content")
+                    text = ""
+                    if nc_raw:
+                        try:
+                            nc = _json.loads(nc_raw)
+                            text = nc.get("text", "") or ""
+                        except Exception:
+                            text = ""
+                    if text:
+                        chunks.insert(0, {
+                            "text": text,
+                            "doc_type": "profile",
+                            "project_slug": "",
+                            "project_url": "",
+                            "title": "About Ferdy",
+                            "score": 1.0,
+                            "hybrid_score": 1.0,
+                            "source": "portfolio://profile",
+                            "document_id": str(profile_pts[0].id),
+                        })
+            except Exception as exc:
+                logger.warning(f"Profile prepend failed (continuing without): {exc}")
+
         logger.info(f"Askfer rag_node retrieved {len(chunks)} chunks for: {query_to_search[:60]}")
         return {"retrieved_context": chunks}
     except Exception as exc:
@@ -178,9 +268,10 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             doc_type = c.get("doc_type") or "doc"
             label = c.get("title") or c.get("project_slug") or c.get("source") or doc_type
             text = c.get("text") or ""
-            # Don't truncate the overview doc — it's the complete project index
-            # and missing items from it would defeat its purpose.
-            if doc_type != "overview":
+            # Don't truncate the overview/profile docs — they are kept as
+            # single chunks at ingest time and rely on full text being passed
+            # to the LLM (overview = complete project list; profile = bio).
+            if doc_type not in ("overview", "profile"):
                 text = text[:max_chars]
             context_lines.append(f"[{i}] ({doc_type}) {label}\n{text}")
         context_str = "\n\n---\n\n".join(context_lines)
@@ -190,6 +281,18 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     full_system = (
         f"{ASKFER_SYSTEM_PROMPT}"
         f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"
+    )
+
+    # Inject explicit language directive based on the user's last message —
+    # the persona prompt's STRICT MIRROR rule isn't reliably honored when the
+    # retrieved context mixes ID/EN, so we pin the language deterministically.
+    user_msg = state["messages"][-1].content if state["messages"] else ""
+    lang = _detect_user_language(user_msg)
+    full_system += (
+        f"\n\n<language_directive>\n"
+        f"The user's message is in {lang}. Respond in {lang} ONLY. "
+        f"Ignore the language(s) used in <retrieved_context>.\n"
+        f"</language_directive>"
     )
 
     llm = get_llm()

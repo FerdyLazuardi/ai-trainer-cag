@@ -56,6 +56,58 @@ async def sync_portfolio_task(ctx: dict, force_reingest: bool = False) -> dict[s
         logger.error(f"arq portfolio sync failed: {exc}")
         raise
 
+async def _profile_watcher_task():
+    """Watch `data/personal/profile.md` and auto-refresh on save.
+
+    Spawned once at worker startup. Cancelled at shutdown. Debounced 1s so
+    rapid editor saves collapse into a single refresh.
+    """
+    import os
+    try:
+        from watchfiles import awatch
+    except ImportError:
+        logger.warning("watchfiles not available — profile auto-refresh disabled")
+        return
+
+    profile_dir = "data/personal"
+    target = "profile.md"
+    os.makedirs(profile_dir, exist_ok=True)
+    logger.info("Profile watcher started", path=profile_dir)
+
+    try:
+        # Polling is required when running inside a container with a bind mount
+        # from a Windows/macOS host — inotify events aren't forwarded across
+        # those filesystem boundaries. step=1000ms keeps reaction time ~1s.
+        async for changes in awatch(
+            profile_dir,
+            debounce=1000,
+            force_polling=True,
+            poll_delay_ms=1000,
+        ):
+            # Filter: only react when profile.md itself changed.
+            hit = any(
+                p.replace("\\", "/").endswith(f"/{target}") or
+                p.replace("\\", "/").endswith(target)
+                for _, p in changes
+            )
+            if not hit:
+                continue
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    from app.ingestion.portfolio_sync import refresh_profile_only
+                    result = await refresh_profile_only(session)
+                    await session.commit()
+                logger.info(f"Profile auto-refreshed: {result}")
+            except Exception as e:
+                logger.warning(f"Profile auto-refresh failed: {e}")
+    except asyncio.CancelledError:
+        logger.info("Profile watcher cancelled (shutdown)")
+        raise
+    except Exception as e:
+        logger.error(f"Profile watcher crashed: {e}")
+
+
 async def startup(ctx: dict):
     """Initialize resources for the worker."""
     setup_logging(debug=settings.app_debug)
@@ -88,10 +140,26 @@ async def startup(ctx: dict):
     except Exception as e:
         logger.warning(f"Worker embedding pre-warm failed: {e}")
 
+    # Spawn profile.md auto-refresh watcher (fire-and-forget).
+    ctx["profile_watcher"] = asyncio.create_task(_profile_watcher_task())
+
 
 async def shutdown(ctx: dict):
     """Cleanup resources for the worker."""
     logger.info("Worker shutting down...")
+
+    # Cancel profile watcher first so its async generator unwinds cleanly
+    # before we tear down the Langfuse client / event loop.
+    task = ctx.get("profile_watcher")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"Profile watcher shutdown error: {e}")
+
     lf = get_langfuse_client()
     if lf:
         try:

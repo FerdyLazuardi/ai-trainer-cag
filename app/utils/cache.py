@@ -248,6 +248,54 @@ async def set_cached_response(
         logger.warning("Semantic cache SET failed", error=str(exc))
 
 
+async def flush_cache_by_namespace(namespace: str) -> None:
+    """
+    Delete Qdrant points and Redis keys for a specific cache namespace
+    (e.g. 'askfer'). Used by the profile.md auto-refresh watcher and any
+    lightweight refresh path that needs to invalidate one persona's cache
+    without touching A-Pedi's cache.
+    """
+    if not namespace:
+        return
+
+    # 1. Clear Redis cache keys for this namespace
+    redis = get_redis_client()
+    try:
+        cursor = 0
+        prefix = f"{namespace}:cache:"
+        while True:
+            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
+            if keys:
+                await redis.delete(*keys)
+            if cursor == 0:
+                break
+        logger.info("Redis namespace cache flushed", namespace=namespace)
+    except Exception as exc:
+        logger.warning("Redis namespace cache flush failed", error=str(exc))
+
+    # 2. Clear Qdrant semantic cache for this namespace
+    qdrant = get_qdrant_client()
+    try:
+        collections = await qdrant.client.get_collections()
+        if "semantic_cache" in {c.name for c in collections.collections}:
+            await qdrant.client.delete(
+                collection_name="semantic_cache",
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="namespace",
+                                match=qdrant_models.MatchValue(value=namespace)
+                            )
+                        ]
+                    )
+                )
+            )
+            logger.info("Semantic namespace cache flushed", namespace=namespace)
+    except Exception as exc:
+        logger.warning("Semantic namespace cache flush failed", error=str(exc))
+
+
 async def flush_cache_by_course(course_id: int) -> None:
     """
     Delete Qdrant points and Redis keys for a specific course_id.

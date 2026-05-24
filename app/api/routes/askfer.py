@@ -142,6 +142,10 @@ async def askfer_stream(
                 config = {"run_name": "askfer-stream", "callbacks": [langfuse_handler]}
 
                 token_count = 0
+                # Track which nodes finished — malicious uses a canned AIMessage
+                # (no LLM call → no on_chat_model_stream events) so we emit
+                # its content from on_chain_end instead.
+                malicious_emitted = False
 
                 async for event in askfer_graph.astream_events(initial_state, config=config, version="v2"):
                     kind = event.get("event", "")
@@ -155,6 +159,24 @@ async def askfer_stream(
                         out = event.get("data", {}).get("output", {})
                         if isinstance(out, dict) and "intent" in out:
                             intent = out["intent"]
+
+                    # Malicious node returns a canned AIMessage (no LLM stream).
+                    # Capture its content here and emit as a single token.
+                    if (
+                        kind == "on_chain_end"
+                        and event.get("name") == "malicious"
+                        and not malicious_emitted
+                    ):
+                        out = event.get("data", {}).get("output", {})
+                        msgs = out.get("messages") if isinstance(out, dict) else None
+                        if msgs:
+                            content = getattr(msgs[-1], "content", None) or (
+                                msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
+                            )
+                            if content:
+                                full_answer += content
+                                yield f"data: {json.dumps({'token': content})}\n\n"
+                                malicious_emitted = True
 
                     if kind == "on_chat_model_stream":
                         node_name = event.get("metadata", {}).get("langgraph_node")

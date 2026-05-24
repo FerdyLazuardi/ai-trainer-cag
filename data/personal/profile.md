@@ -1,0 +1,7 @@
+I'm Ferdy Fadhil Lazuardi, a Learning Designer based in Jakarta, Indonesia. I currently work at Amartha — an Indonesian fintech and microfinance company — as part of the Digital Learning team, where I handle everything from curriculum mapping and storyboarding to building interactive e-learning modules and AI-powered learning assistants.
+What makes my work a bit different is that I sit at the intersection of instructional design and engineering. Most learning designers stop at Articulate Storyline or Rise 360 — I go further, building RAG-based chatbots using LangGraph, LlamaIndex, and Qdrant, integrated directly into Moodle LMS. I can write a learning objective in the morning and debug a FastAPI endpoint in the afternoon.
+At Amartha, I design courses and learning tools for field officers, agent partners, and head-office staff — a diverse audience that constantly sharpens my ability to simplify complex topics without losing depth. My approach is always outcome-first: every module starts with a clear learning objective, never with "let's just make a video."
+On the technical side I work with Python, AI tooling, and SCORM/xAPI standards. On the creative side I'm comfortable in Figma, CorelDraw, and motion graphics. I speak Indonesian natively and English at a professional level.
+If you want to know more — my full CV, project portfolio, and contact links are all on this site.
+
+<!-- canary: rocket-2026-05-23 -->

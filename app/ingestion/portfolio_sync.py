@@ -38,6 +38,67 @@ settings = get_settings()
 
 USER_AGENT = "Mozilla/5.0 (compatible) AskferBot/1.0 (+https://ferdy-fadhil-lazuardi.my.id)"
 
+# Editable profile file — single source of truth for "who is Ferdy" answers.
+# Reread on every sync; rebuilt as one chunk so retrieval surfaces it whole.
+PROFILE_MD_PATH = "data/personal/profile.md"
+
+# Local mirror of scraped sources. Sync flow is local-first: when a file exists
+# here, it is used verbatim and the website is NOT touched. When a file is
+# absent, the scraper writes its output here so subsequent syncs (and Proxmox
+# deploys) work fully offline. Edit any of these to override what Askfer says.
+LOCAL_HOMEPAGE_PATH = "data/personal/homepage.md"
+LOCAL_CV_PATH = "data/personal/cv.md"
+LOCAL_PROJECTS_DIR = "data/personal/projects"
+
+
+def _read_local_md(path: str) -> str | None:
+    """Read a markdown file from disk. Returns None if missing/empty/error."""
+    import os
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        return content or None
+    except Exception as exc:
+        logger.warning("Local md read failed", path=path, error=str(exc))
+        return None
+
+
+def _write_local_md(path: str, content: str) -> None:
+    """Write markdown to disk. Creates parent dir as needed."""
+    import os
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content.strip() + "\n")
+    except Exception as exc:
+        logger.warning("Local md write failed", path=path, error=str(exc))
+
+
+def _load_local_with_title(path: str, default_title: str) -> tuple[str, str] | None:
+    """Load a local md file and extract its H1 as title.
+
+    Returns (markdown, title) or None if missing.
+    """
+    md = _read_local_md(path)
+    if not md:
+        return None
+    title = default_title
+    for line in md.splitlines():
+        s = line.strip()
+        if s.startswith("# "):
+            title = s.lstrip("# ").strip() or default_title
+            break
+    return md, title
+
+
+def _save_local_with_title(path: str, md: str, title: str) -> None:
+    """Save md to disk, prepending an H1 title if not already present."""
+    has_h1 = any(line.strip().startswith("# ") for line in md.splitlines()[:5])
+    body = md if has_h1 else f"# {title}\n\n{md}"
+    _write_local_md(path, body)
+
 
 # UI/widget noise lines that markdownify converts into standalone paragraphs.
 # Stripped before chunking — they waste tokens and don't help retrieval.
@@ -252,6 +313,34 @@ def _build_metadata(doc_type: str, url: str, scraped_at: str, project_slug: str 
         meta["project_slug"] = project_slug or _slugify_project_url(url)
         meta["project_url"] = url
     return meta
+
+
+def _load_profile_markdown() -> tuple[str, str] | None:
+    """Read the editable profile.md from disk. Returns (markdown, title) or
+    None when the file is absent (sync remains successful — profile is optional)."""
+    import os
+
+    if not os.path.exists(PROFILE_MD_PATH):
+        logger.info("profile.md not found, skipping profile ingestion", path=PROFILE_MD_PATH)
+        return None
+    try:
+        with open(PROFILE_MD_PATH, "r", encoding="utf-8") as f:
+            md = f.read().strip()
+    except Exception as exc:
+        logger.warning("Failed to read profile.md", error=str(exc))
+        return None
+    if not md:
+        logger.info("profile.md is empty, skipping")
+        return None
+
+    # Title = first H1 if present, else default
+    title = "About Ferdy Fadhil Lazuardi"
+    for line in md.splitlines():
+        s = line.strip()
+        if s.startswith("# "):
+            title = s.lstrip("# ").strip() or title
+            break
+    return md, title
 
 
 # ─── Overview generation (LLM-extracted org labels + one-liners) ────────────
@@ -491,13 +580,13 @@ async def _ingest_portfolio_doc(
     parser = MarkdownNodeParser()
     header_nodes = parser.get_nodes_from_documents([llama_doc])
 
-    # The overview doc must stay as a SINGLE chunk so retrieval surfaces the
-    # complete project list + engagement notes together. Skip the re-split.
-    is_overview = metadata.get("doc_type") == "overview"
+    # Overview and profile docs must stay as a SINGLE chunk so retrieval
+    # surfaces the complete content together (project list / bio paragraph).
+    is_single_chunk = metadata.get("doc_type") in ("overview", "profile")
 
     nodes = []
     for n in header_nodes:
-        if not is_overview and count_tokens(n.text) > 600:
+        if not is_single_chunk and count_tokens(n.text) > 600:
             sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
             sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
             logger.info(
@@ -561,6 +650,48 @@ async def _ingest_portfolio_doc(
 
 # ─── Main entrypoint ────────────────────────────────────────────────────────
 
+async def refresh_profile_only(session: AsyncSession) -> dict[str, Any]:
+    """Re-ingest only `data/personal/profile.md` and flush the askfer cache.
+
+    Cheap path used by the file-watcher in app/worker.py — avoids re-scraping
+    the website when the user only edited their bio. Returns a dict with
+    "status": "ok" | "skipped" | "error" plus extra context.
+    """
+    profile = _load_profile_markdown()
+    if not profile:
+        return {"status": "skipped", "reason": "no_profile_file"}
+
+    md_text, title = profile
+    profile_source = "portfolio://profile"
+    profile_meta = {
+        "doc_type": "profile",
+        "scraped_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": profile_source,
+    }
+
+    try:
+        chunks = await _ingest_portfolio_doc(
+            raw_markdown=md_text,
+            source_id=profile_source,
+            title=title,
+            metadata=profile_meta,
+            session=session,
+            force_reingest=True,
+        )
+    except Exception as exc:
+        logger.error("refresh_profile_only ingest failed", error=str(exc))
+        return {"status": "error", "stage": "ingest", "error": str(exc)}
+
+    try:
+        from app.utils.cache import flush_cache_by_namespace
+        await flush_cache_by_namespace("askfer")
+    except Exception as exc:
+        logger.warning("refresh_profile_only cache flush failed", error=str(exc))
+        # Cache flush is best-effort — ingest already succeeded.
+
+    return {"status": "ok", "chunks": chunks}
+
+
 async def sync_portfolio_knowledge_base(
     session: AsyncSession,
     force_reingest: bool = False,
@@ -581,12 +712,31 @@ async def sync_portfolio_knowledge_base(
     project_payloads: list[dict] = []  # Collected for overview doc generation
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        urls = await _fetch_sitemap_urls(client)
-
-        # 1. Homepage
+        # Sitemap is needed only when we have to fall back to scraping. We
+        # fetch it once up front; on Proxmox / offline, this can fail and we
+        # rely entirely on local md files (the common steady-state case).
         try:
-            md_text, title = await _scrape_web_page(client, urls["homepage"])
-            md_text = _patch_homepage_counters(md_text)
+            urls = await _fetch_sitemap_urls(client)
+        except Exception as exc:
+            logger.warning(f"Sitemap unavailable, will fall back to local files: {exc}")
+            urls = {
+                "homepage": settings.portfolio_homepage_url,
+                "projects": [],
+                "cv": settings.portfolio_cv_url,
+            }
+
+        # 1. Homepage — local-first
+        try:
+            local = _load_local_with_title(LOCAL_HOMEPAGE_PATH, "Ferdy Fadhil Lazuardi — Portfolio")
+            if local:
+                md_text, title = local
+                logger.info("Homepage sourced from local file", path=LOCAL_HOMEPAGE_PATH)
+            else:
+                md_text, title = await _scrape_web_page(client, urls["homepage"])
+                md_text = _patch_homepage_counters(md_text)
+                _save_local_with_title(LOCAL_HOMEPAGE_PATH, md_text, title or "Ferdy Fadhil Lazuardi — Portfolio")
+                logger.info("Homepage scraped + saved locally", path=LOCAL_HOMEPAGE_PATH)
+
             meta = _build_metadata("homepage", urls["homepage"], scraped_at)
             chunks = await _ingest_portfolio_doc(
                 raw_markdown=md_text,
@@ -603,40 +753,93 @@ async def sync_portfolio_knowledge_base(
                 summary["docs_processed"] += 1
                 summary["chunks_ingested"] += chunks
         except Exception as exc:
-            logger.error("Homepage scrape failed", error=str(exc))
+            logger.error("Homepage ingest failed", error=str(exc))
             summary["errors"].append(f"homepage: {exc}")
 
-        # 2. Project pages
-        for project_url in urls["projects"]:
-            try:
-                md_text, title = await _scrape_web_page(client, project_url)
-                meta = _build_metadata("project", project_url, scraped_at)
-                chunks = await _ingest_portfolio_doc(
-                    raw_markdown=md_text,
-                    source_id=project_url,
-                    title=title or meta.get("project_slug", project_url),
-                    metadata=meta,
-                    session=session,
-                    force_reingest=force_reingest,
-                )
-                current_sources.append(project_url)
-                if chunks == 0:
-                    summary["docs_skipped"] += 1
-                else:
-                    summary["docs_processed"] += 1
-                    summary["chunks_ingested"] += chunks
-                project_payloads.append({
-                    "markdown": md_text,
-                    "url": project_url,
-                    "title": title or meta.get("project_slug", project_url),
-                })
-            except Exception as exc:
-                logger.error("Project scrape failed", url=project_url, error=str(exc))
-                summary["errors"].append(f"{project_url}: {exc}")
+        # 2. Project pages — local-first per slug.
+        # If LOCAL_PROJECTS_DIR has any *.md files, use ALL of them (and ignore
+        # sitemap). Otherwise, scrape each URL from sitemap and persist locally.
+        import os
+        local_project_files: list[str] = []
+        if os.path.isdir(LOCAL_PROJECTS_DIR):
+            local_project_files = sorted(
+                f for f in os.listdir(LOCAL_PROJECTS_DIR) if f.endswith(".md")
+            )
 
-        # 3. CV PDF
+        if local_project_files:
+            logger.info(
+                "Project pages sourced from local files",
+                dir=LOCAL_PROJECTS_DIR, count=len(local_project_files),
+            )
+            for fname in local_project_files:
+                slug = fname[:-3]  # strip .md
+                project_url = settings.portfolio_homepage_url.rstrip("/") + f"/projects/{slug}/"
+                local_path = os.path.join(LOCAL_PROJECTS_DIR, fname)
+                local = _load_local_with_title(local_path, slug)
+                if not local:
+                    continue
+                md_text, title = local
+                try:
+                    meta = _build_metadata("project", project_url, scraped_at, project_slug=slug)
+                    chunks = await _ingest_portfolio_doc(
+                        raw_markdown=md_text,
+                        source_id=project_url,
+                        title=title or slug,
+                        metadata=meta,
+                        session=session,
+                        force_reingest=force_reingest,
+                    )
+                    current_sources.append(project_url)
+                    if chunks == 0:
+                        summary["docs_skipped"] += 1
+                    else:
+                        summary["docs_processed"] += 1
+                        summary["chunks_ingested"] += chunks
+                    project_payloads.append({"markdown": md_text, "url": project_url, "title": title or slug})
+                except Exception as exc:
+                    logger.error("Local project ingest failed", file=fname, error=str(exc))
+                    summary["errors"].append(f"projects/{fname}: {exc}")
+        else:
+            for project_url in urls["projects"]:
+                try:
+                    md_text, title = await _scrape_web_page(client, project_url)
+                    slug = _slugify_project_url(project_url)
+                    _save_local_with_title(
+                        os.path.join(LOCAL_PROJECTS_DIR, f"{slug}.md"),
+                        md_text,
+                        title or slug,
+                    )
+                    meta = _build_metadata("project", project_url, scraped_at, project_slug=slug)
+                    chunks = await _ingest_portfolio_doc(
+                        raw_markdown=md_text,
+                        source_id=project_url,
+                        title=title or slug,
+                        metadata=meta,
+                        session=session,
+                        force_reingest=force_reingest,
+                    )
+                    current_sources.append(project_url)
+                    if chunks == 0:
+                        summary["docs_skipped"] += 1
+                    else:
+                        summary["docs_processed"] += 1
+                        summary["chunks_ingested"] += chunks
+                    project_payloads.append({"markdown": md_text, "url": project_url, "title": title or slug})
+                except Exception as exc:
+                    logger.error("Project scrape failed", url=project_url, error=str(exc))
+                    summary["errors"].append(f"{project_url}: {exc}")
+
+        # 3. CV — local-first
         try:
-            md_text, title = await _scrape_cv_pdf(client, urls["cv"])
+            local = _load_local_with_title(LOCAL_CV_PATH, "Curriculum Vitae")
+            if local:
+                md_text, title = local
+                logger.info("CV sourced from local file", path=LOCAL_CV_PATH)
+            else:
+                md_text, title = await _scrape_cv_pdf(client, urls["cv"])
+                _save_local_with_title(LOCAL_CV_PATH, md_text, title or "Curriculum Vitae")
+                logger.info("CV scraped + saved locally", path=LOCAL_CV_PATH)
+
             meta = _build_metadata("cv", urls["cv"], scraped_at)
             chunks = await _ingest_portfolio_doc(
                 raw_markdown=md_text,
@@ -653,10 +856,39 @@ async def sync_portfolio_knowledge_base(
                 summary["docs_processed"] += 1
                 summary["chunks_ingested"] += chunks
         except Exception as exc:
-            logger.error("CV scrape failed", error=str(exc))
+            logger.error("CV ingest failed", error=str(exc))
             summary["errors"].append(f"cv: {exc}")
 
-        # 4. Build & ingest the OVERVIEW document
+        # 4. Editable profile (data/personal/profile.md). Single source of truth
+        # for "who is Ferdy" answers — separate from CV PDF and homepage so it's
+        # easy to edit without re-scraping the website.
+        try:
+            profile = _load_profile_markdown()
+            if profile:
+                md_text, title = profile
+                profile_source = "portfolio://profile"
+                profile_meta = {
+                    "doc_type": "profile",
+                    "scraped_at": scraped_at,
+                    "source": profile_source,
+                }
+                profile_chunks = await _ingest_portfolio_doc(
+                    raw_markdown=md_text,
+                    source_id=profile_source,
+                    title=title,
+                    metadata=profile_meta,
+                    session=session,
+                    force_reingest=True,  # always rebuild to reflect latest edits
+                )
+                current_sources.append(profile_source)
+                if profile_chunks > 0:
+                    summary["docs_processed"] += 1
+                    summary["chunks_ingested"] += profile_chunks
+        except Exception as exc:
+            logger.error("Profile doc ingestion failed", error=str(exc))
+            summary["errors"].append(f"profile: {exc}")
+
+        # 5. Build & ingest the OVERVIEW document
         # This single doc lists all projects grouped by org_label so a query like
         # "what projects have you done?" returns a complete index instead of just
         # the top-3 reranked chunks.
@@ -699,7 +931,7 @@ async def sync_portfolio_knowledge_base(
                 logger.error("Overview doc build failed", error=str(exc))
                 summary["errors"].append(f"overview: {exc}")
 
-        # 5. Stale cleanup (only if we got at least one source — avoids wiping
+        # 6. Stale cleanup (only if we got at least one source — avoids wiping
         # everything during a total network outage)
         if current_sources:
             try:
