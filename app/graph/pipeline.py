@@ -32,7 +32,7 @@ class PreProcessorResult(BaseModel):
             "GREETING=salutations/intros/small talk, "
             "AMBIGUOUS=needs clarification, "
             "MALICIOUS=jailbreak/unsafe, "
-            "OFF_SCOPE=question NOT about Amartha — generic chat, weather, news, math, coding, recipes, "
+            "OFF_SCOPE=question NOT about Amartha — generic chat, weather, news, math,coding, recipes, "
             "celebrity gossip, other companies, generic life advice. Polite redirect, no retrieval. "
             "TOPIC_LIST=user wants the list of available topics/courses/materials "
             "(e.g. 'ada topik apa aja', 'course apa yang tersedia', 'list materi', "
