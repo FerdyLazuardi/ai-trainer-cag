@@ -35,6 +35,7 @@ from app.observability import (
     set_current_span_io,
     set_current_span_attributes,
     annotate_span,
+    update_current_span_name,
 )
 from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
@@ -61,8 +62,15 @@ def _flush_traces():
 
 async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
     redis_client = get_redis_client()
-    # Update last_active timestamp on every message (rolling window)
-    await redis_client.set(f"rag:last_active:{conv_id}", str(time.time()), ex=86400)
+    afk_seconds = settings.ltm_afk_threshold_seconds
+    # Update last_active timestamp on every message (rolling window).
+    # TTL must outlive the AFK threshold + a buffer so the worker can still
+    # see it when the deferred job fires.
+    await redis_client.set(
+        f"rag:last_active:{conv_id}",
+        str(time.time()),
+        ex=afk_seconds + 3600,
+    )
 
     # Deduplication: only enqueue if no task is already queued for this conversation
     sched_key = f"rag:ltm:scheduled:{conv_id}"
@@ -77,11 +85,12 @@ async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
             'sync_ltm_task',
             conv_id,
             u_id,
-            _defer_by=datetime.timedelta(seconds=10)
+            _defer_by=datetime.timedelta(seconds=afk_seconds)
         )
-        # Mark as scheduled (TTL slightly > 10s so key covers the defer window)
-        await redis_client.set(sched_key, "1", ex=60)
-        logger.debug("AFK LTM sync scheduled", conversation_id=conv_id)
+        # Mark as scheduled. TTL slightly larger than the defer window so the
+        # key is still alive when the worker checks it.
+        await redis_client.set(sched_key, "1", ex=afk_seconds + 600)
+        logger.debug("AFK LTM sync scheduled", conversation_id=conv_id, defer_s=afk_seconds)
     except Exception as e:
         logger.warning(f"Failed to schedule AFK LTM sync: {e}")
 
@@ -107,7 +116,9 @@ async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
         redis_client = get_redis_client()
         key = f"rag:courses:{conv_id}"
         await redis_client.sadd(key, *names)
-        await redis_client.expire(key, 86400)   # mirrors last_active TTL
+        # Mirror the last_active TTL so the set is still readable when the
+        # AFK worker fires after `ltm_afk_threshold_seconds`.
+        await redis_client.expire(key, settings.ltm_afk_threshold_seconds + 3600)
     except Exception as e:
         logger.warning(f"Failed to track session courses: {e}")
 
@@ -116,8 +127,9 @@ DEV_BYPASS_USER_ID = "dev_user_123"
 
 # Intents whose answers don't go through the RAG generator — no faithfulness
 # signal worth measuring. GREETING/AMBIGUOUS are canned, MALICIOUS is a refusal,
-# TOPIC_LIST reads from Postgres metadata, BRAINSTORM is reasoning-only.
-_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM"}
+# TOPIC_LIST reads from Postgres metadata, BRAINSTORM is reasoning-only,
+# OFF_SCOPE is a canned redirect with no retrieval.
+_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM", "OFF_SCOPE"}
 
 
 def _should_eval_turn(
@@ -286,11 +298,46 @@ async def _prepare_rag_context(
     if cached:
         return {"cached": cached, "query_embedding": query_embedding}
 
-    # Build message history
-    summary, recent_history = await get_or_summarize_history(
-        conversation_id=conversation_id,
-        llm=get_cheap_llm(),
-        max_fresh_turns=5,
+    # Build message history + LTM + UserProfile in parallel.
+    # These three I/O calls are independent (Redis, Qdrant, Postgres) — fan
+    # them out instead of awaiting serially. Only LTM and UserProfile depend
+    # on `ltm_eligible`, so they're guarded with stub coroutines that early-
+    # return for non-real users (dev bypass, anonymous, etc.).
+    #
+    # Tradeoff: on a brand-new session of a real user we'll fetch LTM +
+    # UserProfile that get discarded (since `is_brand_new_session` is only
+    # known AFTER history resolves). That's 1 Qdrant call + 1 Postgres
+    # SELECT on first-turn-ever — acceptable to save 100-300ms on every
+    # subsequent regular turn.
+    user_id = current_user.user_id
+    ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
+
+    async def _load_ltm_if_eligible():
+        if not ltm_eligible:
+            return {"summary": "", "course_names": []}
+        return await qdrant_ltm.load(
+            user_id=user_id,
+            query=resolved_query,
+            query_embedding=query_embedding,
+        )
+
+    async def _load_user_profile_if_eligible():
+        if not ltm_eligible:
+            return None
+        return await db.get(UserProfile, user_id)
+
+    (
+        (summary, recent_history),
+        ltm_profile,
+        user_profile_obj,
+    ) = await asyncio.gather(
+        get_or_summarize_history(
+            conversation_id=conversation_id,
+            llm=get_cheap_llm(),
+            max_fresh_turns=5,
+        ),
+        _load_ltm_if_eligible(),
+        _load_user_profile_if_eligible(),
     )
 
     messages = []
@@ -301,55 +348,50 @@ async def _prepare_rag_context(
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
 
-    # Long-Term Memory (LTM)
-    user_id = current_user.user_id
-    ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
-    ltm_profile = {"summary": "", "course_names": []}
     user_pref_dict = None
 
     # Skip LTM lookup entirely on the first turn of a brand-new session — there
     # is nothing in `recent_history` yet AND no prior summary, which means the
     # user has never spoken to A-Pedi before in this conversation. Loading LTM
     # here just bloats the prompt by ~200 tokens and is rarely useful for the
-    # very first message ("hi", "halo", "apa itu X").
+    # very first message ("hi", "halo", "apa itu X"). We still pay the fetch
+    # cost (parallel gather above) but discard the payload so the prompt
+    # stays lean.
     is_brand_new_session = not recent_history and not summary
+    if is_brand_new_session:
+        ltm_profile = {"summary": "", "course_names": []}
+        user_profile_obj = None
 
-    if ltm_eligible and not is_brand_new_session:
-        ltm_profile = await qdrant_ltm.load(
-            user_id=user_id,
-            query=resolved_query,
-            query_embedding=query_embedding,
-        )
-        # Fetch persistent preferences. Drop stale ones — anything older than
-        # `user_pref_max_age_days` is treated as expired so a one-off "pakai
-        # bahasa awam" three months ago doesn't bind every future session.
-        user_profile_obj = await db.get(UserProfile, user_id)
-        if user_profile_obj:
-            from datetime import datetime, timedelta, timezone
+    if ltm_eligible and not is_brand_new_session and user_profile_obj is not None:
+        # Drop stale prefs — anything older than `user_pref_max_age_days` is
+        # treated as expired so a one-off "pakai bahasa awam" three months ago
+        # doesn't bind every future session.
+        from datetime import datetime, timedelta, timezone
 
-            updated_at = user_profile_obj.updated_at
-            is_fresh = True
-            if updated_at is not None:
-                # SQLAlchemy returns naive datetime for some drivers — normalize.
-                if updated_at.tzinfo is None:
-                    updated_at = updated_at.replace(tzinfo=timezone.utc)
-                age = datetime.now(timezone.utc) - updated_at
-                is_fresh = age <= timedelta(days=settings.user_pref_max_age_days)
+        updated_at = user_profile_obj.updated_at
+        is_fresh = True
+        age = None
+        if updated_at is not None:
+            # SQLAlchemy returns naive datetime for some drivers — normalize.
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            age = datetime.now(timezone.utc) - updated_at
+            is_fresh = age <= timedelta(days=settings.user_pref_max_age_days)
 
-            if is_fresh:
-                user_pref_dict = {
-                    "role": user_profile_obj.role,
-                    "preferred_tone": user_profile_obj.preferred_tone,
-                    "formatting_pref": user_profile_obj.formatting_pref,
-                    "custom_instructions": user_profile_obj.custom_instructions
-                }
-            else:
-                logger.info(
-                    "User preferences ignored — older than threshold",
-                    user_id=user_id,
-                    age_days=age.days,
-                    threshold_days=settings.user_pref_max_age_days,
-                )
+        if is_fresh:
+            user_pref_dict = {
+                "role": user_profile_obj.role,
+                "preferred_tone": user_profile_obj.preferred_tone,
+                "formatting_pref": user_profile_obj.formatting_pref,
+                "custom_instructions": user_profile_obj.custom_instructions
+            }
+        else:
+            logger.info(
+                "User preferences ignored — older than threshold",
+                user_id=user_id,
+                age_days=age.days if age else None,
+                threshold_days=settings.user_pref_max_age_days,
+            )
 
     initial_state = {
         "messages": messages,
@@ -506,6 +548,10 @@ async def chat(
                 "latency_ms": round(latency_ms, 2),
                 "streaming": False,
             })
+            # Rename the span so Phoenix's span list shows intent inline
+            # ("a-pedi-chat:KNOWLEDGE") — no need to expand row or configure
+            # columns. Group-by-name then yields intent distribution directly.
+            update_current_span_name(f"a-pedi-chat:{_intent}")
 
     except Exception as exc:
         logger.error("RAG pipeline error", error=str(exc), query=request.query[:60])
@@ -839,6 +885,8 @@ async def chat_stream(
                     "max_chunk_score": _stream_max_score,
                     "streaming": True,
                 })
+                # Surface intent in Phoenix span list (see non-stream branch).
+                update_current_span_name(f"a-pedi-chat-stream:{intent}")
 
         except Exception as exc:
             logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])

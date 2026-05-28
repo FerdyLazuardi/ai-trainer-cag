@@ -186,18 +186,25 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         return {"status": "skipped", "reason": "dedup_lock"}
 
     # ── Guard 2: Activity check ───────────────────────────────────────────────
+    # If the user has interacted within `ltm_afk_threshold_seconds`, they're
+    # not really AFK yet — defer the job until the full quiet window has
+    # elapsed since their last activity. We schedule the next attempt for
+    # exactly the remaining gap so we don't poll multiple times.
     last_active = await redis.get(f"rag:last_active:{conversation_id}")
     if last_active:
         time_since_active = time.time() - float(last_active)
-        if time_since_active < 5:   # Quick test: check if user was active in last 5 seconds
+        afk_threshold = settings.ltm_afk_threshold_seconds
+        if time_since_active < afk_threshold:
             await redis.delete(dedup_key)          # release lock so retry can happen
+            remaining = max(60, int(afk_threshold - time_since_active))
             logger.info(
                 "LTM sync: user still active, deferring task",
                 conversation_id=conversation_id,
                 seconds_since_active=round(time_since_active),
+                retry_in_s=remaining,
             )
             from arq import Retry
-            raise Retry(defer=10)
+            raise Retry(defer=remaining)
 
     # ── Step 3: Get session summary ───────────────────────────────────────────
     from app.agents.memory import get_or_summarize_history

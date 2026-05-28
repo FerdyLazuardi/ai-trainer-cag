@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
 
     # ─── Reranker (local cross-encoder) ─────────────────────────────────────
+    reranker_enabled: bool = Field(default=True, alias="RERANKER_ENABLED")
     reranker_model_name: str = Field(
         default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
         alias="RERANKER_MODEL_NAME",
@@ -99,7 +100,7 @@ class Settings(BaseSettings):
 
     # ─── Context Engineering ────────────────────────────────────────────────
     max_context_tokens: int = 6000
-    retrieval_top_k: int = 15
+    retrieval_top_k: int = 10
     reranked_top_k: int = 7
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
@@ -110,8 +111,14 @@ class Settings(BaseSettings):
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     cache_query_ttl_seconds: int = 14400   # 4 hours — KB content is stable, longer TTL = more cache hits
-    conversation_ttl_seconds: int = 3600
+    # 24h: must outlive `ltm_afk_threshold_seconds` so STM history+summary
+    # survive long enough for the AFK LTM worker to consume them.
+    conversation_ttl_seconds: int = 86400
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
+    # AFK window before LTM sync fires. 10h matches "user closed laptop / went
+    # to sleep" rather than "stepped away for coffee" — short defers waste
+    # worker capacity re-summarizing the same session.
+    ltm_afk_threshold_seconds: int = 36000
 
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"

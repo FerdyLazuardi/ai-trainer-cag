@@ -310,23 +310,31 @@ def _strip_md_headings_for_context(text: str) -> str:
     return _MD_HEADING_RE.sub("", text)
 
 
-# ── Dynamic capability cache ──────────────────────────────────────────────────
-# Loads distinct course_name values from the documents table once and caches
-# them with a short TTL. Lets the system prompt advertise A-Pedi's actual
-# scope without hardcoding course names — when new material is ingested,
-# the next refresh picks it up automatically (no restart, no prompt edit).
-_CAPABILITY_TTL_SECONDS = 600  # 10 minutes
-_capability_cache: dict[str, Any] = {"courses": [], "expires_at": 0.0}
+# ── Dynamic course-name loader ────────────────────────────────────────────────
+# Distinct course_name values from the `documents` table, TTL-cached so each
+# call doesn't hit Postgres. Used by the AMBIGUITY handler to ground its
+# clarifying suggestions in topics that actually exist in the KB. Generate node
+# does NOT need this list — `<retrieved_context>` already carries each chunk's
+# `course_name`, so injecting the global list there is pure token overhead and
+# scales linearly with KB size (50 courses ≈ 600+ wasted tokens per query).
+_COURSE_CACHE_TTL_SECONDS = 600  # 10 minutes
+_course_cache: dict[str, Any] = {"courses": [], "expires_at": 0.0}
 
 
 async def _load_course_names() -> list[str]:
     """Fetch distinct course_name values from the documents table.
 
-    Same source the TOPIC_LIST handler uses, so capability advertised in the
-    system prompt can never drift from what the user gets when they ask
-    'apa aja topiknya'. Failures swallowed — empty list means the
-    capability block won't be added to the prompt this turn.
+    Same source the TOPIC_LIST handler uses, so suggestions advertised in
+    AMBIGUITY responses never drift from what the user gets when they ask
+    "apa aja topiknya". TTL-cached. Failures return []; callers fall back to a
+    generic clarifying question.
     """
+    import time as _time
+
+    now = _time.time()
+    if now < _course_cache["expires_at"] and _course_cache["courses"]:
+        return _course_cache["courses"]
+
     from sqlalchemy import select, distinct
     from sqlalchemy.sql import text as sql_text
 
@@ -341,36 +349,14 @@ async def _load_course_names() -> list[str]:
                 .where(sql_text("metadata->>'course_name' <> ''"))
             )
             rows = (await session.execute(stmt)).all()
-            return sorted({r.course_name for r in rows if r.course_name})
+            courses = sorted({r.course_name for r in rows if r.course_name})
     except Exception as exc:
-        logger.warning(f"Capability load failed (Postgres): {exc}")
+        logger.warning(f"Course-name load failed (Postgres): {exc}")
         return []
 
-
-async def _get_capability_block() -> str:
-    """Return a <capabilities> XML block for the system prompt, or "" if
-    course list is empty / DB unreachable. TTL-cached to avoid per-request DB hits.
-    """
-    import time as _time
-
-    now = _time.time()
-    if now < _capability_cache["expires_at"] and _capability_cache["courses"]:
-        courses = _capability_cache["courses"]
-    else:
-        courses = await _load_course_names()
-        _capability_cache["courses"] = courses
-        _capability_cache["expires_at"] = now + _CAPABILITY_TTL_SECONDS
-
-    if not courses:
-        return ""
-
-    bullets = "\n".join(f"- {c}" for c in courses)
-    return (
-        "\n\n<capabilities>\n"
-        "Aku bisa bantu jelasin materi training berikut yang sudah ku-pelajari:\n"
-        f"{bullets}\n"
-        "</capabilities>"
-    )
+    _course_cache["courses"] = courses
+    _course_cache["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
+    return courses
 
 
 def _sanitize_answer(text: str) -> str:
@@ -587,10 +573,16 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
     course list at runtime and instruct the LLM to draw options from it.
     """
     course_names = await _load_course_names()
-    if course_names:
+    # Cap injection so a 50-course KB doesn't blow up the prompt. The LLM only
+    # picks 2-3 suggestions anyway — feeding 50 wastes tokens and gives no extra
+    # signal. Alphabetical truncation is fine; ambiguity replies don't need
+    # ranking, just plausible options.
+    AMBIGUITY_MAX_TOPICS = 20
+    suggestions = course_names[:AMBIGUITY_MAX_TOPICS]
+    if suggestions:
         topics_block = (
             "\n\n<available_topics>\n"
-            + "\n".join(f"- {c}" for c in course_names)
+            + "\n".join(f"- {c}" for c in suggestions)
             + "\n</available_topics>"
         )
         topics_rule = (
@@ -901,11 +893,15 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             pref_str = "\n".join(pref_lines)
             pref_section = f"\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n{pref_str}\n</user_preferences>"
 
-    capability_section = await _get_capability_block()
+    # NOTE: capability/topic-list injection deliberately removed here.
+    # `<retrieved_context>` already exposes each chunk's `course_name`, so
+    # advertising the global course list to the generate LLM is redundant —
+    # and it scaled linearly with KB size (50 courses ≈ 600+ wasted tokens
+    # per query). The AMBIGUITY handler still injects a capped list because
+    # IT needs to suggest topics; generate does not.
 
     full_system = (
         f"{base_prompt}"
-        f"{capability_section}"
         f"{score_block_str}"
         f"{pref_section}"
         f"{ltm_section}"
@@ -946,12 +942,23 @@ def _route_after_rag(state: RAGState) -> str:
     BRAINSTORM bypasses the threshold — even off-topic-feeling queries
     (e.g. emotional vents) deserve a real response from the AI; the
     threshold guard is for KNOWLEDGE lookups only.
+
+    When the reranker is disabled, `chunk.score` equals `hybrid_score`
+    (LlamaIndex dense+BM25 fusion). That score isn't on a calibrated 0-1
+    sigmoid like the cross-encoder output, so `rerank_min_score=0.30`
+    doesn't transfer. We skip the threshold gate in that mode — the LLM
+    sees whatever hybrid retrieval returned. This is intentional for the
+    eval A/B; if the gate turns out to matter, the right move is to
+    re-derive a threshold from a hybrid-score histogram, not to keep the
+    sigmoid value.
     """
     if state.get("intent") == "BRAINSTORM":
         return "generate"
     chunks = state.get("retrieved_context") or []
     if not chunks:
         return "low_relevance"
+    if not _settings.reranker_enabled:
+        return "generate"
     scores = [c.get("score") for c in chunks if isinstance(c.get("score"), (int, float))]
     if not scores:
         return "low_relevance"

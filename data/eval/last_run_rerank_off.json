@@ -1,27 +1,27 @@
 {
   "summary": {
     "total": 20,
-    "passed": 19,
-    "failed": 1,
-    "pass_rate": 0.95,
+    "passed": 17,
+    "failed": 3,
+    "pass_rate": 0.85,
     "by_category": {
       "factual": {
         "total": 5,
         "passed": 5,
         "pass_rate": 1.0,
-        "faithfulness_mean": 0.92
+        "faithfulness_mean": 1.0
       },
       "reasoning": {
         "total": 3,
-        "passed": 3,
-        "pass_rate": 1.0,
+        "passed": 2,
+        "pass_rate": 0.6667,
         "faithfulness_mean": 1.0
       },
       "empathy": {
         "total": 3,
-        "passed": 3,
-        "pass_rate": 1.0,
-        "faithfulness_mean": 0.65
+        "passed": 2,
+        "pass_rate": 0.6667,
+        "faithfulness_mean": 0.6667
       },
       "out_of_scope": {
         "total": 2,
@@ -31,8 +31,8 @@
       },
       "ambiguous": {
         "total": 2,
-        "passed": 1,
-        "pass_rate": 0.5,
+        "passed": 2,
+        "pass_rate": 1.0,
         "faithfulness_mean": null
       },
       "greeting": {
@@ -49,9 +49,9 @@
       },
       "multiturn": {
         "total": 2,
-        "passed": 2,
-        "pass_rate": 1.0,
-        "faithfulness_mean": 1.0
+        "passed": 1,
+        "pass_rate": 0.5,
+        "faithfulness_mean": 0.5
       }
     }
   },
@@ -67,8 +67,8 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 19743.59,
-      "answer_preview": "Produk Modal di Amartha adalah layanan pembiayaan mikro yang dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\n\nKarakteristik utamanya meliputi:\n*   **",
+      "latency_ms": 10960.7,
+      "answer_preview": "Produk Modal di Amartha adalah layanan pembiayaan mikro yang dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan.\n\nKarakteristik utamanya meliputi:\n*   **Pencairan fleksibel:** Di",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -85,8 +85,8 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 19631.68,
-      "answer_preview": "Produk Celengan adalah layanan investasi mikro dari Amartha yang memungkinkan masyarakat berinvestasi dengan nominal terjangkau dan risiko relatif rendah.\n\nImplementasi produk Celengan di Amartha meli",
+      "latency_ms": 10897.06,
+      "answer_preview": "Produk Celengan adalah layanan investasi mikro dari Amartha. Produk ini memungkinkan masyarakat untuk berinvestasi dengan nominal yang terjangkau dan risiko yang relatif rendah.\n\nImplementasi produk C",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -103,8 +103,8 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 21084.87,
-      "answer_preview": "Amartha menerapkan 8 Prinsip Client Protection, yaitu:\n\n1.  **Appropriate Product Design and Delivery**: Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2.  **Prevention of O",
+      "latency_ms": 18945.26,
+      "answer_preview": "Ada 8 Prinsip Client Protection Amartha, yaitu:\n\n1.  **Appropriate Product Design and Delivery**: Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n    *   **HO**: Menjalankan ",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -121,14 +121,10 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 21364.22,
-      "answer_preview": "Tugas BP di Amartha adalah melakukan penagihan dengan etika dan menghormati hak pelanggan. BP juga tidak melakukan *aggressive sales*, memiliki batasan jumlah mitra yang dikelola, dan skema insentif b",
-      "faithfulness": 0.6,
-      "unsupported_claims": [
-        "BP juga tidak melakukan *aggressive sales*",
-        "memiliki batasan jumlah mitra yang dikelola",
-        "skema insentif berbasis kualitas portofolio"
-      ],
+      "latency_ms": 15323.73,
+      "answer_preview": "Tugas BP di Amartha adalah membangun jaringan keuangan melalui AmarthaLink. BP melayani tidak hanya Ibu Mitra Grameen, tetapi juga seluruh masyarakat di sekitar mereka.",
+      "faithfulness": 1.0,
+      "unsupported_claims": [],
       "passed": true,
       "failures": []
     },
@@ -143,8 +139,8 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 3431.3,
-      "answer_preview": "Aku belum menemukan info soal itu di materi yang ku-pegang. Coba pakai kata kunci lain ya, atau tanyakan ke supervisor / People Care kalau topiknya spesifik.",
+      "latency_ms": 12856.92,
+      "answer_preview": "BP itu Field Officer, sedangkan FO itu Field Office. Jadi, BP adalah orangnya, dan FO adalah tempatnya.",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -155,18 +151,20 @@
       "category": "reasoning",
       "query": "Menurut kamu prinsip Client Protection mana yang paling kritis untuk BP baru?",
       "turns": null,
-      "intent": "BRAINSTORM",
+      "intent": "KNOWLEDGE",
       "intent_scores": {
-        "needs_lookup": 0.5,
-        "needs_reasoning": 1.0,
+        "needs_lookup": 0.0,
+        "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 5956.81,
-      "answer_preview": "Menurutku, prinsip **Transparency (Prinsip 3)** dan **Fair and Respectful Treatment of Client (Prinsip 5)** itu paling kritis buat BP baru.\n\nKenapa?\n\n*   **Transparency (Prinsip 3):** BP baru harus bi",
+      "latency_ms": 11769.76,
+      "answer_preview": "Menurutku, prinsip **Fair and Respectful Treatment of Client** (Prinsip 5) itu paling kritis buat BP baru.\n\nIni alasannya:\n\n*   **Interaksi Langsung:** BP adalah garda terdepan yang berinteraksi langs",
       "faithfulness": 1.0,
       "unsupported_claims": [],
-      "passed": true,
-      "failures": []
+      "passed": false,
+      "failures": [
+        "intent=KNOWLEDGE != expected=BRAINSTORM"
+      ]
     },
     {
       "id": "reasoning_002",
@@ -175,12 +173,12 @@
       "turns": null,
       "intent": "BRAINSTORM",
       "intent_scores": {
-        "needs_lookup": 0.5,
-        "needs_reasoning": 1.0,
+        "needs_lookup": 0.6,
+        "needs_reasoning": 0.8,
         "needs_empathy": 0.0
       },
-      "latency_ms": 3801.17,
-      "answer_preview": "Kamu bisa jelaskan perbedaan utama antara Modal dan Celengan, lalu tanyakan tujuan calon mitra.\n\n*   **Modal:** Ini pinjaman untuk modal usaha. Cocok kalau calon mitra butuh dana tambahan untuk mengem",
+      "latency_ms": 9196.51,
+      "answer_preview": "Kamu bisa bantu calon mitra memilih antara Modal dan Celengan dengan menjelaskan perbedaan dan manfaat masing-masing produk, lalu mengaitkannya dengan kebutuhan dan tujuan mereka.\n\n*   **Produk Modal:",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -197,8 +195,8 @@
         "needs_reasoning": 0.5,
         "needs_empathy": 0.0
       },
-      "latency_ms": 3318.1,
-      "answer_preview": "Aku belum menemukan info soal itu di materi yang ku-pegang. Coba pakai kata kunci lain ya, atau tanyakan ke supervisor / People Care kalau topiknya spesifik.",
+      "latency_ms": 4582.83,
+      "answer_preview": "Aku belum menemukan info soal itu. Coba pakai kata kunci lain ya.",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,
@@ -215,12 +213,12 @@
         "needs_reasoning": 0.7,
         "needs_empathy": 1.0
       },
-      "latency_ms": 6521.51,
-      "answer_preview": "Aku paham banget kamu lagi stress karena target belum tercapai.\n\nMengenai target yang belum tercapai, ada beberapa hal yang bisa kita lihat dari sisi Amartha. Prinsip \"Prevention of Over Indebtedness\"",
+      "latency_ms": 4002.95,
+      "answer_preview": "Aku paham banget kamu lagi stres karena target belum tercapai.\n\nMengenai target yang belum tercapai, ada beberapa hal yang bisa kita lihat dari sisi Amartha. Pertama, dari sisi **Client Protection**, ",
       "faithfulness": 0.6,
       "unsupported_claims": [
-        "Kalau target belum tercapai, mungkin bisa dicek lagi apakah ada kendala di sisi Mitra yang perlu dibantu, atau ada faktor eksternal yang mempengaruhi mereka.",
-        "Kadang, fokus pada kemampuan bayar Mitra dan memberikan solusi yang tepat bisa membantu mereka juga untuk lebih lancar dalam pembayaran, yang pada akhirnya akan berdampak positif ke target."
+        "Mungkin ada kendala teknis atau proses yang perlu diperbaiki agar lebih efisien dalam melayani Mitra dan mencapai target.",
+        "Coba identifikasi bagian mana dari proses kerja kamu yang bisa dibuat lebih efisien, mungkin dengan memanfaatkan teknologi yang ada."
       ],
       "passed": true,
       "failures": []
@@ -230,18 +228,20 @@
       "category": "empathy",
       "query": "Gw bingung banget mau resign jadi BP, capek terus",
       "turns": null,
-      "intent": "BRAINSTORM",
+      "intent": "KNOWLEDGE",
       "intent_scores": {
-        "needs_lookup": 0.6,
-        "needs_reasoning": 0.7,
-        "needs_empathy": 1.0
+        "needs_lookup": 0.0,
+        "needs_reasoning": 0.0,
+        "needs_empathy": 0.0
       },
-      "latency_ms": 4234.31,
-      "answer_preview": "Aku paham kamu lagi merasa capek banget sampai kepikiran resign jadi BP.\n\nKalau kamu merasa capek karena beban kerja, mungkin bisa coba lihat lagi bagaimana kamu mengelola waktu dan prioritas. Di Amar",
+      "latency_ms": 2830.04,
+      "answer_preview": "Aku turut prihatin kamu merasa capek dan bingung soal keputusan resign jadi BP.\n\nKalau kamu butuh bantuan soal penanganan kasus pelecehan di Amartha, aku bisa bantu jelaskan langkah-langkahnya. Ada ju",
       "faithfulness": 0.7,
       "unsupported_claims": [],
-      "passed": true,
-      "failures": []
+      "passed": false,
+      "failures": [
+        "intent=KNOWLEDGE != expected=BRAINSTORM"
+      ]
     },
     {
       "id": "empathy_003",
@@ -250,13 +250,13 @@
       "turns": null,
       "intent": "BRAINSTORM",
       "intent_scores": {
-        "needs_lookup": 0.5,
+        "needs_lookup": 0.6,
         "needs_reasoning": 0.7,
         "needs_empathy": 0.8
       },
-      "latency_ms": 5429.9,
-      "answer_preview": "Aku paham banget rasanya kalau usaha belum membuahkan hasil, apalagi kalau udah seminggu ditolak terus.\n\nSoal cocok atau nggak jadi BP, ini bukan cuma soal diterima atau ditolak calon mitra. Ada beber",
-      "faithfulness": null,
+      "latency_ms": 5644.69,
+      "answer_preview": "Aku paham banget rasanya kalau usaha belum membuahkan hasil, apalagi kalau udah seminggu ditolak terus.\n\nSoal cocok atau tidak jadi BP, ini bukan cuma soal diterima atau ditolak calon mitra. Ada beber",
+      "faithfulness": 0.7,
       "unsupported_claims": [],
       "passed": true,
       "failures": []
@@ -272,7 +272,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 1108.69,
+      "latency_ms": 961.66,
       "answer_preview": "Aku khusus bantu materi Amarthapedia aja — produk, kebijakan, dan modul training yang sudah ku-pelajari. Buat hal lain kayak itu, coba tanya ke sumber yang lebih tepat ya.",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -290,7 +290,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 1.8,
+      "latency_ms": 2.73,
       "answer_preview": "Aku khusus bantu materi Amarthapedia aja — produk, kebijakan, dan modul training yang sudah ku-pelajari. Buat hal lain kayak itu, coba tanya ke sumber yang lebih tepat ya.",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -302,20 +302,18 @@
       "category": "ambiguous",
       "query": "yang itu loh",
       "turns": null,
-      "intent": "KNOWLEDGE",
+      "intent": "AMBIGUOUS",
       "intent_scores": {
         "needs_lookup": 0.0,
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 1565.69,
-      "answer_preview": "Aku belum menemukan info soal itu di materi yang ku-pegang. Coba pakai kata kunci lain ya, atau tanyakan ke supervisor / People Care kalau topiknya spesifik.",
+      "latency_ms": 3979.81,
+      "answer_preview": "Maksudnya soal AmarthaLink & Digital Mindset, Anti-Harassment, Client Protection, Company Amartha, atau Product Knowledge Amartha?",
       "faithfulness": null,
       "unsupported_claims": [],
-      "passed": false,
-      "failures": [
-        "intent=KNOWLEDGE != expected=AMBIGUOUS"
-      ]
+      "passed": true,
+      "failures": []
     },
     {
       "id": "ambiguous_002",
@@ -328,7 +326,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 800.67,
+      "latency_ms": 2244.13,
       "answer_preview": "Ada yang bisa aku bantu? Boleh sebut topiknya ya.",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -346,7 +344,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 1628.15,
+      "latency_ms": 5482.84,
       "answer_preview": "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -364,7 +362,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 853.16,
+      "latency_ms": 2225.19,
       "answer_preview": "Selamat pagi! Ada yang bisa aku bantu seputar materi Amarthapedia?",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -382,7 +380,7 @@
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 1259.04,
+      "latency_ms": 820.5,
       "answer_preview": "Berikut topik yang aku punya:\n- AmarthaLink & Digital Mindset\n- Anti-Harassment\n- Client Protection\n- Company Amartha\n- Product Knowledge Amartha\n\nTanya aja salah satu, aku bantu jelasin.",
       "faithfulness": null,
       "unsupported_claims": [],
@@ -400,16 +398,22 @@
       ],
       "intent": "KNOWLEDGE",
       "intent_scores": {
-        "needs_lookup": 1.0,
+        "needs_lookup": 0.0,
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 3093.49,
-      "answer_preview": "Amartha menerapkan 8 Prinsip Client Protection. Ini adalah panduan utama dalam menjalankan bisnis agar sesuai dengan prinsip perlindungan pelanggan.\n\nBerikut 8 Prinsip Client Protection Amartha:\n\n1.  ",
-      "faithfulness": null,
-      "unsupported_claims": [],
-      "passed": true,
-      "failures": []
+      "latency_ms": 6966.59,
+      "answer_preview": "Kamu perlu tahu kalau Client Protection (CP) itu bukan cuma soal kepatuhan, tapi juga jadi bagian penting dari nilai-nilai Amartha. Ini tentang gimana kita bisa kasih layanan yang aman, adil, dan bene",
+      "faithfulness": 0.0,
+      "unsupported_claims": [
+        "Client Protection (CP) is an important part of Amartha's values.",
+        "CP ensures products are safe and helpful for customers."
+      ],
+      "passed": false,
+      "failures": [
+        "missing_required_phrase: 'Prinsip'",
+        "faithfulness=0.00 < min=0.50 — unsupported=[\"Client Protection (CP) is an important part of Amartha's values.\", 'CP ensures products are safe and helpful for customers.']"
+      ]
     },
     {
       "id": "multiturn_topicswitch_001",
@@ -423,11 +427,11 @@
       "intent": "KNOWLEDGE",
       "intent_scores": {
         "needs_lookup": 1.0,
-        "needs_reasoning": 0.2,
+        "needs_reasoning": 0.0,
         "needs_empathy": 0.0
       },
-      "latency_ms": 3355.21,
-      "answer_preview": "Penerapan Prinsip ke-8 Client Protection, yaitu **Governance and HR**, di Amartha mencakup:\n\n*   **Head Office (HO):** Menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertuli",
+      "latency_ms": 6964.66,
+      "answer_preview": "Contoh penerapan Prinsip ke-8 Client Protection (Governance and HR) di Amartha ada dua:\n\n*   **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja ter",
       "faithfulness": 1.0,
       "unsupported_claims": [],
       "passed": true,

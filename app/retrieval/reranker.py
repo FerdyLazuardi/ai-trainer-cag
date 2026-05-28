@@ -87,7 +87,9 @@ async def rerank(
             implicitly; mMiniLMv2 doesn't, and dedup belongs upstream anyway).
 
     Returns:
-        Reranked list[RetrievedChunk] of length ≤ top_k.
+        Reranked list[RetrievedChunk] of length ≤ top_k. When
+        `settings.reranker_enabled` is False, returns top-K of the input
+        sorted by hybrid_score (no cross-encoder pass).
     """
     k = top_k or settings.reranked_top_k
 
@@ -95,6 +97,18 @@ async def rerank(
         return []
 
     sorted_chunks = sorted(chunks, key=lambda c: c.score, reverse=True)
+
+    # Bypass mode: skip the cross-encoder entirely. `chunk.score` already
+    # equals `hybrid_score` (set by hybrid_search), so the existing sort is
+    # the right ordering. Used by the eval harness to A/B reranker on/off.
+    if not settings.reranker_enabled:
+        logger.debug(
+            "Reranker disabled — passing through hybrid order",
+            input_chunks=len(chunks),
+            output_chunks=min(len(sorted_chunks), k),
+            top_k=k,
+        )
+        return sorted_chunks[:k]
 
     try:
         model = _get_cross_encoder()

@@ -208,6 +208,27 @@ def get_current_span_id() -> str | None:
         return None
 
 
+def update_current_span_name(name: str) -> None:
+    """Rename the active span. Use to surface routing decisions (e.g. intent)
+    in Phoenix's span list view without expanding row details.
+
+    Phoenix UI uses span name as the primary list column — appending the
+    classified intent (`a-pedi-chat:KNOWLEDGE`) makes distribution + filtering
+    by intent trivial. No-op when observability is disabled or no active span.
+    """
+    if _tracer_provider is None or not name:
+        return
+    try:
+        from opentelemetry import trace as _trace
+
+        span = _trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        span.update_name(name)
+    except Exception:
+        pass
+
+
 def annotate_span(span_id: str, name: str, score: float) -> None:
     """Submit a numeric score to Phoenix as a span annotation. No-op on failure."""
     if _phoenix_client is None or not span_id:
