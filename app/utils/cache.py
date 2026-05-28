@@ -15,12 +15,17 @@ from app.config.settings import get_settings
 from app.database.redis_client import get_redis_client
 from app.database.qdrant_client import get_qdrant_client
 from app.config.embedding_config import ensure_llamaindex_configured
-from app.observability import get_langfuse_client
+from app.observability import get_tracer, is_observability_enabled
 
 settings = get_settings()
 
 _PREFIX = "rag:cache:"
-_SEMANTIC_THRESHOLD = 0.88  # 92% cosine similarity threshold
+# Cosine threshold for paraphrase match. text-embedding-3-small puts close
+# Bahasa Indonesia paraphrases at ~0.83-0.88 (e.g. "apa prinsip CP" vs
+# "sebutkan prinsip CP"). 0.88 was too strict — semantic hits never fired
+# (verified in Phoenix: 1/14 cache hits, all from Redis exact-match).
+# 0.82 keeps obvious paraphrases together while rejecting topic-drift.
+_SEMANTIC_THRESHOLD = 0.82
 _semantic_collection_ready = False
 
 
@@ -73,22 +78,27 @@ async def _ensure_semantic_collection() -> None:
 
 
 def _log_cache_event(hit: bool, course_id: int | None, score: float | None = None):
-    """Log cache lookup event to Langfuse."""
+    """Emit a cache_lookup span to Phoenix with hit/miss + similarity attributes."""
+    if not is_observability_enabled():
+        return
     try:
-        lf = get_langfuse_client()
-        if lf:
-            # Treat 0 as None for logging consistency
-            cid = course_id if course_id and course_id > 0 else None
-            metadata = {"course_id": cid, "cache_hit": 1 if hit else 0}
-            if score is not None:
-                metadata["similarity_score"] = round(score, 4)
-            lf.trace(
-                name="cache_lookup",
-                metadata=metadata,
-                tags=["cache_hit" if hit else "cache_miss"]
+        from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+
+        tracer = get_tracer("cache")
+        cid = course_id if course_id and course_id > 0 else None
+        with tracer.start_as_current_span("cache_lookup") as span:
+            span.set_attribute(
+                SpanAttributes.OPENINFERENCE_SPAN_KIND,
+                OpenInferenceSpanKindValues.RETRIEVER.value,
             )
+            span.set_attribute("cache.hit", 1 if hit else 0)
+            span.set_attribute("cache.tag", "cache_hit" if hit else "cache_miss")
+            if cid is not None:
+                span.set_attribute("course_id", cid)
+            if score is not None:
+                span.set_attribute("similarity_score", round(float(score), 4))
     except Exception as e:
-        logger.warning("Failed to log cache event to langfuse", error=str(e))
+        logger.warning("Failed to emit cache_lookup span", error=str(e))
 
 
 async def get_cached_response(

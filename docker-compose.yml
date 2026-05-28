@@ -16,14 +16,19 @@ services:
       - .env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: '5432'
       REDIS_HOST: redis
+      REDIS_PORT: '6379'
       QDRANT_HOST: qdrant
       QDRANT_PORT: '6333'
+      PHOENIX_ENDPOINT: http://phoenix:6006
+      PHOENIX_OTLP_ENDPOINT: http://phoenix:4317
     restart: unless-stopped
     volumes:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
+      - peped_hf_cache:/root/.cache/huggingface
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -45,14 +50,19 @@ services:
       - .env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: '5432'
       REDIS_HOST: redis
+      REDIS_PORT: '6379'
       QDRANT_HOST: qdrant
       QDRANT_PORT: '6333'
+      PHOENIX_ENDPOINT: http://phoenix:6006
+      PHOENIX_OTLP_ENDPOINT: http://phoenix:4317
     restart: unless-stopped
     volumes:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
+      - peped_hf_cache:/root/.cache/huggingface
     command: [ "uv", "run", "arq", "app.worker.WorkerSettings" ]
 
   postgres:
@@ -95,6 +105,18 @@ services:
       - peped_qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: peped-phoenix
+    ports:
+      - "6006:6006"  # Phoenix UI + REST
+      - "4317:4317"  # OTLP gRPC
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - peped_phoenix_data:/mnt/data
+    restart: unless-stopped
+
   pgadmin:
     image: dpage/pgadmin4:9
     container_name: peped-pgadmin
@@ -111,3 +133,5 @@ services:
 volumes:
   peped_postgres_data:
   peped_qdrant_storage:
+  peped_phoenix_data:
+  peped_hf_cache:

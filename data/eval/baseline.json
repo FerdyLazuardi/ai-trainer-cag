@@ -1,0 +1,56 @@
+{
+  "total": 20,
+  "passed": 19,
+  "failed": 1,
+  "pass_rate": 0.95,
+  "by_category": {
+    "factual": {
+      "total": 5,
+      "passed": 5,
+      "pass_rate": 1.0,
+      "faithfulness_mean": 0.92
+    },
+    "reasoning": {
+      "total": 3,
+      "passed": 3,
+      "pass_rate": 1.0,
+      "faithfulness_mean": 0.9
+    },
+    "empathy": {
+      "total": 3,
+      "passed": 2,
+      "pass_rate": 0.6667,
+      "faithfulness_mean": 0.4333
+    },
+    "out_of_scope": {
+      "total": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "faithfulness_mean": 1.0
+    },
+    "ambiguous": {
+      "total": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "faithfulness_mean": null
+    },
+    "greeting": {
+      "total": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "faithfulness_mean": null
+    },
+    "topic_list": {
+      "total": 1,
+      "passed": 1,
+      "pass_rate": 1.0,
+      "faithfulness_mean": null
+    },
+    "multiturn": {
+      "total": 2,
+      "passed": 2,
+      "pass_rate": 1.0,
+      "faithfulness_mean": 0.95
+    }
+  }
+}

@@ -15,7 +15,7 @@ from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.api.routes import chat, ingest, askfer
 from app.api.auth import get_current_user
-from app.observability import set_langfuse_client, get_langfuse_client
+from app.observability import setup_phoenix, flush as flush_traces, is_observability_enabled
 
 settings = get_settings()
 
@@ -35,27 +35,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start BatchLogger background task
     await batch_logger.start()
 
-    # ── Langfuse v4 Observability (MUST init first, before any LLM calls) ──
-    if settings.langfuse_public_key and settings.langfuse_secret_key:
-        try:
-            import os
-            os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
-            os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
-            os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+    # ── Phoenix Observability (init first, before any LLM calls) ──
+    try:
+        setup_phoenix(
+            project_name=settings.phoenix_project_name,
+            otlp_endpoint=settings.phoenix_otlp_endpoint,
+            phoenix_endpoint=settings.phoenix_endpoint,
+        )
+        logger.info(
+            "Phoenix initialized (LangChain auto-instrumentation active)",
+            project=settings.phoenix_project_name,
+            otlp=settings.phoenix_otlp_endpoint,
+        )
+    except Exception as e:
+        logger.warning(f"Phoenix init failed (tracing disabled): {e}")
 
-            from langfuse import Langfuse
-            lf = Langfuse(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host,
-                debug=settings.app_debug,
-            )
-            set_langfuse_client(lf)
-            logger.info("Langfuse v4 initialized (OTEL auto-instrumentation active)")
-        except Exception as e:
-            logger.warning(f"Langfuse init failed (tracing disabled): {e}")
-    else:
-        logger.warning("Langfuse keys not set — tracing disabled")
+    # ── Reranker warmup (loads cross-encoder model into memory) ──
+    try:
+        from app.retrieval.reranker import warmup_reranker
+        warmup_reranker()
+    except Exception as e:
+        logger.warning(f"Reranker warmup skipped: {e}")
 
     # Initialize PostgreSQL tables
     await init_db()
@@ -104,8 +104,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.utils.logger_batch import batch_logger
     await batch_logger.stop()
 
-    if get_langfuse_client():
-        get_langfuse_client().flush()
+    if is_observability_enabled():
+        flush_traces()
     await redis.aclose()
 
 

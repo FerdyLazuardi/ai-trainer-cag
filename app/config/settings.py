@@ -74,28 +74,44 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
 
-    # ─── Cohere (Reranking) ─────────────────────────────────────────────────
-    cohere_api_key: str = Field(default="", alias="COHERE_API_KEY")
+    # ─── Reranker (local cross-encoder) ─────────────────────────────────────
+    reranker_model_name: str = Field(
+        default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+        alias="RERANKER_MODEL_NAME",
+    )
+    reranker_device: str = Field(default="cpu", alias="RERANKER_DEVICE")
+    reranker_max_length: int = Field(default=512, alias="RERANKER_MAX_LENGTH")
 
-    # ─── Langfuse (Observability) ───────────────────────────────────────────
-    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
-    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
-    langfuse_host: str = "https://cloud.langfuse.com"
+    # ─── Phoenix (Observability — self-hosted) ──────────────────────────────
+    phoenix_endpoint: str = Field(default="http://phoenix:6006", alias="PHOENIX_ENDPOINT")
+    phoenix_otlp_endpoint: str = Field(default="http://phoenix:4317", alias="PHOENIX_OTLP_ENDPOINT")
+    phoenix_project_name: str = Field(default="ai-lms-agent", alias="PHOENIX_PROJECT_NAME")
+
+    # ─── Evaluation (LLM-as-judge, async via arq) ───────────────────────────
+    # Phase 1: faithfulness eval only. Sample to control cost — 100% eval
+    # at 13k user scale would 2x the LLM bill for diminishing signal.
+    # Always-eval gates (low rerank / high empathy) catch high-stakes turns
+    # regardless of sample rate so the riskiest outputs are never missed.
+    eval_enabled: bool = Field(default=True, alias="EVAL_ENABLED")
+    eval_sample_rate: float = Field(default=0.10, alias="EVAL_SAMPLE_RATE")
+    eval_always_if_rerank_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_RERANK_BELOW")
+    eval_always_if_empathy_above: float = Field(default=0.90, alias="EVAL_ALWAYS_IF_EMPATHY_ABOVE")
 
     # ─── Context Engineering ────────────────────────────────────────────────
     max_context_tokens: int = 6000
     retrieval_top_k: int = 15
-    reranked_top_k: int = 5
+    reranked_top_k: int = 7
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
-
-    # ─── Follow-up validation ───────────────────────────────────────────────
-    followup_validation_enabled: bool = True
-    followup_validation_threshold: float = 0.5
+    # Below this rerank score, treat retrieval as a miss and skip generate_node
+    # entirely (saves ~2700 input tokens + 1 LLM call per off-topic query).
+    # Score is the post-sigmoid value in [0, 1] from the cross-encoder.
+    rerank_min_score: float = 0.30
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    cache_query_ttl_seconds: int = 1800
+    cache_query_ttl_seconds: int = 14400   # 4 hours — KB content is stable, longer TTL = more cache hits
     conversation_ttl_seconds: int = 3600
+    user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
 
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"

@@ -1,9 +1,21 @@
 """
-Semantic reranker using Cohere and Jaccard deduplication.
+Local cross-encoder reranker (replaces Cohere rerank-multilingual-v3.0).
+
+Uses sentence-transformers' CrossEncoder. The model is loaded once via
+`lru_cache`; sync `predict()` is wrapped in `asyncio.to_thread` to keep the
+existing async API contract untouched.
+
+Defaults to `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` — small (120M)
+multilingual cross-encoder that fits a dual-core CPU budget while still
+giving a meaningful signal for top-15 → top-K refinement on top of hybrid
+BM25 + dense retrieval.
 """
-import cohere
-from loguru import logger
+from __future__ import annotations
+
+import asyncio
 from functools import lru_cache
+
+from loguru import logger
 
 from app.config.settings import get_settings
 from app.retrieval.schemas import RetrievedChunk
@@ -12,8 +24,43 @@ settings = get_settings()
 
 
 @lru_cache(maxsize=1)
-def _get_cohere_client() -> cohere.AsyncClient:
-    return cohere.AsyncClient(settings.cohere_api_key)
+def _get_cross_encoder():
+    """Load the cross-encoder model once. Cached for the process lifetime."""
+    from sentence_transformers import CrossEncoder
+
+    logger.info(
+        "Loading cross-encoder reranker",
+        model=settings.reranker_model_name,
+        device=settings.reranker_device,
+    )
+    return CrossEncoder(
+        settings.reranker_model_name,
+        max_length=settings.reranker_max_length,
+        device=settings.reranker_device,
+    )
+
+
+def warmup_reranker() -> None:
+    """Pre-load model + run a tiny predict so the first request avoids cold start."""
+    try:
+        model = _get_cross_encoder()
+        model.predict([("warmup query", "warmup document")])
+        logger.info("Reranker warmed up", model=settings.reranker_model_name)
+    except Exception as exc:
+        logger.warning(f"Reranker warmup failed (will retry on first request): {exc}")
+
+
+def _predict_scores(model, query: str, texts: list[str]) -> list[float]:
+    """Sync helper run inside a thread; returns one relevance score per text.
+
+    The model outputs raw logits — apply sigmoid so callers get a probability
+    in [0, 1], matching the contract Cohere had.
+    """
+    import math
+
+    pairs = [(query, t) for t in texts]
+    raw = model.predict(pairs)
+    return [1.0 / (1.0 + math.exp(-float(s))) for s in raw]
 
 
 async def rerank(
@@ -23,66 +70,51 @@ async def rerank(
     deduplicate: bool = True,
 ) -> list[RetrievedChunk]:
     """
-    Rerank a list of retrieved chunks using Cohere's semantic reranker.
-    
+    Rerank retrieved chunks with a local cross-encoder.
+
     Steps:
-        1. Sort by descending initial score.
-        2. If Cohere API key is set, semantically rerank. Cohere V3 handles 
-           relevance and implicitly de-prioritizes redundant information.
-        3. Return top-K.
+        1. Sort by descending initial (hybrid) score.
+        2. Score each (query, chunk.text) pair with the cross-encoder.
+        3. Replace `chunk.score` with the cross-encoder relevance score
+           (`hybrid_score` is preserved on the chunk for downstream metrics).
+        4. Return top-K sorted by the new score.
 
     Args:
-        query: The user's query used for semantic reranking.
-        chunks: Retrieved chunks from hybrid search.
-        top_k: Max results to return.
-        deduplicate: (Ignored) Kept for signature compatibility.
+        query: User query (already rewritten by pre_processor).
+        chunks: Output of hybrid_search.
+        top_k: Max results to return (default: settings.reranked_top_k).
+        deduplicate: Kept for backwards-compat — unused (Cohere handled this
+            implicitly; mMiniLMv2 doesn't, and dedup belongs upstream anyway).
 
     Returns:
-        Reranked list of RetrievedChunk.
+        Reranked list[RetrievedChunk] of length ≤ top_k.
     """
     k = top_k or settings.reranked_top_k
 
     if not chunks:
         return []
 
-    # Sort descending by score
     sorted_chunks = sorted(chunks, key=lambda c: c.score, reverse=True)
 
-    if not settings.cohere_api_key:
-        logger.debug(
-            "Cohere API key not set, skipping semantic reranking",
-            input_chunks=len(chunks),
-            output_chunks=len(sorted_chunks[:k]),
-            top_k=k,
-        )
-        return sorted_chunks[:k]
-
     try:
-        co = _get_cohere_client()
+        model = _get_cross_encoder()
         texts = [c.text for c in sorted_chunks]
-        
-        response = await co.rerank(
-            model="rerank-multilingual-v3.0",
-            query=query,
-            documents=texts,
-            top_n=k,
-        )
-        
-        reranked_chunks = []
-        for result in response.results:
-            chunk = sorted_chunks[result.index]
-            # hybrid_score already set from retriever — keep it intact
-            # Replace only the final score with Cohere's relevance score
-            chunk.score = result.relevance_score
-            reranked_chunks.append(chunk)
-            
+        scores = await asyncio.to_thread(_predict_scores, model, query, texts)
+
+        for chunk, score in zip(sorted_chunks, scores):
+            # hybrid_score is set by the retriever — keep intact for metrics.
+            chunk.score = score
+
+        reranked = sorted(sorted_chunks, key=lambda c: c.score, reverse=True)[:k]
+
         logger.debug(
-            "Cohere Reranking complete",
+            "Local reranking complete",
             input_chunks=len(chunks),
-            output_chunks=len(reranked_chunks),
+            output_chunks=len(reranked),
             top_k=k,
+            model=settings.reranker_model_name,
         )
-        return reranked_chunks
-    except Exception as e:
-        logger.warning(f"Cohere reranking failed, falling back to original ordering: {e}")
+        return reranked
+    except Exception as exc:
+        logger.warning(f"Local reranking failed, falling back to hybrid order: {exc}")
         return sorted_chunks[:k]

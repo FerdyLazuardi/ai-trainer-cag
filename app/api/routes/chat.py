@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import time
 import uuid
 import datetime
@@ -13,8 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Moved inline imports to file-level
 from langchain_core.messages import HumanMessage, AIMessage
-from langfuse import get_client, propagate_attributes
-from langfuse.langchain import CallbackHandler
 
 from app.agents.memory import (
     append_to_history,
@@ -29,7 +28,14 @@ from app.database.models import UserProfile
 from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
-from app.observability import get_langfuse_client
+from app.observability import (
+    flush as flush_traces,
+    is_observability_enabled,
+    root_span,
+    set_current_span_io,
+    set_current_span_attributes,
+    annotate_span,
+)
 from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
 from app.llm.client import get_cheap_llm
@@ -45,14 +51,13 @@ settings = get_settings()
 # (prevents GC from cancelling them mid-flight after the SSE generator returns).
 _stream_bg_tasks: set[asyncio.Task] = set()
 
-def _flush_langfuse():
-    """Background: flush Langfuse so traces are sent immediately."""
-    lf = get_langfuse_client()
-    if lf:
+def _flush_traces():
+    """Background: flush Phoenix traces so they're sent immediately."""
+    if is_observability_enabled():
         try:
-            lf.flush()
+            flush_traces()
         except Exception as e:
-            logger.warning(f"Langfuse flush error: {e}")
+            logger.warning(f"Phoenix flush error: {e}")
 
 async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
     redis_client = get_redis_client()
@@ -80,7 +85,108 @@ async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
     except Exception as e:
         logger.warning(f"Failed to schedule AFK LTM sync: {e}")
 
+
+async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
+    """Capture distinct course_names from retrieved_context into a Redis set.
+
+    LTM sync worker reads this set instead of asking the LLM to extract course
+    names — the LLM hallucinates names that don't exist in the KB ("Amartha
+    products"), but `chunk.metadata.course_name` is ground truth from the
+    Moodle ingestion. Set has the same TTL as the LTM scheduling window.
+    """
+    if not retrieved_context:
+        return
+    names: set[str] = set()
+    for c in retrieved_context:
+        name = (c.get("course_name") or "").strip()
+        if name and name not in ("?", "Unknown"):
+            names.add(name)
+    if not names:
+        return
+    try:
+        redis_client = get_redis_client()
+        key = f"rag:courses:{conv_id}"
+        await redis_client.sadd(key, *names)
+        await redis_client.expire(key, 86400)   # mirrors last_active TTL
+    except Exception as e:
+        logger.warning(f"Failed to track session courses: {e}")
+
 DEV_BYPASS_USER_ID = "dev_user_123"
+
+
+# Intents whose answers don't go through the RAG generator — no faithfulness
+# signal worth measuring. GREETING/AMBIGUOUS are canned, MALICIOUS is a refusal,
+# TOPIC_LIST reads from Postgres metadata, BRAINSTORM is reasoning-only.
+_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM"}
+
+
+def _should_eval_turn(
+    *,
+    intent: str | None,
+    intent_scores: dict | None,
+    max_rerank_score: float | None,
+    answer: str | None,
+) -> bool:
+    """Sampling decision for post-hoc evaluation.
+
+    Evaluates when ANY of:
+    - Random draw under `eval_sample_rate` (baseline drift signal).
+    - Empathy axis ≥ threshold (vent / resign — high-stakes turn).
+    - Top rerank below threshold (suspected retrieval miss / potential halu).
+
+    Skips canned-response intents and empty answers regardless.
+    """
+    if not settings.eval_enabled:
+        return False
+    if not answer or not answer.strip():
+        return False
+    if intent in _EVAL_SKIP_INTENTS:
+        return False
+
+    scores = intent_scores or {}
+    empathy = float(scores.get("needs_empathy") or 0.0)
+    if empathy >= settings.eval_always_if_empathy_above:
+        return True
+
+    if (
+        max_rerank_score is not None
+        and max_rerank_score < settings.eval_always_if_rerank_below
+    ):
+        return True
+
+    return random.random() < settings.eval_sample_rate
+
+
+async def _enqueue_eval(
+    *,
+    span_id: Optional[str],
+    query: str,
+    answer: str,
+    retrieved_context: list,
+    intent: Optional[str],
+    intent_scores: Optional[dict],
+) -> None:
+    """Push the turn onto the arq queue for async LLM-as-judge evaluation.
+
+    Fire-and-forget — failures are logged and swallowed so eval scheduling
+    never affects user-facing flow.
+    """
+    if not span_id:
+        return
+    try:
+        arq_redis = await get_arq_redis()
+        await arq_redis.enqueue_job(
+            "eval_turn_task",
+            span_id,
+            query,
+            answer,
+            retrieved_context or [],
+            intent,
+            intent_scores or {},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to enqueue eval task: {e}")
+
 
 async def _verify_conversation_ownership(conversation_id: str, current_user: User):
     """Ensure the user owns this conversation before accessing history.
@@ -148,12 +254,35 @@ async def _prepare_rag_context(
         logger.warning(f"Failed to compute query embedding once: {exc}")
         query_embedding = None
 
-    # Check cache first
-    cached = await get_cached_response(
-        resolved_query,
-        course_id=request.course_id,
-        query_embedding=query_embedding,
+    # Cache pre-filter: skip cache lookup for queries that need fresh
+    # synthesis/empathy. Cache stores KNOWLEDGE-shaped answers — feeding them
+    # to opinion/vent queries causes shape mismatch (e.g. user asks "menurut
+    # kamu mana paling kritis" but cache returns a flat list).
+    # Cheap regex check; full intent classification still happens in graph.
+    import re
+    _OPINION_REGEX = re.compile(
+        r"\b(menurut|menurutmu|pendapat|opini|kasih saran|sarankan|advice|"
+        r"what (?:do you|would you) think|"
+        r"capek|stress|bingung|pusing|frustrasi|nyerah|curhat|"
+        r"gimana kalau|kalau aku|what if|bantuin mikir|help me think|"
+        r"mana yang|mana yg|paling penting|paling kritis|paling baik|"
+        r"role[\s-]?play|anggap kamu)\b",
+        re.IGNORECASE,
     )
+    skip_cache = bool(_OPINION_REGEX.search(resolved_query))
+    if skip_cache:
+        logger.debug(
+            "Cache lookup skipped — query matches opinion/synthesis pattern",
+            query=resolved_query[:60],
+        )
+
+    cached = None
+    if not skip_cache:
+        cached = await get_cached_response(
+            resolved_query,
+            course_id=request.course_id,
+            query_embedding=query_embedding,
+        )
     if cached:
         return {"cached": cached, "query_embedding": query_embedding}
 
@@ -178,21 +307,49 @@ async def _prepare_rag_context(
     ltm_profile = {"summary": "", "course_names": []}
     user_pref_dict = None
 
-    if ltm_eligible:
+    # Skip LTM lookup entirely on the first turn of a brand-new session — there
+    # is nothing in `recent_history` yet AND no prior summary, which means the
+    # user has never spoken to A-Pedi before in this conversation. Loading LTM
+    # here just bloats the prompt by ~200 tokens and is rarely useful for the
+    # very first message ("hi", "halo", "apa itu X").
+    is_brand_new_session = not recent_history and not summary
+
+    if ltm_eligible and not is_brand_new_session:
         ltm_profile = await qdrant_ltm.load(
             user_id=user_id,
             query=resolved_query,
             query_embedding=query_embedding,
         )
-        # Fetch persistent preferences
+        # Fetch persistent preferences. Drop stale ones — anything older than
+        # `user_pref_max_age_days` is treated as expired so a one-off "pakai
+        # bahasa awam" three months ago doesn't bind every future session.
         user_profile_obj = await db.get(UserProfile, user_id)
         if user_profile_obj:
-            user_pref_dict = {
-                "role": user_profile_obj.role,
-                "preferred_tone": user_profile_obj.preferred_tone,
-                "formatting_pref": user_profile_obj.formatting_pref,
-                "custom_instructions": user_profile_obj.custom_instructions
-            }
+            from datetime import datetime, timedelta, timezone
+
+            updated_at = user_profile_obj.updated_at
+            is_fresh = True
+            if updated_at is not None:
+                # SQLAlchemy returns naive datetime for some drivers — normalize.
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - updated_at
+                is_fresh = age <= timedelta(days=settings.user_pref_max_age_days)
+
+            if is_fresh:
+                user_pref_dict = {
+                    "role": user_profile_obj.role,
+                    "preferred_tone": user_profile_obj.preferred_tone,
+                    "formatting_pref": user_profile_obj.formatting_pref,
+                    "custom_instructions": user_profile_obj.custom_instructions
+                }
+            else:
+                logger.info(
+                    "User preferences ignored — older than threshold",
+                    user_id=user_id,
+                    age_days=age.days,
+                    threshold_days=settings.user_pref_max_age_days,
+                )
 
     initial_state = {
         "messages": messages,
@@ -252,27 +409,21 @@ async def chat(
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
         try:
-            langfuse = get_client()
-            with langfuse.start_as_current_observation(
-                as_type="generation",
-                name="a-pedi-chat",
-                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
-            ) as root_obs:
-                with propagate_attributes(
-                    trace_name="a-pedi-chat",
-                    session_id=conversation_id,
-                    user_id=f"{current_user.username} (ID: {current_user.user_id})",
-                    tags=["api-chat", settings.app_env, "cache-hit"],
-                ):
-                    root_obs.update(
-                        output=cached["answer"],
-                        usage={"input": 0, "output": 0},
-                        metadata={"latency_ms": round(latency_ms, 2), "cache_hit": True, "env": settings.app_env},
-                    )
+            with root_span(
+                "a-pedi-chat",
+                session_id=conversation_id,
+                user_id=f"{current_user.username} (ID: {current_user.user_id})",
+                tags=["api-chat", settings.app_env, "cache-hit"],
+                metadata={"latency_ms": round(latency_ms, 2), "cache_hit": True, "env": settings.app_env},
+            ):
+                set_current_span_io(
+                    input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
+                    output={"answer": cached["answer"]},
+                )
         except Exception as e:
-            logger.warning(f"Langfuse cache-hit trace failed: {e}")
+            logger.warning(f"Phoenix cache-hit trace failed: {e}")
 
-        background_tasks.add_task(_flush_langfuse)
+        background_tasks.add_task(_flush_traces)
         background_tasks.add_task(
             batch_logger.add_log,
             {
@@ -299,17 +450,14 @@ async def chat(
     initial_state = context["initial_state"]
     rag_graph = get_rag_graph()
 
-    langfuse_handler = None
-    trace_id = None
+    span_id: Optional[str] = None
     result = None
     answer = None
     latency_ms = 0.0
 
     try:
-        langfuse = get_client()
-
-        with propagate_attributes(
-            trace_name="a-pedi-chat",
+        with root_span(
+            "a-pedi-chat",
             session_id=conversation_id,
             user_id=f"{current_user.username} (ID: {current_user.user_id})",
             tags=["api-chat", settings.app_env],
@@ -318,29 +466,50 @@ async def chat(
                 "env": settings.app_env,
                 "original_query": request.query,
                 "resolved_query": resolved_query,
-            }
-        ):
-            langfuse_handler = CallbackHandler()
+            },
+        ) as sid:
+            span_id = sid
             result = await rag_graph.ainvoke(
                 initial_state,
-                config={"run_name": "a-pedi-chat", "callbacks": [langfuse_handler]},
+                config={"run_name": "a-pedi-chat"},
             )
 
             latency_ms = (time.perf_counter() - start_time) * 1000
             final_message = result["messages"][-1]
             answer = final_message.content if hasattr(final_message, "content") else str(final_message)
 
-            langfuse.set_current_trace_io(
-                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
-                output={"answer": answer}
-            )
+            # Compute observability attrs BEFORE the span exits — set_current_*
+            # only writes to the active span, so doing this after `with` would
+            # silently drop the values onto a closed span.
+            _scores = result.get("intent_scores") or {}
+            _intent = result.get("intent", "KNOWLEDGE")
+            _rewritten = result.get("rewritten_query") or resolved_query
+            _retrieved = result.get("retrieved_context") or []
+            _max_score = 0.0
+            if _retrieved:
+                _scores_list = [c.get("score") for c in _retrieved if isinstance(c.get("score"), (int, float))]
+                if _scores_list:
+                    _max_score = float(max(_scores_list))
 
-        if hasattr(langfuse_handler, "last_trace_id"):
-            trace_id = langfuse_handler.last_trace_id
+            set_current_span_io(
+                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
+                output={"answer": answer},
+            )
+            set_current_span_attributes({
+                "intent": _intent,
+                "rewritten_query": _rewritten,
+                "needs_lookup": float(_scores.get("needs_lookup", 0.0)),
+                "needs_reasoning": float(_scores.get("needs_reasoning", 0.0)),
+                "needs_empathy": float(_scores.get("needs_empathy", 0.0)),
+                "retrieved_chunks": len(_retrieved),
+                "max_chunk_score": _max_score,
+                "latency_ms": round(latency_ms, 2),
+                "streaming": False,
+            })
 
     except Exception as exc:
         logger.error("RAG pipeline error", error=str(exc), query=request.query[:60])
-        background_tasks.add_task(_flush_langfuse)
+        background_tasks.add_task(_flush_traces)
         raise HTTPException(status_code=500, detail="RAG pipeline failed") from exc
 
     rewritten_query = result.get("rewritten_query") or resolved_query
@@ -361,29 +530,47 @@ async def chat(
     effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
 
-    if trace_id and retrieved_context:
+    if span_id and retrieved_context:
         try:
-            from langfuse import get_client as _get_lf
-            _lf = _get_lf()
-
-            # ── Hybrid scores (pre-Cohere, raw LlamaIndex dense+BM25) ──
+            # ── Hybrid scores (pre-rerank, raw LlamaIndex dense+BM25) ──
             hybrid_scores = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            # ── Cohere scores (post-rerank) — same as final .score ──
-            cohere_scores  = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+            # ── Rerank scores (post-rerank) — same as final .score ──
+            rerank_scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
 
             if hybrid_scores:
-                _lf.score(trace_id=trace_id, name="retriever_hybrid_max",  value=round(max(hybrid_scores), 4))
-                _lf.score(trace_id=trace_id, name="retriever_hybrid_avg",  value=round(sum(hybrid_scores) / len(hybrid_scores), 4))
-            if cohere_scores:
-                _lf.score(trace_id=trace_id, name="retriever_cohere_max",  value=round(max(cohere_scores), 4))
-                _lf.score(trace_id=trace_id, name="retriever_cohere_avg",  value=round(sum(cohere_scores) / len(cohere_scores), 4))
-            if max_chunk_score is not None:
-                _lf.score(trace_id=trace_id, name="retriever_max_score",   value=float(max_chunk_score))
+                annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores), 4))
+                annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores) / len(hybrid_scores), 4))
+            if rerank_scores:
+                annotate_span(span_id, "retriever_rerank_max", round(max(rerank_scores), 4))
+                annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank_scores) / len(rerank_scores), 4))
         except Exception as e:
-            logger.warning(f"Failed to submit Langfuse retrieval scores: {e}")
+            logger.warning(f"Failed to submit Phoenix retrieval scores: {e}")
 
-    background_tasks.add_task(_flush_langfuse)
-    if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS"):
+    # ── Intent annotations (Coexist observability) ─────────────────────────
+    # Span attributes (set inside the with-block above) are what Phoenix UI
+    # surfaces directly. These annotate calls feed evaluator aggregation —
+    # span_id remains valid even after the span is closed.
+    if span_id:
+        try:
+            scores = result.get("intent_scores") or {}
+            if "needs_lookup" in scores:
+                annotate_span(span_id, "intent_needs_lookup", float(scores["needs_lookup"]))
+            if "needs_reasoning" in scores:
+                annotate_span(span_id, "intent_needs_reasoning", float(scores["needs_reasoning"]))
+            if "needs_empathy" in scores:
+                annotate_span(span_id, "intent_needs_empathy", float(scores["needs_empathy"]))
+        except Exception as e:
+            logger.warning(f"Failed to submit Phoenix intent scores: {e}")
+
+    background_tasks.add_task(_flush_traces)
+    # Skip cache write when retrieval missed: no chunks OR top score below threshold.
+    # These responses are canned "not found" messages — caching them would poison
+    # later hits when the KB grows.
+    is_low_relevance = (
+        actual_chunks == 0
+        or (max_chunk_score is not None and max_chunk_score < settings.rerank_min_score)
+    )
+    if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM") and not is_low_relevance:
         background_tasks.add_task(
             set_cached_response,
             query=resolved_query,
@@ -420,6 +607,23 @@ async def chat(
     )
     
     background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
+    background_tasks.add_task(_track_session_courses, conversation_id, retrieved_context)
+
+    if _should_eval_turn(
+        intent=intent,
+        intent_scores=result.get("intent_scores"),
+        max_rerank_score=max_chunk_score,
+        answer=answer,
+    ):
+        background_tasks.add_task(
+            _enqueue_eval,
+            span_id=span_id,
+            query=resolved_query,
+            answer=answer,
+            retrieved_context=retrieved_context,
+            intent=intent,
+            intent_scores=result.get("intent_scores"),
+        )
 
     return ChatResponse(
         answer=answer,
@@ -506,14 +710,17 @@ async def chat_stream(
 
     async def _stream_rag():
         nonlocal resolved_query
+        from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
         retrieved_context = []
         intent = "KNOWLEDGE"
+        stream_intent_scores: dict = {}
+        span_id: Optional[str] = None
+        leak_guard = StreamLeakGuard()
 
         try:
-            langfuse = get_client()
-            with propagate_attributes(
-                trace_name="a-pedi-chat-stream",
+            with root_span(
+                "a-pedi-chat-stream",
                 session_id=conversation_id,
                 user_id=f"{current_user.username} (ID: {current_user.user_id})",
                 tags=["api-chat-stream", settings.app_env],
@@ -523,20 +730,21 @@ async def chat_stream(
                     "original_query": request.query,
                     "resolved_query": resolved_query,
                     "streaming": True,
-                }
-            ):
-                langfuse_handler = CallbackHandler()
-                config = {"run_name": "a-pedi-chat-stream", "callbacks": [langfuse_handler]}
+                },
+            ) as sid:
+                span_id = sid
+                config = {"run_name": "a-pedi-chat-stream"}
 
                 if resolved_query != request.query:
                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
                 token_count = 0
-                # Buffer tokens after the follow-up marker so we can validate and rebuild
-                # the "Penasaran tentang" block before the user sees it.
-                FOLLOWUP_MARKER = "**Penasaran tentang:**"
-                yielded_through = 0
-                buffering_followups = False
+                # Canned-response nodes (malicious / topic_list) return an
+                # AIMessage directly without invoking an LLM, so no
+                # `on_chat_model_stream` event fires for them. We emit their
+                # content from on_chain_end instead. Guarded by a flag to
+                # avoid double-emission.
+                canned_emitted = False
 
                 async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
                     kind = event.get("event", "")
@@ -551,97 +759,160 @@ async def chat_stream(
                         if isinstance(output, dict):
                             if "intent" in output:
                                 intent = output.get("intent")
+                            if "intent_scores" in output:
+                                stream_intent_scores = output.get("intent_scores") or {}
                             if "rewritten_query" in output:
                                 new_rewrite = output.get("rewritten_query")
                                 if new_rewrite and new_rewrite != resolved_query:
                                     resolved_query = new_rewrite
                                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
+                    # Canned-response nodes (malicious / topic_list / low_relevance / off_scope)
+                    # return an AIMessage directly without invoking an LLM, so no
+                    # `on_chat_model_stream` event fires for them. Emit their
+                    # content from on_chain_end instead.
+                    if (
+                        kind == "on_chain_end"
+                        and event.get("name") in ("malicious", "topic_list", "low_relevance", "off_scope")
+                        and not canned_emitted
+                    ):
+                        out = event.get("data", {}).get("output", {})
+                        msgs = out.get("messages") if isinstance(out, dict) else None
+                        if msgs:
+                            content = getattr(msgs[-1], "content", None) or (
+                                msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
+                            )
+                            if content:
+                                full_answer += content
+                                yield f"data: {json.dumps({'token': content})}\n\n"
+                                canned_emitted = True
+
                     if kind == "on_chat_model_stream":
                         node_name = event.get("metadata", {}).get("langgraph_node")
-                        if node_name in ("generate_node", "greeting", "ambiguity", "malicious"):
+                        if node_name in ("generate_node", "greeting", "ambiguity"):
                             chunk = event.get("data", {}).get("chunk")
                             if chunk and hasattr(chunk, "content") and chunk.content:
                                 token = chunk.content
                                 full_answer += token
                                 token_count += 1
 
-                                # Only buffer follow-ups for KNOWLEDGE generation; other handlers don't emit the marker.
-                                if not buffering_followups and node_name == "generate_node":
-                                    marker_idx = full_answer.find(FOLLOWUP_MARKER, yielded_through)
-                                    if marker_idx != -1:
-                                        # Emit everything up to (but not including) the marker, then stop streaming.
-                                        pending = full_answer[yielded_through:marker_idx]
-                                        if pending:
-                                            yield f"data: {json.dumps({'token': pending})}\n\n"
-                                        yielded_through = marker_idx
-                                        buffering_followups = True
-
-                                if not buffering_followups:
-                                    yield f"data: {json.dumps({'token': token})}\n\n"
-                                    yielded_through = len(full_answer)
+                                # Pass through leak guard. Greeting/ambiguity
+                                # don't carry retrieved_context, but the guard
+                                # is a no-op on clean preambles so it's safe.
+                                safe = leak_guard.feed(token)
+                                if safe:
+                                    yield f"data: {json.dumps({'token': safe})}\n\n"
 
                                 # Periodic disconnect check — bail out early if user closed the tab.
                                 if token_count % 10 == 0 and await req.is_disconnected():
                                     logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
                                     return
 
-                # Stream finished: validate the buffered follow-up block (if any) and emit rebuilt version.
-                if buffering_followups:
-                    try:
-                        from app.agents.memory import extract_follow_up_questions
-                        from app.retrieval.followup_validator import validate_followups, render_followup_block
-
-                        buffered = full_answer[yielded_through:]
-                        candidates = extract_follow_up_questions(buffered)
-                        validated = await validate_followups(candidates) if candidates else []
-                        rebuilt = render_followup_block(validated)
-                        if rebuilt:
-                            # Insert blank line before block for visual separation
-                            emit = f"\n\n{rebuilt}" if not full_answer[:yielded_through].endswith("\n") else rebuilt
-                            yield f"data: {json.dumps({'token': emit})}\n\n"
-                            # Reflect the validated block in full_answer for downstream cache/history.
-                            full_answer = full_answer[:yielded_through].rstrip() + "\n\n" + rebuilt
-                        else:
-                            full_answer = full_answer[:yielded_through].rstrip()
-                    except Exception as exc:
-                        logger.warning(f"Stream follow-up validation failed, emitting unvalidated: {exc}")
-                        # Fail-open: emit the original buffered text
-                        unvalidated = full_answer[yielded_through:]
-                        if unvalidated:
-                            yield f"data: {json.dumps({'token': unvalidated})}\n\n"
+                # ── Set span I/O + attributes BEFORE the root_span exits.
+                # Without this, Phoenix UI shows "--" for input/output on
+                # streaming traces and intent scores require expanding the
+                # Annotations panel. Doing it here keeps the span active.
+                _stream_preview = (full_answer or "")
+                set_current_span_io(
+                    input={
+                        "query": request.query,
+                        "resolved_query": resolved_query,
+                        "conversation_id": conversation_id,
+                    },
+                    output={"answer": _stream_preview},
+                )
+                _stream_max_score = 0.0
+                if retrieved_context:
+                    _scores_inline = [
+                        c.get("score") for c in retrieved_context
+                        if isinstance(c.get("score"), (int, float))
+                    ]
+                    if _scores_inline:
+                        _stream_max_score = float(max(_scores_inline))
+                set_current_span_attributes({
+                    "intent": intent,
+                    "rewritten_query": resolved_query,
+                    "needs_lookup": float(stream_intent_scores.get("needs_lookup", 0.0)),
+                    "needs_reasoning": float(stream_intent_scores.get("needs_reasoning", 0.0)),
+                    "needs_empathy": float(stream_intent_scores.get("needs_empathy", 0.0)),
+                    "retrieved_chunks": len(retrieved_context),
+                    "max_chunk_score": _stream_max_score,
+                    "streaming": True,
+                })
 
         except Exception as exc:
             logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
             return
 
+        # Drain any buffered preamble. If the guard caught a leak, this
+        # returns the sanitized version — emit it as a single token so the
+        # user sees a coherent answer instead of nothing or raw context.
+        tail = leak_guard.flush()
+        if tail:
+            yield f"data: {json.dumps({'token': tail})}\n\n"
+        if leak_guard.leak_detected:
+            # full_answer accumulated raw tokens (before guard); replace it
+            # with the sanitized version so cache/history/eval store the
+            # clean text. Combined sanitized output = whatever was already
+            # streamed (nothing, since guard buffered) + tail.
+            full_answer = tail
+
         latency_ms = (time.perf_counter() - start_time) * 1000
         sources = _extract_sources(retrieved_context)
 
-        # ── Langfuse: log hybrid + Cohere scores for stream endpoint ──
+        # Sanitize streamed output before persistence — if the LLM leaked
+        # an <retrieved_context>/<user_history>/etc. block (Gemini Flash
+        # Lite occasionally does this), the StreamLeakGuard above already
+        # caught preamble leaks, but a leak that started mid-stream would
+        # bypass the guard. This is the belt-and-suspenders pass for
+        # cache/history/eval persistence. Cheap regex; no-op when clean.
+        cleaned_answer = _sanitize_answer(full_answer)
+        if cleaned_answer != full_answer:
+            logger.warning(
+                "Stream output leaked instruction block — sanitized before "
+                f"cache/history/eval (orig_len={len(full_answer)} "
+                f"clean_len={len(cleaned_answer)} conv={conversation_id})"
+            )
+            full_answer = cleaned_answer
+
+        # ── Phoenix: log hybrid + rerank scores for stream endpoint ──
         try:
-            langfuse_stream = get_client()
-            cur_trace_id = getattr(langfuse_handler, "last_trace_id", None) if langfuse_handler else None
-
             hybrid_scores_s = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            cohere_scores_s  = [c.get("score")  for c in retrieved_context if isinstance(c.get("score"),  (int, float))]
+            rerank_scores_s = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
 
-            if cur_trace_id:
+            if span_id:
                 if hybrid_scores_s:
-                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_hybrid_max",  value=round(max(hybrid_scores_s), 4))
-                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_hybrid_avg",  value=round(sum(hybrid_scores_s) / len(hybrid_scores_s), 4))
-                if cohere_scores_s:
-                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_cohere_max",  value=round(max(cohere_scores_s), 4))
-                    langfuse_stream.score(trace_id=cur_trace_id, name="retriever_cohere_avg",  value=round(sum(cohere_scores_s) / len(cohere_scores_s), 4))
-        except Exception as _lf_err:
-            logger.warning(f"Stream Langfuse score logging failed: {_lf_err}")
+                    annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores_s), 4))
+                    annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores_s) / len(hybrid_scores_s), 4))
+                if rerank_scores_s:
+                    annotate_span(span_id, "retriever_rerank_max", round(max(rerank_scores_s), 4))
+                    annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank_scores_s) / len(rerank_scores_s), 4))
+                if stream_intent_scores:
+                    if "needs_lookup" in stream_intent_scores:
+                        annotate_span(span_id, "intent_needs_lookup", float(stream_intent_scores["needs_lookup"]))
+                    if "needs_reasoning" in stream_intent_scores:
+                        annotate_span(span_id, "intent_needs_reasoning", float(stream_intent_scores["needs_reasoning"]))
+                    if "needs_empathy" in stream_intent_scores:
+                        annotate_span(span_id, "intent_needs_empathy", float(stream_intent_scores["needs_empathy"]))
+        except Exception as _err:
+            logger.warning(f"Stream Phoenix score logging failed: {_err}")
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
-            if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS"):
+            stream_rerank_scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+            stream_max_score = max(stream_rerank_scores) if stream_rerank_scores else None
+            is_low_relevance_stream = (
+                not retrieved_context
+                or stream_max_score is None
+                or stream_max_score < settings.rerank_min_score
+            )
+            if (
+                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
+                and not is_low_relevance_stream
+            ):
                 await set_cached_response(
                     query=resolved_query,
                     answer=full_answer,
@@ -660,8 +931,25 @@ async def chat_stream(
                 "cache_hit": False,
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+            await _track_session_courses(conversation_id, retrieved_context)
+
+            if _should_eval_turn(
+                intent=intent,
+                intent_scores=stream_intent_scores,
+                max_rerank_score=stream_max_score,
+                answer=full_answer,
+            ):
+                await _enqueue_eval(
+                    span_id=span_id,
+                    query=resolved_query,
+                    answer=full_answer,
+                    retrieved_context=retrieved_context,
+                    intent=intent,
+                    intent_scores=stream_intent_scores,
+                )
+
             # Tracked task set so Python doesn't GC mid-flight after the SSE generator returns.
-            task = asyncio.create_task(asyncio.to_thread(_flush_langfuse))
+            task = asyncio.create_task(asyncio.to_thread(_flush_traces))
             _stream_bg_tasks.add(task)
             task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as bg_err:

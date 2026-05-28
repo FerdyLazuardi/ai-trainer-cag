@@ -16,6 +16,9 @@ class RAGState(TypedDict):
     query: str
     conversation_id: str
     intent: Optional[str]
+    # Multi-axis scoring (Coexist with intent enum). 0-1 each.
+    # Drives prompt assembly without changing routing — see _generate_node.
+    intent_scores: Optional[dict]
     error: Optional[str]
     # Holds retrieved chunks from rag_node, consumed by generate_node
     retrieved_context: Optional[List[dict]]

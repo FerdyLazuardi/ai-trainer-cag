@@ -15,8 +15,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
-from langfuse import get_client, propagate_attributes
-from langfuse.langchain import CallbackHandler
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +24,12 @@ from app.api.schemas import AskferRequest, AskferSyncRequest
 from app.config.settings import get_settings
 from app.database.postgres import get_db
 from app.graph.askfer_pipeline import get_askfer_graph
-from app.observability import get_langfuse_client
+from app.observability import (
+    flush as flush_traces,
+    is_observability_enabled,
+    root_span,
+    annotate_span,
+)
 from app.utils.cache import get_cached_response, set_cached_response
 from app.utils.logger_batch import batch_logger
 
@@ -38,13 +41,12 @@ _CACHE_NS = "askfer"
 _stream_bg_tasks: set[asyncio.Task] = set()
 
 
-def _flush_langfuse():
-    lf = get_langfuse_client()
-    if lf:
+def _flush_traces():
+    if is_observability_enabled():
         try:
-            lf.flush()
+            flush_traces()
         except Exception as exc:
-            logger.warning(f"Askfer Langfuse flush error: {exc}")
+            logger.warning(f"Askfer Phoenix flush error: {exc}")
 
 
 def _extract_askfer_sources(retrieved_context: list) -> list:
@@ -120,15 +122,16 @@ async def askfer_stream(
     askfer_graph = get_askfer_graph()
 
     async def _stream_askfer():
+        from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
         retrieved_context: list = []
         intent = "KNOWLEDGE"
-        langfuse_handler: Optional[CallbackHandler] = None
+        span_id: Optional[str] = None
+        leak_guard = StreamLeakGuard()
 
         try:
-            langfuse = get_client()
-            with propagate_attributes(
-                trace_name="askfer-stream",
+            with root_span(
+                "askfer-stream",
                 session_id=f"ip:{client_ip}",
                 user_id=f"anon-{client_ip}",
                 tags=["askfer", settings.app_env],
@@ -137,9 +140,9 @@ async def askfer_stream(
                     "streaming": True,
                     "query": query[:80],
                 },
-            ):
-                langfuse_handler = CallbackHandler()
-                config = {"run_name": "askfer-stream", "callbacks": [langfuse_handler]}
+            ) as sid:
+                span_id = sid
+                config = {"run_name": "askfer-stream"}
 
                 token_count = 0
                 # Track which terminal nodes finished. The malicious AND
@@ -187,7 +190,9 @@ async def askfer_stream(
                                 token = chunk.content
                                 full_answer += token
                                 token_count += 1
-                                yield f"data: {json.dumps({'token': token})}\n\n"
+                                safe = leak_guard.feed(token)
+                                if safe:
+                                    yield f"data: {json.dumps({'token': safe})}\n\n"
 
                                 if token_count % 10 == 0 and await req.is_disconnected():
                                     logger.info("Askfer client disconnected", ip=client_ip, tokens=token_count)
@@ -198,24 +203,38 @@ async def askfer_stream(
             yield f"event: error\ndata: {json.dumps({'error': 'Askfer pipeline failed'})}\n\n"
             return
 
+        # Drain buffered preamble — emit sanitized tail (or clean preamble).
+        tail = leak_guard.flush()
+        if tail:
+            yield f"data: {json.dumps({'token': tail})}\n\n"
+        if leak_guard.leak_detected:
+            full_answer = tail
+        # Belt-and-suspenders pass for any mid-stream leak that bypassed
+        # the preamble guard.
+        cleaned_answer = _sanitize_answer(full_answer)
+        if cleaned_answer != full_answer:
+            logger.warning(
+                "Askfer stream leak sanitized before cache/log "
+                f"(orig_len={len(full_answer)} clean_len={len(cleaned_answer)})"
+            )
+            full_answer = cleaned_answer
+
         latency_ms = (time.perf_counter() - start_time) * 1000
         sources = _extract_askfer_sources(retrieved_context)
 
-        # Langfuse retrieval scores
+        # Phoenix retrieval scores
         try:
-            cur_trace_id = getattr(langfuse_handler, "last_trace_id", None) if langfuse_handler else None
-            if cur_trace_id and retrieved_context:
-                lf = get_client()
+            if span_id and retrieved_context:
                 hybrid = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-                cohere = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+                rerank = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
                 if hybrid:
-                    lf.score(trace_id=cur_trace_id, name="retriever_hybrid_max", value=round(max(hybrid), 4))
-                    lf.score(trace_id=cur_trace_id, name="retriever_hybrid_avg", value=round(sum(hybrid)/len(hybrid), 4))
-                if cohere:
-                    lf.score(trace_id=cur_trace_id, name="retriever_cohere_max", value=round(max(cohere), 4))
-                    lf.score(trace_id=cur_trace_id, name="retriever_cohere_avg", value=round(sum(cohere)/len(cohere), 4))
+                    annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid), 4))
+                    annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid)/len(hybrid), 4))
+                if rerank:
+                    annotate_span(span_id, "retriever_rerank_max", round(max(rerank), 4))
+                    annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank)/len(rerank), 4))
         except Exception as exc:
-            logger.warning(f"Askfer Langfuse score logging failed: {exc}")
+            logger.warning(f"Askfer Phoenix score logging failed: {exc}")
 
         yield (
             f"event: done\ndata: "
@@ -243,7 +262,7 @@ async def askfer_stream(
                 "latency_ms": round(latency_ms, 2),
                 "cache_hit": False,
             })
-            task = asyncio.create_task(asyncio.to_thread(_flush_langfuse))
+            task = asyncio.create_task(asyncio.to_thread(_flush_traces))
             _stream_bg_tasks.add(task)
             task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as exc:

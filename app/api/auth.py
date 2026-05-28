@@ -72,6 +72,13 @@ async def get_current_user(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed")
 
     # ── 2. Role-Based Rate Limiting ───────────────────────────────────────
+    # Skip rate limiting for the dev bypass user — when APP_ENV=development we
+    # want unfettered ability to load-test, replay golden eval queries, and
+    # iterate on prompts without hitting 429s. Real Moodle users still rate-
+    # limited normally.
+    if user.user_id == "dev_user_123" or settings.app_env == "development":
+        return user
+
     redis = get_redis_client()
     rate_limit_key = f"rate_limit:{user.user_id}"
     limit = settings.rate_limit_per_minute

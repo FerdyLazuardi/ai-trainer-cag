@@ -239,11 +239,9 @@ async def get_or_summarize_history(
     )
     
     try:
-        from langfuse.langchain import CallbackHandler
-        lf_handler = CallbackHandler()
         resp = await llm.ainvoke(
             [HM(content=prompt)],
-            config={"callbacks": [lf_handler], "run_name": "a-pedi-rolling-summarization"}
+            config={"run_name": "a-pedi-rolling-summarization"}
         )
         new_summary = resp.content.strip()
     except Exception as exc:
