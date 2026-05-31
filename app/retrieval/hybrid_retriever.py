@@ -189,6 +189,7 @@ async def hybrid_search(
                 score=round(fused[node_id], 6),
                 hybrid_score=round(fused[node_id], 6),
                 dense_score=round(dense_raw.get(node_id, 0.0), 6),
+                sparse_score=round(sparse_raw.get(node_id, 0.0), 6),
                 document_id=meta.get("document_id", ""),
                 source=meta.get("source", ""),
                 title=meta.get("title", ""),

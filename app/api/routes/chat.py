@@ -634,17 +634,21 @@ async def chat(
     
     actual_chunks = 0
     max_chunk_score = None
+    max_chunk_sparse = None
     retrieved_context = result.get("retrieved_context") or []
     
     if retrieved_context:
         real_chunks = [c for c in retrieved_context if c.get("source") not in (None, "", "None")]
         actual_chunks = len(real_chunks)
-        # Gate signal is the raw dense cosine (absolute [0,1]), matching
-        # _route_after_rag. The fused `score` is per-query normalized and can't
-        # be compared against an absolute threshold.
+        # Gate signals mirror _route_after_rag: raw dense cosine (absolute [0,1])
+        # OR raw BM25 lexical match. The fused `score` is per-query normalized
+        # and can't be compared against an absolute threshold.
         dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
         if dense_scores:
             max_chunk_score = max(dense_scores)
+        sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
+        if sparse_scores:
+            max_chunk_sparse = max(sparse_scores)
 
     effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
@@ -682,13 +686,13 @@ async def chat(
             logger.warning(f"Failed to submit Phoenix intent scores: {e}")
 
     background_tasks.add_task(_flush_traces)
-    # Skip cache write when retrieval missed: no chunks OR top score below threshold.
-    # These responses are canned "not found" messages — caching them would poison
+    # Skip cache write when retrieval missed: no chunks OR both gate signals
+    # below floor (mirrors _route_after_rag's dense-OR-sparse logic). These
+    # responses are canned "not found" messages — caching them would poison
     # later hits when the KB grows.
-    is_low_relevance = (
-        actual_chunks == 0
-        or (max_chunk_score is not None and max_chunk_score < settings.kb_min_dense_score)
-    )
+    _dense_miss = max_chunk_score is None or max_chunk_score < settings.kb_min_dense_score
+    _sparse_miss = max_chunk_sparse is None or max_chunk_sparse < settings.kb_min_sparse_score
+    is_low_relevance = actual_chunks == 0 or (_dense_miss and _sparse_miss)
     # FIX 1: never cache a personalized answer. The cache key is NOT scoped by
     # user, so an answer woven with this user's LTM / stored prefs / running
     # summary could be served verbatim to a different user. Only impersonal KB
@@ -1053,11 +1057,12 @@ async def chat_stream(
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
             stream_dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
             stream_max_score = max(stream_dense_scores) if stream_dense_scores else None
-            is_low_relevance_stream = (
-                not retrieved_context
-                or stream_max_score is None
-                or stream_max_score < settings.kb_min_dense_score
-            )
+            stream_sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
+            stream_max_sparse = max(stream_sparse_scores) if stream_sparse_scores else None
+            # Mirror _route_after_rag: low-relevance only when BOTH signals miss.
+            _s_dense_miss = stream_max_score is None or stream_max_score < settings.kb_min_dense_score
+            _s_sparse_miss = stream_max_sparse is None or stream_max_sparse < settings.kb_min_sparse_score
+            is_low_relevance_stream = (not retrieved_context) or (_s_dense_miss and _s_sparse_miss)
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream

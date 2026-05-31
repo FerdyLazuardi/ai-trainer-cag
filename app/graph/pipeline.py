@@ -704,6 +704,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "score": round(d.score, 4) if d.score is not None else 0.0,
                 "hybrid_score": round(d.hybrid_score, 4) if d.hybrid_score is not None else 0.0,
                 "dense_score": round(d.dense_score, 4) if d.dense_score is not None else 0.0,
+                "sparse_score": round(d.sparse_score, 4) if d.sparse_score is not None else 0.0,
                 "source": d.source or m.get("source", "Unknown"),
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })
@@ -951,26 +952,35 @@ def _route_after_rag(state: RAGState) -> str:
     (e.g. emotional vents) deserve a real response from the AI; the
     threshold guard is for KNOWLEDGE lookups only.
 
-    The gate uses `dense_score` — the raw dense cosine similarity in [0, 1],
-    an ABSOLUTE signal. The fused `score`/`hybrid_score` is min-max normalized
-    per-query (top hit ≈ 1.0 on every query), so it cannot detect a global
-    retrieval miss; the raw cosine can. Threshold (`kb_min_dense_score`) was
-    calibrated from production dense-cosine top-1 distributions: answered turns
-    median ≈ 0.68 vs not-found turns median ≈ 0.45, with 0.30 blocking only the
-    weakest misses while sparing virtually all valid answers.
+    The gate passes if EITHER signal clears its floor:
+      - `dense_score` — raw dense cosine [0, 1], an ABSOLUTE semantic signal.
+        Calibrated from production: answered ≈ 0.68 vs not-found ≈ 0.45.
+      - `sparse_score` — raw BM25, a LEXICAL signal. Terse 1-word entity
+        queries ("Modal", "CP") score low on dense but match a KB term exactly
+        (BM25 ≫ 0), while off-scope queries ("crypto", "cuaca") have BM25 = 0.0.
+    Using OR rescues real KB entities that dense alone wrongly rejected, without
+    letting off-scope through (it has neither signal). The fused
+    `score`/`hybrid_score` is min-max normalized per-query (top hit ≈ 1.0 on
+    every query), so it can't gate a global miss — these raw signals can.
     """
     if state.get("intent") == "BRAINSTORM":
         return "generate"
     chunks = state.get("retrieved_context") or []
     if not chunks:
         return "low_relevance"
-    scores = [c.get("dense_score") for c in chunks if isinstance(c.get("dense_score"), (int, float))]
-    if not scores:
+    dense_scores = [c.get("dense_score") for c in chunks if isinstance(c.get("dense_score"), (int, float))]
+    sparse_scores = [c.get("sparse_score") for c in chunks if isinstance(c.get("sparse_score"), (int, float))]
+    if not dense_scores and not sparse_scores:
         return "low_relevance"
-    if max(scores) < _settings.kb_min_dense_score:
+    max_dense = max(dense_scores) if dense_scores else 0.0
+    max_sparse = max(sparse_scores) if sparse_scores else 0.0
+    dense_ok = max_dense >= _settings.kb_min_dense_score
+    sparse_ok = max_sparse >= _settings.kb_min_sparse_score
+    if not dense_ok and not sparse_ok:
         logger.info(
-            f"Dense top-score below threshold — skipping generate_node "
-            f"(max={max(scores):.4f} < {_settings.kb_min_dense_score})"
+            f"Retrieval below both gates — skipping generate_node "
+            f"(dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
+            f"sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score})"
         )
         return "low_relevance"
     return "generate"

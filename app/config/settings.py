@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     # answered turns median ≈ 0.68 vs not-found ≈ 0.45; 0.30 blocks only the
     # weakest misses while sparing virtually all valid answers.
     kb_min_dense_score: float = 0.30
+    # Lexical-match rescue for the NOT-FOUND gate. Terse 1-word entity queries
+    # ("Modal", "CP") score LOW on dense cosine but have a strong exact BM25
+    # match (raw score ≫ 0), whereas off-scope queries ("crypto", "cuaca") have
+    # BM25 = 0.0 (no KB token overlap at all). So the gate also passes when the
+    # raw BM25 top-score clears this floor — rescuing real KB entities without
+    # letting off-scope through. Measured: KB entities ≥ 3.4, off-scope = 0.0.
+    kb_min_sparse_score: float = 1.0
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).

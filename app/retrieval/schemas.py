@@ -12,6 +12,7 @@ class RetrievedChunk:
     score: float                     # fused relevance score — relative-score fusion of dense + sparse BM25
     hybrid_score: float = 0.0        # same fused score (kept for downstream/metric compatibility)
     dense_score: float = 0.0         # raw dense cosine [0, 1] — absolute signal used for the NOT-FOUND gate
+    sparse_score: float = 0.0        # raw BM25 score — 0.0 = no lexical match in KB; >0 = exact term hit
     document_id: str = ""
     source: str = ""
     title: str = ""
@@ -30,4 +31,5 @@ class RetrievedChunk:
             "score": round(self.score, 4),
             "hybrid_score": round(self.hybrid_score, 4),
             "dense_score": round(self.dense_score, 4),
+            "sparse_score": round(self.sparse_score, 4),
         }
