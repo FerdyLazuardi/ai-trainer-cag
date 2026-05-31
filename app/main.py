@@ -50,16 +50,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Phoenix init failed (tracing disabled): {e}")
 
-    # ── Reranker warmup (loads cross-encoder model into memory) ──
-    if settings.reranker_enabled:
-        try:
-            from app.retrieval.reranker import warmup_reranker
-            warmup_reranker()
-        except Exception as e:
-            logger.warning(f"Reranker warmup skipped: {e}")
-    else:
-        logger.info("Reranker disabled via RERANKER_ENABLED=false — skipping warmup")
-
     # Initialize PostgreSQL tables
     await init_db()
     logger.info("PostgreSQL initialized")

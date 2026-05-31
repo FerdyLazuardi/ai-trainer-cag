@@ -5,6 +5,7 @@ then using Qdrant (semantic similarity match) to catch variations of the same qu
 """
 import hashlib
 import json
+import time
 import uuid
 
 from loguru import logger
@@ -27,6 +28,17 @@ _PREFIX = "rag:cache:"
 # 0.82 keeps obvious paraphrases together while rejecting topic-drift.
 _SEMANTIC_THRESHOLD = 0.82
 _semantic_collection_ready = False
+
+# ── Semantic-cache eviction ──────────────────────────────────────────────────
+# Redis entries expire via native TTL, but Qdrant has no TTL — without eviction
+# `semantic_cache` grows unbounded (a real OOM risk on the shared 8GB box).
+# Each point is stamped with `created_at` (epoch). Expired points are (a) never
+# served — filtered out at read time — and (b) physically pruned by a lazy,
+# time-gated sweep so we don't pay a delete-by-filter on every write.
+_last_cache_prune_ts: float = 0.0
+# Minimum gap between prune sweeps. The sweep itself is one delete-by-filter,
+# so once per 10 min is plenty to keep the collection bounded.
+_CACHE_PRUNE_INTERVAL_SECONDS = 600
 
 
 def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
@@ -64,6 +76,7 @@ async def _ensure_semantic_collection() -> None:
     for field, schema in [
         ("course_id", qdrant_models.PayloadSchemaType.INTEGER),
         ("namespace", qdrant_models.PayloadSchemaType.KEYWORD),
+        ("created_at", qdrant_models.PayloadSchemaType.FLOAT),
     ]:
         try:
             await qdrant.client.create_payload_index(
@@ -159,6 +172,18 @@ async def get_cached_response(
                     match=qdrant_models.MatchValue(value=course_id),
                 )
             )
+        # TTL guard: never serve a semantically-matched entry older than the
+        # cache TTL, even if it hasn't been physically pruned yet. Entries
+        # written before `created_at` was introduced have no such field and are
+        # excluded by this range filter (treated as expired — acceptable, they
+        # age out on next write).
+        min_created = time.time() - settings.cache_query_ttl_seconds
+        must_clauses.append(
+            qdrant_models.FieldCondition(
+                key="created_at",
+                range=qdrant_models.Range(gte=min_created),
+            )
+        )
         query_filter = qdrant_models.Filter(must=must_clauses)
 
         search_result = await qdrant.client.query_points(
@@ -241,6 +266,9 @@ async def set_cached_response(
 
         qdrant = get_qdrant_client()
 
+        # Stamp with epoch so the read-time TTL filter + lazy prune can age it
+        # out. Redis has native TTL; Qdrant does not, so we carry it explicitly.
+        qdrant_payload = {**payload, "created_at": time.time()}
         point_id = str(uuid.uuid4())
         await qdrant.client.upsert(
             collection_name="semantic_cache",
@@ -249,13 +277,50 @@ async def set_cached_response(
                 qdrant_models.PointStruct(
                     id=point_id,
                     vector=query_embedding,
-                    payload=payload
+                    payload=qdrant_payload
                 )
             ]
         )
         logger.debug(f"Semantic Cache SET for query='{query[:60]}' course_id={course_id} namespace={cache_namespace}")
+
+        # Lazy, time-gated eviction: at most once per _CACHE_PRUNE_INTERVAL,
+        # delete all points older than the cache TTL. Cheap insurance against
+        # unbounded growth without a delete-by-filter on every write.
+        await _maybe_prune_semantic_cache(qdrant)
     except Exception as exc:
         logger.warning("Semantic cache SET failed", error=str(exc))
+
+
+async def _maybe_prune_semantic_cache(qdrant) -> None:
+    """Delete expired semantic_cache points, throttled to one sweep per interval.
+
+    Fire-and-forget: any failure is logged and swallowed so a prune hiccup never
+    breaks the cache-write path.
+    """
+    global _last_cache_prune_ts
+    now = time.time()
+    if now - _last_cache_prune_ts < _CACHE_PRUNE_INTERVAL_SECONDS:
+        return
+    _last_cache_prune_ts = now  # claim the slot before awaiting so concurrent writers don't double-sweep
+    try:
+        cutoff = now - settings.cache_query_ttl_seconds
+        await qdrant.client.delete(
+            collection_name="semantic_cache",
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="created_at",
+                            range=qdrant_models.Range(lt=cutoff),
+                        )
+                    ]
+                )
+            ),
+            wait=False,
+        )
+        logger.debug("semantic_cache prune sweep issued", cutoff_epoch=round(cutoff))
+    except Exception as exc:
+        logger.warning("semantic_cache prune failed (non-fatal)", error=str(exc))
 
 
 async def flush_cache_by_namespace(namespace: str) -> None:

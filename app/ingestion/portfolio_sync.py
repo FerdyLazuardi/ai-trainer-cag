@@ -965,7 +965,7 @@ async def sync_portfolio_knowledge_base(
         # 5. Build & ingest the OVERVIEW document
         # This single doc lists all projects grouped by org_label so a query like
         # "what projects have you done?" returns a complete index instead of just
-        # the top-3 reranked chunks.
+        # the top-K retrieved chunks.
         if project_payloads:
             try:
                 summaries = []

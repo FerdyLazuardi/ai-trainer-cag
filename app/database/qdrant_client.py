@@ -214,12 +214,17 @@ class QdrantManager:
         - Payload indexed on user_id (keyword) for fast per-user pre-filtering.
         - Payload indexed on created_at (float epoch) for time-based ordering.
         - on_disk_payload=True for memory efficiency at scale.
+        - on_disk=True for dense vectors: at full scale (13k users x 50 episodes x
+          1536 dim x 4B) this collection alone would hold ~4GB of vectors. Keeping
+          them on disk (HNSW graph stays in RAM) is what keeps the 8GB box feasible;
+          recall impact is negligible for per-user pre-filtered LTM lookups.
         """
         await self.client.create_collection(
             collection_name=self._LTM_COLLECTION,
             vectors_config=VectorParams(
                 size=self.dim,
                 distance=Distance.COSINE,
+                on_disk=True,
             ),
             hnsw_config=HnswConfigDiff(
                 m=16,

@@ -88,6 +88,11 @@ class AgentLog(Base):
     __tablename__ = "agent_logs"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Correlation key set by the chat handler at log time. The async eval task
+    # uses it to UPDATE this row with the faithfulness score once the judge runs
+    # (Phoenix-independent — works even when tracing is off).
+    turn_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
+    endpoint: Mapped[str] = mapped_column(String(32), nullable=True)
     conversation_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
     query: Mapped[str] = mapped_column(Text, nullable=False)
     rewritten_query: Mapped[str] = mapped_column(Text, nullable=True)
@@ -96,6 +101,14 @@ class AgentLog(Base):
     latency_ms: Mapped[float] = mapped_column(Float, nullable=True)
     llm_tokens_used: Mapped[int] = mapped_column(Integer, nullable=True)
     cache_hit: Mapped[bool] = mapped_column(nullable=False, default=False)
+    # ── Quality signals (durable; previously Phoenix-only) ──
+    intent: Mapped[str] = mapped_column(String(32), nullable=True, index=True)
+    needs_lookup: Mapped[float] = mapped_column(Float, nullable=True)
+    needs_reasoning: Mapped[float] = mapped_column(Float, nullable=True)
+    needs_empathy: Mapped[float] = mapped_column(Float, nullable=True)
+    max_dense_score: Mapped[float] = mapped_column(Float, nullable=True)
+    # Filled asynchronously by the LLM-as-judge eval task (sampled).
+    faithfulness_score: Mapped[float] = mapped_column(Float, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True

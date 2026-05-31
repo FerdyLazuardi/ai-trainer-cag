@@ -119,10 +119,26 @@ class BatchLogger:
                         logger.error(f"Error parsing log from Redis: {e}")
 
                 if logs_to_insert:
+                    # Normalize for bulk insert: drop keys that aren't AgentLog
+                    # columns (e.g. ad-hoc debug fields) and give every row the
+                    # SAME key set (union, missing → None). SQLAlchemy's
+                    # multi-row INSERT requires homogeneous dicts; without this a
+                    # single heterogeneous row breaks the whole batch.
+                    valid_cols = {c.name for c in AgentLog.__table__.columns}
+                    cleaned = [
+                        {k: v for k, v in row.items() if k in valid_cols}
+                        for row in logs_to_insert
+                    ]
+                    all_keys = set()
+                    for row in cleaned:
+                        all_keys.update(row.keys())
+                    normalized = [
+                        {k: row.get(k) for k in all_keys} for row in cleaned
+                    ]
                     async with AsyncSessionLocal() as session:
-                        await session.execute(insert(AgentLog), logs_to_insert)
+                        await session.execute(insert(AgentLog), normalized)
                         await session.commit()
-                    logger.info(f"Successfully flushed {len(logs_to_insert)} logs to PostgreSQL")
+                    logger.info(f"Successfully flushed {len(normalized)} logs to PostgreSQL")
 
                 # Clean up temp key only after successful DB commit
                 await redis.delete(temp_key)

@@ -9,8 +9,9 @@ class RetrievedChunk:
     """Unified result schema returned by any retriever."""
     chunk_id: str
     text: str
-    score: float                     # normalized relevance score [0, 1] — cross-encoder sigmoid score if reranked
-    hybrid_score: float = 0.0        # raw LlamaIndex hybrid (dense + sparse BM25) score before reranking
+    score: float                     # fused relevance score — relative-score fusion of dense + sparse BM25
+    hybrid_score: float = 0.0        # same fused score (kept for downstream/metric compatibility)
+    dense_score: float = 0.0         # raw dense cosine [0, 1] — absolute signal used for the NOT-FOUND gate
     document_id: str = ""
     source: str = ""
     title: str = ""
@@ -28,4 +29,5 @@ class RetrievedChunk:
             "chunk_index": self.chunk_index,
             "score": round(self.score, 4),
             "hybrid_score": round(self.hybrid_score, 4),
+            "dense_score": round(self.dense_score, 4),
         }

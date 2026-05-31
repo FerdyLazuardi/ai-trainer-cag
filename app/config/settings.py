@@ -29,8 +29,15 @@ class Settings(BaseSettings):
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
     postgres_password: str = "admin"
-    postgres_pool_size: int = 5
-    postgres_max_overflow: int = 10
+    # Pool sizing: base 10 + overflow 20 = up to 30 concurrent connections.
+    # Sized so a burst of in-flight requests doesn't exhaust the pool now that
+    # streaming endpoints no longer hold a connection for the SSE lifetime.
+    # Postgres 16 default max_connections=100 leaves ample headroom.
+    postgres_pool_size: int = 10
+    postgres_max_overflow: int = 20
+    # Fail fast instead of SQLAlchemy's 30s default: a request that can't get a
+    # connection within this window raises immediately rather than hanging.
+    postgres_pool_timeout: int = 10
 
     @computed_field  # type: ignore[misc]
     @property
@@ -61,7 +68,7 @@ class Settings(BaseSettings):
     qdrant_kb_collection: str = "Knowledge_Base"
 
     # ─── Embedding ──────────────────────────────────────────────────────────
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "openai/text-embedding-3-small"
     embedding_dim: int = 1536
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
@@ -74,15 +81,6 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
 
-    # ─── Reranker (local cross-encoder) ─────────────────────────────────────
-    reranker_enabled: bool = Field(default=True, alias="RERANKER_ENABLED")
-    reranker_model_name: str = Field(
-        default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
-        alias="RERANKER_MODEL_NAME",
-    )
-    reranker_device: str = Field(default="cpu", alias="RERANKER_DEVICE")
-    reranker_max_length: int = Field(default=512, alias="RERANKER_MAX_LENGTH")
-
     # ─── Phoenix (Observability — self-hosted) ──────────────────────────────
     phoenix_endpoint: str = Field(default="http://phoenix:6006", alias="PHOENIX_ENDPOINT")
     phoenix_otlp_endpoint: str = Field(default="http://phoenix:4317", alias="PHOENIX_OTLP_ENDPOINT")
@@ -91,30 +89,62 @@ class Settings(BaseSettings):
     # ─── Evaluation (LLM-as-judge, async via arq) ───────────────────────────
     # Phase 1: faithfulness eval only. Sample to control cost — 100% eval
     # at 13k user scale would 2x the LLM bill for diminishing signal.
-    # Always-eval gates (low rerank / high empathy) catch high-stakes turns
-    # regardless of sample rate so the riskiest outputs are never missed.
+    # Always-eval gates (low dense relevance / high empathy) catch high-stakes
+    # turns regardless of sample rate so the riskiest outputs are never missed.
     eval_enabled: bool = Field(default=True, alias="EVAL_ENABLED")
     eval_sample_rate: float = Field(default=0.10, alias="EVAL_SAMPLE_RATE")
-    eval_always_if_rerank_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_RERANK_BELOW")
+    eval_always_if_dense_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_DENSE_BELOW")
     eval_always_if_empathy_above: float = Field(default=0.90, alias="EVAL_ALWAYS_IF_EMPATHY_ABOVE")
 
     # ─── Context Engineering ────────────────────────────────────────────────
     max_context_tokens: int = 6000
-    retrieval_top_k: int = 10
-    reranked_top_k: int = 7
+    # Candidate pool pulled per modality (dense + sparse BM25) before fusion.
+    # 20 (was 10): at ~42 KB chunks 10 already covered ~25% of the corpus, but
+    # the KB is scaling toward ~300+ chunks where a narrow pool would miss
+    # relevant hits before fusion. Widening the pool costs ~nothing — it does
+    # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
+    retrieval_top_k: int = 20
+    # Final number of fused chunks fed to the generate LLM. 6 (was 4/5): with a
+    # ~300-chunk KB spread across ~50 docs, answers more often span multiple
+    # chunks; 6 captures that without diluting Flash Lite's attention. This is
+    # the only knob that adds LLM input tokens — keep it ≤ 8.
+    final_top_k: int = 6
+    # Per-chunk char cap for the LMS generate path. 1300 (was 800): chunks
+    # average ~300 tokens ≈ 1200 chars, so an 800 cap was silently truncating
+    # ~1/3 of the average chunk. 1300 lets a typical chunk through intact and
+    # only trims genuine outliers. Budget check: 6 chunks × ~325 tok ≈ 1950 tok,
+    # well under max_context_tokens.
+    lms_chunk_text_max_chars: int = 1300
+    # Relative-score fusion weights: fused = vector_weight * dense_norm +
+    # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
-    # Below this rerank score, treat retrieval as a miss and skip generate_node
-    # entirely (saves ~2700 input tokens + 1 LLM call per off-topic query).
-    # Score is the post-sigmoid value in [0, 1] from the cross-encoder.
-    rerank_min_score: float = 0.30
+    # Below this RAW DENSE COSINE top-1 score, treat retrieval as a miss and
+    # skip generate_node entirely (saves ~2700 input tokens + 1 LLM call per
+    # off-topic query). Absolute [0, 1] cosine — calibrated from production:
+    # answered turns median ≈ 0.68 vs not-found ≈ 0.45; 0.30 blocks only the
+    # weakest misses while sparing virtually all valid answers.
+    kb_min_dense_score: float = 0.30
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    cache_query_ttl_seconds: int = 14400   # 4 hours — KB content is stable, longer TTL = more cache hits
+    # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).
+    # 24h: KB is stable and Moodle sync auto-invalidates affected entries, so a
+    # long TTL maximizes hit rate (fewer LLM calls). Expired semantic-cache
+    # points are pruned lazily; mem_limit caps worst-case RAM.
+    cache_query_ttl_seconds: int = 86400
     # 24h: must outlive `ltm_afk_threshold_seconds` so STM history+summary
     # survive long enough for the AFK LTM worker to consume them.
     conversation_ttl_seconds: int = 86400
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
+    # Max fresh (un-summarized) conversation turns fed to generate_node. 3
+    # (effectively 5 before) — older turns are captured by the rolling summary,
+    # so feeding 5 full turns + untruncated AI replies was pure token overhead.
+    max_fresh_turns: int = 3
+    # Per-AI-reply char cap for STM history sent to generate_node. The
+    # pre-processor already caps AI history at 400 chars; generate_node fed
+    # full replies, which compounds across turns. 500 keeps entity names +
+    # the gist while bounding the worst case.
+    max_history_ai_chars: int = 500
     # AFK window before LTM sync fires. 10h matches "user closed laptop / went
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.
@@ -133,8 +163,9 @@ class Settings(BaseSettings):
     askfer_admin_secret: str = Field(default="", alias="ASKFER_ADMIN_SECRET")
     askfer_rate_limit_per_minute: int = 10
     # Token-budget tuning — Askfer is stateless, so we can keep retrieval lean.
+    # Candidate pool per modality before fusion, then narrow to the final cut.
     askfer_retrieval_top_k: int = 12
-    askfer_reranked_top_k: int = 3
+    askfer_final_top_k: int = 3
     askfer_chunk_text_max_chars: int = 600
 
     # ─── Security ───────────────────────────────────────────────────────────

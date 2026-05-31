@@ -148,22 +148,17 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     sys = (
         f"{ASKFER_PERSONA}\n"
         "GREETING-MODE — strict rules:\n"
-        "1. Greet the visitor warmly and briefly introduce yourself as Ferdy.\n"
-        "2. Lead with your role focus (Learning Designer) drawn from the "
-        "<profile> block. NEVER generalize as 'professional in technology' "
-        "or anything vague.\n"
-        "3. Match the user's language (English default, Indonesian if they "
-        "wrote in Indonesian). Keep under 3 sentences.\n"
-        "4. CRITICAL — DO NOT answer factual questions in this mode. If the "
-        "user's message contains a factual question (e.g. about specific "
-        "projects, N-Gain, completion rate, participant counts, dates, "
-        "scores, metrics, or any specific number), DO NOT answer it. "
-        "Instead, briefly redirect: 'Happy to dig into that — feel free "
-        "to ask directly!' / 'Boleh banget, silakan tanya langsung ya!'\n"
-        "5. NEVER fabricate project names, numbers, or metrics. Only "
-        "high-level role / team / location info from <profile> is allowed.\n"
-        "6. End by inviting them to ask about projects, tech stack, or "
-        "experience."
+        "1. Warmly introduce yourself as Ferdy, leading with your role focus "
+        "(Learning Designer) from the <profile> block — never vague labels "
+        "like 'professional in technology'. Match the user's language "
+        "(English default), under 3 sentences, then invite them to ask about "
+        "projects, tech stack, or experience.\n"
+        "2. CRITICAL — do NOT answer factual questions here (specific "
+        "projects, metrics, scores, dates, counts) and NEVER fabricate names "
+        "or numbers. Only high-level role/team/location from <profile> is "
+        "allowed. If asked something factual, redirect: 'Happy to dig into "
+        "that — feel free to ask directly!' / 'Boleh banget, silakan tanya "
+        "langsung ya!'"
         f"{profile_block}"
     )
     response = await llm.ainvoke(
@@ -220,7 +215,6 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     repeat the name in every page header.
     """
     from app.retrieval.hybrid_retriever import hybrid_search
-    from app.retrieval.reranker import rerank
     from app.database.qdrant_client import get_qdrant_client
     from qdrant_client import models as qm
 
@@ -228,13 +222,13 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     try:
         docs = await hybrid_search(
             query=query_to_search,
-            top_k=_settings.askfer_retrieval_top_k,
+            top_k=_settings.askfer_final_top_k,
+            fetch_k=_settings.askfer_retrieval_top_k,
             collection=_settings.qdrant_personal_collection,
         )
-        reranked = await rerank(query=query_to_search, chunks=docs, top_k=_settings.askfer_reranked_top_k)
 
         chunks = []
-        for d in reranked:
+        for d in docs:
             m = d.metadata or {}
             chunks.append({
                 "text": d.text,
@@ -244,6 +238,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "title": d.title or m.get("title", ""),
                 "score": round(d.score, 4) if d.score is not None else 0.0,
                 "hybrid_score": round(d.hybrid_score, 4) if d.hybrid_score is not None else 0.0,
+                "dense_score": round(d.dense_score, 4) if d.dense_score is not None else 0.0,
                 "source": d.source or m.get("source", "Unknown"),
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })

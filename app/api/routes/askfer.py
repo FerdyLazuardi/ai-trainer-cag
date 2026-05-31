@@ -16,13 +16,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.askfer_deps import rate_limit_by_ip
 from app.api.routes.ingest import get_arq_redis
 from app.api.schemas import AskferRequest, AskferSyncRequest
 from app.config.settings import get_settings
-from app.database.postgres import get_db
 from app.graph.askfer_pipeline import get_askfer_graph
 from app.observability import (
     flush as flush_traces,
@@ -71,7 +69,6 @@ def _extract_askfer_sources(retrieved_context: list) -> list:
 async def askfer_stream(
     request: AskferRequest,
     req: Request,
-    db: AsyncSession = Depends(get_db),
     client_ip: str = Depends(rate_limit_by_ip),
 ):
     """Stateless SSE stream. No auth, no conversation history."""
@@ -226,13 +223,13 @@ async def askfer_stream(
         try:
             if span_id and retrieved_context:
                 hybrid = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-                rerank = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+                dense = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
                 if hybrid:
                     annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid), 4))
                     annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid)/len(hybrid), 4))
-                if rerank:
-                    annotate_span(span_id, "retriever_rerank_max", round(max(rerank), 4))
-                    annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank)/len(rerank), 4))
+                if dense:
+                    annotate_span(span_id, "retriever_dense_max", round(max(dense), 4))
+                    annotate_span(span_id, "retriever_dense_avg", round(sum(dense)/len(dense), 4))
         except Exception as exc:
             logger.warning(f"Askfer Phoenix score logging failed: {exc}")
 

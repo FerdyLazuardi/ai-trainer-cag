@@ -10,7 +10,6 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Moved inline imports to file-level
 from langchain_core.messages import HumanMessage, AIMessage
@@ -23,7 +22,7 @@ from app.agents.memory import (
     clear_conversation_history
 )
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
-from app.database.postgres import get_db
+from app.database.postgres import AsyncSessionLocal
 from app.database.models import UserProfile
 from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
@@ -136,7 +135,7 @@ def _should_eval_turn(
     *,
     intent: str | None,
     intent_scores: dict | None,
-    max_rerank_score: float | None,
+    max_dense_score: float | None,
     answer: str | None,
 ) -> bool:
     """Sampling decision for post-hoc evaluation.
@@ -144,7 +143,7 @@ def _should_eval_turn(
     Evaluates when ANY of:
     - Random draw under `eval_sample_rate` (baseline drift signal).
     - Empathy axis ≥ threshold (vent / resign — high-stakes turn).
-    - Top rerank below threshold (suspected retrieval miss / potential halu).
+    - Top dense cosine below threshold (suspected retrieval miss / potential halu).
 
     Skips canned-response intents and empty answers regardless.
     """
@@ -161,8 +160,8 @@ def _should_eval_turn(
         return True
 
     if (
-        max_rerank_score is not None
-        and max_rerank_score < settings.eval_always_if_rerank_below
+        max_dense_score is not None
+        and max_dense_score < settings.eval_always_if_dense_below
     ):
         return True
 
@@ -171,6 +170,7 @@ def _should_eval_turn(
 
 async def _enqueue_eval(
     *,
+    turn_id: Optional[str],
     span_id: Optional[str],
     query: str,
     answer: str,
@@ -183,7 +183,9 @@ async def _enqueue_eval(
     Fire-and-forget — failures are logged and swallowed so eval scheduling
     never affects user-facing flow.
     """
-    if not span_id:
+    # turn_id correlates the async faithfulness score back to the agent_logs
+    # row (Phoenix-independent). span_id is Phoenix-only and may be None.
+    if not turn_id and not span_id:
         return
     try:
         arq_redis = await get_arq_redis()
@@ -195,9 +197,35 @@ async def _enqueue_eval(
             retrieved_context or [],
             intent,
             intent_scores or {},
+            turn_id,
         )
     except Exception as e:
         logger.warning(f"Failed to enqueue eval task: {e}")
+
+
+def _quality_log_fields(
+    intent: Optional[str],
+    intent_scores: Optional[dict],
+    max_dense_score: Optional[float],
+) -> dict:
+    """Build the durable quality-signal columns for an agent_logs row.
+
+    These used to live only in Phoenix span annotations; persisting them to
+    Postgres makes monitoring possible without Phoenix running.
+    """
+    scores = intent_scores or {}
+
+    def _f(key):
+        v = scores.get(key)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    return {
+        "intent": intent,
+        "needs_lookup": _f("needs_lookup"),
+        "needs_reasoning": _f("needs_reasoning"),
+        "needs_empathy": _f("needs_empathy"),
+        "max_dense_score": float(max_dense_score) if isinstance(max_dense_score, (int, float)) else None,
+    }
 
 
 async def _verify_conversation_ownership(conversation_id: str, current_user: User):
@@ -248,7 +276,6 @@ async def _prepare_rag_context(
     current_user: User,
     conversation_id: str,
     resolved_query: str,
-    db: AsyncSession
 ) -> dict:
     """Shared context preparation for both /chat and /chat/stream.
 
@@ -324,7 +351,13 @@ async def _prepare_rag_context(
     async def _load_user_profile_if_eligible():
         if not ltm_eligible:
             return None
-        return await db.get(UserProfile, user_id)
+        # Short-lived session: open, fetch, release immediately. This keeps the
+        # pooled connection out of the SSE stream's lifecycle (the stream can
+        # run 5-10s; holding a connection that whole time starves the pool).
+        # UserProfile is read into plain column attrs (expire_on_commit=False),
+        # so it stays usable after the session closes.
+        async with AsyncSessionLocal() as session:
+            return await session.get(UserProfile, user_id)
 
     (
         (summary, recent_history),
@@ -401,7 +434,34 @@ async def _prepare_rag_context(
         "user_preferences": user_pref_dict,
     }
 
-    return {"cached": None, "initial_state": initial_state, "query_embedding": query_embedding}
+    # ── Cross-user cache-leak guard (FIX 1) ───────────────────────────────────
+    # The query cache is keyed by {namespace}:{course_id|global}:{sha256(query)}
+    # — NOT by user_id. If this turn's answer was generated with anything
+    # user-specific woven into the prompt (LTM episodes, stored UserProfile
+    # prefs, or this conversation's running summary), caching it would let a
+    # DIFFERENT user receive a personalized answer ("seperti yang kamu tanya
+    # soal gaji…"). We therefore flag the turn as personalized so the caller
+    # SKIPS the cache write. Impersonal KB answers (was_personalized=False)
+    # still cache normally, preserving hit rate.
+    _ltm = ltm_profile or {}
+    has_ltm = (
+        bool((_ltm.get("summary") or "").strip())
+        or bool(_ltm.get("course_names"))
+        or bool(_ltm.get("unanswered_questions"))
+    )
+    has_prefs = bool(user_pref_dict) and any(
+        bool((v or "").strip()) if isinstance(v, str) else bool(v)
+        for v in user_pref_dict.values()
+    )
+    has_summary = bool((summary or "").strip())
+    was_personalized = has_ltm or has_prefs or has_summary
+
+    return {
+        "cached": None,
+        "initial_state": initial_state,
+        "query_embedding": query_embedding,
+        "was_personalized": was_personalized,
+    }
 
 def _extract_sources(retrieved_context: list) -> list:
     sources = []
@@ -434,7 +494,6 @@ def _auto_detect_course_id(retrieved_context: list, request_course_id: Optional[
 async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
     start_time = time.perf_counter()
@@ -444,9 +503,10 @@ async def chat(
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
     logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
     cached = context.get("cached")
     query_embedding = context.get("query_embedding")
+    was_personalized = context.get("was_personalized", False)
 
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -479,6 +539,14 @@ async def chat(
             }
         )
         await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+
+        # FIX 2: a cache hit still counts as session activity. Refresh
+        # last_active + (re)schedule the AFK LTM sync so an all-cache-hit
+        # session still persists LTM and the AFK guard doesn't misfire.
+        # `_schedule_afk_ltm_sync` updates `rag:last_active` internally, so
+        # this covers both the last_active refresh and the job enqueue. We do
+        # NOT re-inject memory — the cached answer is already final.
+        background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
 
         return ChatResponse(
             answer=cached["answer"],
@@ -561,6 +629,8 @@ async def chat(
     rewritten_query = result.get("rewritten_query") or resolved_query
     resolved_query = rewritten_query
     intent = result.get("intent", "KNOWLEDGE")
+    # Correlation key tying this agent_logs row to its async faithfulness score.
+    turn_id = str(uuid.uuid4())
     
     actual_chunks = 0
     max_chunk_score = None
@@ -569,26 +639,29 @@ async def chat(
     if retrieved_context:
         real_chunks = [c for c in retrieved_context if c.get("source") not in (None, "", "None")]
         actual_chunks = len(real_chunks)
-        scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
-        if scores:
-            max_chunk_score = max(scores)
+        # Gate signal is the raw dense cosine (absolute [0,1]), matching
+        # _route_after_rag. The fused `score` is per-query normalized and can't
+        # be compared against an absolute threshold.
+        dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
+        if dense_scores:
+            max_chunk_score = max(dense_scores)
 
     effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
 
     if span_id and retrieved_context:
         try:
-            # ── Hybrid scores (pre-rerank, raw LlamaIndex dense+BM25) ──
+            # ── Fused hybrid scores (dense + sparse BM25 relative-score fusion) ──
             hybrid_scores = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            # ── Rerank scores (post-rerank) — same as final .score ──
-            rerank_scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+            # ── Raw dense cosine scores (absolute signal used for the NOT-FOUND gate) ──
+            dense_only = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
 
             if hybrid_scores:
                 annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores), 4))
                 annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores) / len(hybrid_scores), 4))
-            if rerank_scores:
-                annotate_span(span_id, "retriever_rerank_max", round(max(rerank_scores), 4))
-                annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank_scores) / len(rerank_scores), 4))
+            if dense_only:
+                annotate_span(span_id, "retriever_dense_max", round(max(dense_only), 4))
+                annotate_span(span_id, "retriever_dense_avg", round(sum(dense_only) / len(dense_only), 4))
         except Exception as e:
             logger.warning(f"Failed to submit Phoenix retrieval scores: {e}")
 
@@ -614,9 +687,17 @@ async def chat(
     # later hits when the KB grows.
     is_low_relevance = (
         actual_chunks == 0
-        or (max_chunk_score is not None and max_chunk_score < settings.rerank_min_score)
+        or (max_chunk_score is not None and max_chunk_score < settings.kb_min_dense_score)
     )
-    if intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM") and not is_low_relevance:
+    # FIX 1: never cache a personalized answer. The cache key is NOT scoped by
+    # user, so an answer woven with this user's LTM / stored prefs / running
+    # summary could be served verbatim to a different user. Only impersonal KB
+    # answers (was_personalized=False) are safe to cache.
+    if (
+        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
+        and not is_low_relevance
+        and not was_personalized
+    ):
         background_tasks.add_task(
             set_cached_response,
             query=resolved_query,
@@ -624,6 +705,11 @@ async def chat(
             sources=sources, # we can pass dict directly since the schema validation handles it
             course_id=effective_course_id,
             query_embedding=query_embedding,
+        )
+    elif was_personalized:
+        logger.debug(
+            "Cache write skipped — answer was personalized (LTM/prefs/summary injected)",
+            conversation_id=conversation_id,
         )
     background_tasks.add_task(
         append_to_history,
@@ -634,6 +720,8 @@ async def chat(
     background_tasks.add_task(
         batch_logger.add_log,
         {
+            "turn_id": turn_id,
+            "endpoint": "chat",
             "conversation_id": conversation_id,
             "query": request.query,
             "rewritten_query": rewritten_query,
@@ -641,6 +729,7 @@ async def chat(
             "chunks_retrieved": actual_chunks,
             "latency_ms": round(latency_ms, 2),
             "cache_hit": False,
+            **_quality_log_fields(intent, result.get("intent_scores"), max_chunk_score),
         }
     )
     
@@ -658,11 +747,12 @@ async def chat(
     if _should_eval_turn(
         intent=intent,
         intent_scores=result.get("intent_scores"),
-        max_rerank_score=max_chunk_score,
+        max_dense_score=max_chunk_score,
         answer=answer,
     ):
         background_tasks.add_task(
             _enqueue_eval,
+            turn_id=turn_id,
             span_id=span_id,
             query=resolved_query,
             answer=answer,
@@ -715,7 +805,6 @@ async def sync_memory(
 async def chat_stream(
     request: ChatRequest,
     req: Request,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     start_time = time.perf_counter()
@@ -725,9 +814,10 @@ async def chat_stream(
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
     logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query, db)
+    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
     cached = context.get("cached")
     query_embedding = context.get("query_embedding")
+    was_personalized = context.get("was_personalized", False)
 
     if cached:
         async def _stream_cached():
@@ -749,6 +839,16 @@ async def chat_stream(
 
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
 
+            # FIX 2: a cache hit is still session activity. Refresh last_active
+            # + (re)schedule the AFK LTM sync (the helper updates
+            # `rag:last_active` internally) so an all-cache-hit session still
+            # persists LTM and the AFK guard doesn't misfire. No memory is
+            # re-injected — the cached answer is already final.
+            try:
+                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+            except Exception as e:
+                logger.warning(f"Cache-hit AFK LTM schedule failed: {e}")
+
         return StreamingResponse(_stream_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     initial_state = context["initial_state"]
@@ -762,6 +862,7 @@ async def chat_stream(
         intent = "KNOWLEDGE"
         stream_intent_scores: dict = {}
         span_id: Optional[str] = None
+        turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
         try:
@@ -870,8 +971,8 @@ async def chat_stream(
                 _stream_max_score = 0.0
                 if retrieved_context:
                     _scores_inline = [
-                        c.get("score") for c in retrieved_context
-                        if isinstance(c.get("score"), (int, float))
+                        c.get("dense_score") for c in retrieved_context
+                        if isinstance(c.get("dense_score"), (int, float))
                     ]
                     if _scores_inline:
                         _stream_max_score = float(max(_scores_inline))
@@ -924,18 +1025,18 @@ async def chat_stream(
             )
             full_answer = cleaned_answer
 
-        # ── Phoenix: log hybrid + rerank scores for stream endpoint ──
+        # ── Phoenix: log fused hybrid + raw dense scores for stream endpoint ──
         try:
             hybrid_scores_s = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            rerank_scores_s = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
+            dense_scores_s = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
 
             if span_id:
                 if hybrid_scores_s:
                     annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores_s), 4))
                     annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores_s) / len(hybrid_scores_s), 4))
-                if rerank_scores_s:
-                    annotate_span(span_id, "retriever_rerank_max", round(max(rerank_scores_s), 4))
-                    annotate_span(span_id, "retriever_rerank_avg", round(sum(rerank_scores_s) / len(rerank_scores_s), 4))
+                if dense_scores_s:
+                    annotate_span(span_id, "retriever_dense_max", round(max(dense_scores_s), 4))
+                    annotate_span(span_id, "retriever_dense_avg", round(sum(dense_scores_s) / len(dense_scores_s), 4))
                 if stream_intent_scores:
                     if "needs_lookup" in stream_intent_scores:
                         annotate_span(span_id, "intent_needs_lookup", float(stream_intent_scores["needs_lookup"]))
@@ -950,16 +1051,17 @@ async def chat_stream(
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
-            stream_rerank_scores = [c.get("score") for c in retrieved_context if isinstance(c.get("score"), (int, float))]
-            stream_max_score = max(stream_rerank_scores) if stream_rerank_scores else None
+            stream_dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
+            stream_max_score = max(stream_dense_scores) if stream_dense_scores else None
             is_low_relevance_stream = (
                 not retrieved_context
                 or stream_max_score is None
-                or stream_max_score < settings.rerank_min_score
+                or stream_max_score < settings.kb_min_dense_score
             )
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
+                and not was_personalized
             ):
                 await set_cached_response(
                     query=resolved_query,
@@ -968,8 +1070,19 @@ async def chat_stream(
                     course_id=effective_course_id,
                     query_embedding=query_embedding,
                 )
+            elif was_personalized:
+                # FIX 1: cache key is not user-scoped — skip caching answers
+                # generated with this user's LTM / prefs / running summary so
+                # they can't leak to another user.
+                logger.debug(
+                    "Stream cache write skipped — answer was personalized "
+                    "(LTM/prefs/summary injected)",
+                    conversation_id=conversation_id,
+                )
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
             await batch_logger.add_log({
+                "turn_id": turn_id,
+                "endpoint": "chat-stream",
                 "conversation_id": conversation_id,
                 "query": request.query,
                 "rewritten_query": resolved_query,
@@ -977,6 +1090,7 @@ async def chat_stream(
                 "chunks_retrieved": len(retrieved_context),
                 "latency_ms": round(latency_ms, 2),
                 "cache_hit": False,
+                **_quality_log_fields(intent, stream_intent_scores, stream_max_score),
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
             await _track_session_courses(conversation_id, retrieved_context)
@@ -984,10 +1098,11 @@ async def chat_stream(
             if _should_eval_turn(
                 intent=intent,
                 intent_scores=stream_intent_scores,
-                max_rerank_score=stream_max_score,
+                max_dense_score=stream_max_score,
                 answer=full_answer,
             ):
                 await _enqueue_eval(
+                    turn_id=turn_id,
                     span_id=span_id,
                     query=resolved_query,
                     answer=full_answer,

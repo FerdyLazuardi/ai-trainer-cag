@@ -26,7 +26,7 @@ import time
 import uuid
 
 from loguru import logger
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, PointIdsList
 
 from app.api.user_utils import is_real_user
 from app.config.embedding_config import ensure_llamaindex_configured
@@ -38,6 +38,30 @@ _LTM_CANDIDATES = 6     # over-fetch this many before time-decay re-ranking
 _LTM_DECAY_DAYS = 60.0  # half-weight age — older episodes get exp-decayed
 _MAX_COURSE_NAMES = 3        # cap course names stored per episode
 _MAX_UNANSWERED = 3          # cap unanswered questions stored per episode
+
+# Per-user episode cap. Qdrant has no native TTL/eviction, so without this each
+# new session writes a permanent vector and the collection grows unbounded
+# (~220k vectors/year at 13k users). After every write we prune the oldest
+# episodes for that user beyond this cap. settings.py is owned by another agent
+# — we only READ an override field if it exists, never edit it.
+MAX_LTM_EPISODES_PER_USER = 50
+
+
+def _max_episodes_per_user() -> int:
+    """Resolve the per-user episode cap.
+
+    Prefer a settings field (`ltm_max_episodes_per_user`) if one is ever added,
+    otherwise fall back to the module constant. Never raises — defaults on any
+    lookup failure so pruning stays fire-and-forget safe.
+    """
+    try:
+        from app.config.settings import get_settings
+        val = getattr(get_settings(), "ltm_max_episodes_per_user", None)
+        if val is not None:
+            return int(val)
+    except Exception:
+        pass
+    return MAX_LTM_EPISODES_PER_USER
 
 
 class QdrantLTMService:
@@ -252,8 +276,66 @@ class QdrantLTMService:
                 course_names=len(course_names),
                 unanswered=len(unanswered),
             )
+            # Enforce the per-user episode cap right after a successful write so
+            # the collection can't grow unbounded. Self-guarded + fire-and-forget.
+            await self.prune_user_episodes(user_id)
         except Exception as exc:
             logger.warning("LTM: Qdrant upsert failed", user_id=user_id, error=str(exc))
+
+    async def prune_user_episodes(self, user_id: str) -> None:
+        """Cap stored episodes per user — delete the oldest beyond the cap.
+
+        Qdrant has no native TTL/eviction. After a new episode is written we
+        scroll this user's points, sort by `created_at` (epoch float written on
+        every upsert), and delete everything past `_max_episodes_per_user()`.
+
+        Fire-and-forget safe: any failure is logged and swallowed so it never
+        breaks the AFK sync flow. Points missing `created_at` sort as oldest so
+        legacy rows are pruned first.
+        """
+        cap = _max_episodes_per_user()
+        if cap <= 0:
+            return
+
+        qdrant = get_qdrant_client()
+        try:
+            points: list = []
+            next_offset = None
+            while True:
+                batch, next_offset = await qdrant.client.scroll(
+                    collection_name=_LTM_COLLECTION,
+                    scroll_filter=self._build_user_filter(user_id),
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=False,
+                    offset=next_offset,
+                )
+                points.extend(batch)
+                if not batch or next_offset is None:
+                    break
+
+            if len(points) <= cap:
+                return
+
+            # Oldest first; trim everything beyond the cap.
+            points.sort(key=lambda p: float((p.payload or {}).get("created_at") or 0.0))
+            to_delete = [p.id for p in points[: len(points) - cap]]
+            if not to_delete:
+                return
+
+            await qdrant.client.delete(
+                collection_name=_LTM_COLLECTION,
+                points_selector=PointIdsList(points=to_delete),
+                wait=False,   # fire-and-forget — non-blocking in background worker
+            )
+            logger.info(
+                "LTM: pruned oldest episodes beyond per-user cap",
+                user_id=user_id,
+                pruned=len(to_delete),
+                kept=cap,
+            )
+        except Exception as exc:
+            logger.warning("LTM: prune_user_episodes failed", user_id=user_id, error=str(exc))
 
 
 # Singleton

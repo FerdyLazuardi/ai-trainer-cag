@@ -7,7 +7,7 @@ ingestion/pipeline.py, and ingestion/moodle_sync.py.
 """
 from llama_index.core import Settings
 from llama_index.core.node_parser import TokenTextSplitter
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from loguru import logger
 
 from app.config.settings import get_settings
@@ -40,7 +40,7 @@ def ensure_llamaindex_configured(
             raise ValueError("Neither OPENROUTER_EMBEDDING_KEY nor OPENROUTER_API_KEY is set in environment variables")
         
         kwargs = {
-            "model": settings.embedding_model,
+            "model_name": settings.embedding_model,
             "api_key": emb_api_key,
         }
         
@@ -62,7 +62,7 @@ def ensure_llamaindex_configured(
             logger.info("Setting embedding dimensions", dimensions=settings.embedding_dim)
 
         try:
-            Settings.embed_model = OpenAIEmbedding(**kwargs)
+            Settings.embed_model = OpenAILikeEmbedding(**kwargs)
             logger.info("LlamaIndex embedding model initialized successfully")
             _initialized = True
         except Exception as e:

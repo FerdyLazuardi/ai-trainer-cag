@@ -1,11 +1,30 @@
 """
-Hybrid retriever using LlamaIndex with Qdrant Vector Store.
-Merges dense vector results and Sparse BM25 results natively via LlamaIndex configuration.
-"""
-from loguru import logger
+Hybrid retriever — native dense + sparse (BM25) fusion against Qdrant.
 
-from llama_index.core import VectorStoreIndex
-from llama_index.vector_stores.qdrant import QdrantVectorStore
+We query Qdrant directly (dense KNN + sparse BM25 KNN in one batched
+round-trip) instead of going through LlamaIndex's `as_retriever`. Two reasons:
+
+  1. `index.as_retriever(similarity_top_k=k)` never sets the query mode to
+     HYBRID, so LlamaIndex silently runs the dense-only branch — the sparse
+     BM25 vectors stored at ingestion were never actually queried.
+  2. LlamaIndex's `relative_score_fusion` discards the raw dense cosine score
+     after min-max normalization. We need that raw cosine (an absolute [0,1]
+     signal) for the NOT-FOUND gate in the graph, which the per-query
+     normalized fusion score cannot provide.
+
+Embeddings stay on LlamaIndex: the query is embedded with the SAME model used
+at ingestion (`Settings.embed_model`, text-embedding-3-small @1536) and the
+sparse side uses the SAME fastembed BM25 encoder the vector store used to write
+documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
+"""
+from functools import lru_cache
+
+from loguru import logger
+from qdrant_client import models as rest
+
+from llama_index.core import Settings
+from llama_index.core.vector_stores.utils import metadata_dict_to_node
+from llama_index.vector_stores.qdrant.utils import fastembed_sparse_encoder
 
 from app.config.settings import get_settings
 from app.config.embedding_config import ensure_llamaindex_configured
@@ -14,78 +33,176 @@ from app.retrieval.schemas import RetrievedChunk
 
 settings = get_settings()
 
-_index_cache: dict[str, VectorStoreIndex] = {}
+# Vector names match QdrantManager._create_*_collection (dense + sparse).
+_DENSE_VECTOR_NAME = "text-dense"
+_SPARSE_VECTOR_NAME = "text-sparse"
+# Must match `fastembed_sparse_model` passed to QdrantVectorStore at ingestion.
+_SPARSE_MODEL = "Qdrant/bm25"
 
-def _get_cached_index(collection_name: str) -> VectorStoreIndex:
-    """Singleton VectorStoreIndex per collection to avoid regenerating on every call."""
-    if collection_name not in _index_cache:
-        qdrant = get_qdrant_client()
-        vector_store = qdrant.get_vector_store(collection_name, enable_hybrid=True)
-        _index_cache[collection_name] = VectorStoreIndex.from_vector_store(vector_store)
-    return _index_cache[collection_name]
+
+@lru_cache(maxsize=1)
+def _get_sparse_encoder():
+    """Load the fastembed BM25 sparse query encoder once (process lifetime).
+
+    Same model/encoder the vector store used to write sparse vectors, so query
+    and document term weighting are consistent.
+    """
+    return fastembed_sparse_encoder(model_name=_SPARSE_MODEL)
+
+
+def _minmax_normalize(scores: dict[str, float]) -> dict[str, float]:
+    """Min-max scale a {id: score} map into [0, 1] within this result set.
+
+    Mirrors LlamaIndex relative_score_fusion: each modality is scaled against
+    its OWN min/max, so the unbounded BM25 scale and the cosine scale become
+    comparable before weighting. An all-equal (or single-item) set maps to 1.0
+    to avoid division by zero.
+    """
+    if not scores:
+        return {}
+    values = scores.values()
+    hi, lo = max(values), min(values)
+    if hi == lo:
+        return {node_id: 1.0 for node_id in scores}
+    span = hi - lo
+    return {node_id: (val - lo) / span for node_id, val in scores.items()}
 
 
 async def hybrid_search(
     query: str,
     top_k: int | None = None,
-    collection: str | None = None,      # Optional: override collection
+    collection: str | None = None,
+    fetch_k: int | None = None,
 ) -> list[RetrievedChunk]:
     """
-    Perform native hybrid (dense + sparse) retrieval utilizing LlamaIndex via Qdrant.
+    Perform native hybrid (dense + sparse BM25) retrieval against Qdrant.
+
+    Ranking uses relative-score fusion: each modality is min-max normalized,
+    then combined as `alpha * dense + (1 - alpha) * sparse` where
+    `alpha = settings.vector_weight`. The raw dense cosine score is preserved
+    on each chunk as `dense_score` for the downstream NOT-FOUND gate.
+
+    `fetch_k` controls the candidate pool pulled per modality before fusion;
+    `top_k` is the final cut returned after fusion. A wider pool than the final
+    cut gives fusion more to work with (this replaces the old retrieve-wide-
+    then-rerank-narrow pattern), so `fetch_k` defaults to the larger of `top_k`
+    and `settings.retrieval_top_k`.
 
     Args:
-        query: User query.
-        top_k: Number of final results after fusion.
-        collection: Qdrant collection name. Defaults to settings.qdrant_kb_collection.
+        query: User query (already rewritten by the pre-processor).
+        top_k: Number of fused results to return. Defaults to
+            settings.retrieval_top_k.
+        collection: Qdrant collection name. Defaults to
+            settings.qdrant_kb_collection.
+        fetch_k: Candidates per modality before fusion. Defaults to
+            max(top_k, settings.retrieval_top_k).
 
     Returns:
-        Fused list of RetrievedChunk natively via LlamaIndex.
+        Fused list[RetrievedChunk] sorted by descending fused score.
     """
     ensure_llamaindex_configured()
     k = top_k or settings.retrieval_top_k
-
-    # Use the specified collection or the Knowledge_Base default
+    pool = fetch_k or max(k, settings.retrieval_top_k)
     collection_name = collection or settings.qdrant_kb_collection
+    alpha = settings.vector_weight  # weight on dense; (1 - alpha) on sparse
 
-    index = _get_cached_index(collection_name)
+    qdrant = get_qdrant_client()
 
-    # Use Retriever
-    retriever = index.as_retriever(
-        similarity_top_k=k,
+    # 1. Encode the query: dense (same embed model as ingestion) + sparse BM25.
+    dense_vec = await Settings.embed_model.aget_query_embedding(query)
+    sparse_idx, sparse_val = _get_sparse_encoder()([query])
+
+    # 2. One batched round-trip: dense KNN + sparse BM25 KNN over a `pool`-sized
+    #    candidate set per modality.
+    responses = await qdrant.client.query_batch_points(
+        collection_name=collection_name,
+        requests=[
+            rest.QueryRequest(
+                query=dense_vec,
+                using=_DENSE_VECTOR_NAME,
+                limit=pool,
+                with_payload=True,
+            ),
+            rest.QueryRequest(
+                query=rest.SparseVector(indices=sparse_idx[0], values=sparse_val[0]),
+                using=_SPARSE_VECTOR_NAME,
+                limit=pool,
+                with_payload=True,
+            ),
+        ],
     )
+    dense_points = responses[0].points
+    sparse_points = responses[1].points
 
-    # 4. Async Retrieve
-    nodes = await retriever.aretrieve(query)
+    # 3. Raw scores per modality + first-seen payload per node.
+    dense_raw: dict[str, float] = {p.id: float(p.score) for p in dense_points}
+    sparse_raw: dict[str, float] = {p.id: float(p.score) for p in sparse_points}
+    payloads: dict[str, dict] = {}
+    for p in dense_points:
+        payloads.setdefault(p.id, p.payload)
+    for p in sparse_points:
+        payloads.setdefault(p.id, p.payload)
 
-    # Metadata fields surfaced from frontmatter in KB documents
-    FRONTMATTER_FIELDS = {"department", "topic", "course_id", "course_name"}
+    if not payloads:
+        logger.debug(
+            "Hybrid retrieval returned no candidates",
+            query=query[:60],
+            collection=collection_name,
+        )
+        return []
 
+    # 4. Normalize each modality independently, then weighted-fuse. A node
+    #    missing from one modality contributes 0 for that side.
+    dense_norm = _minmax_normalize(dense_raw)
+    sparse_norm = _minmax_normalize(sparse_raw)
+    fused: dict[str, float] = {
+        node_id: alpha * dense_norm.get(node_id, 0.0)
+        + (1 - alpha) * sparse_norm.get(node_id, 0.0)
+        for node_id in payloads
+    }
+
+    # 5. Rank by fused score; keep top-k.
+    ranked_ids = sorted(fused, key=lambda node_id: fused[node_id], reverse=True)[:k]
+
+    # 6. Materialize RetrievedChunk. `node.metadata` carries the clean
+    #    frontmatter dict (course_name, doc_type, etc.); `metadata` on the chunk
+    #    excludes the promoted top-level fields, matching the prior contract.
     chunks: list[RetrievedChunk] = []
-    for node_score in nodes:
-        node = node_score.node
-        payload = node.metadata or {}
-        # Build rich metadata dict: include frontmatter + any other non-standard fields
-        extra_meta = {k: v for k, v in payload.items() if k not in
-                      ("document_id", "source", "title", "chunk_index", "token_count")}
-        raw_score = float(node_score.score) if node_score.score else 0.0
+    for node_id in ranked_ids:
+        payload = payloads.get(node_id) or {}
+        try:
+            node = metadata_dict_to_node(payload)
+            meta = node.metadata or {}
+            text = node.text or ""
+        except Exception:
+            meta = payload
+            text = payload.get("text", "")
+        extra_meta = {
+            mk: mv
+            for mk, mv in meta.items()
+            if mk not in ("document_id", "source", "title", "chunk_index", "token_count")
+        }
         chunks.append(
             RetrievedChunk(
-                chunk_id=node.node_id,
-                text=node.text,
-                score=raw_score,
-                hybrid_score=raw_score,   # preserve native LlamaIndex hybrid score (dense+BM25)
-                document_id=payload.get("document_id", ""),
-                source=payload.get("source", ""),
-                title=payload.get("title", ""),
-                chunk_index=int(payload.get("chunk_index", 0) or 0),
-                token_count=int(payload.get("token_count", 0) or 0),
+                chunk_id=str(node_id),
+                text=text,
+                score=round(fused[node_id], 6),
+                hybrid_score=round(fused[node_id], 6),
+                dense_score=round(dense_raw.get(node_id, 0.0), 6),
+                document_id=meta.get("document_id", ""),
+                source=meta.get("source", ""),
+                title=meta.get("title", ""),
+                chunk_index=int(meta.get("chunk_index", 0) or 0),
+                token_count=int(meta.get("token_count", 0) or 0),
                 metadata=extra_meta,
             )
         )
 
     logger.debug(
-        "LlamaIndex Hybrid retrieval complete",
+        "Hybrid retrieval complete",
         results=len(chunks),
+        dense_hits=len(dense_points),
+        sparse_hits=len(sparse_points),
         query=query[:60],
         collection=collection_name,
     )
