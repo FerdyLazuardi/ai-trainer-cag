@@ -141,7 +141,8 @@ PRE_PROCESSOR_PROMPT = """Classify the user's intent and produce three score axe
 
 STEP 1 — OFF_SCOPE: topic clearly outside Amartha (math, weather, news, recipes, other companies/banks, world facts, life advice). → OFF_SCOPE. STOP.
 
-STEP 2 — Bot meta-question: "kamu siapa", "ini apps buat apa", "who are you" → GREETING. STOP.
+STEP 2 — Bot meta-question: ONLY about the ASSISTANT/APP itself (A-Pedi, Amarthapedia, "kamu/lu", "ini bot/apps") — "kamu siapa", "ini apps buat apa", "who are you", "lu bisa apa" → GREETING. STOP.
+  NOT bot-meta: if the subject is "Amartha" the COMPANY or any KB topic (product/policy/role), it is a factual lookup → do NOT stop here, continue. "amartha ini apaan", "amartha itu apa", "jadi amartha apaan dah" → KNOWLEDGE (the company, not the bot). Distinguish: "Amartha" = company (KNOWLEDGE); "Amarthapedia"/"A-Pedi"/"ini apps"/"kamu" = the assistant (GREETING).
 
 STEP 3 — Pure filler: "hmm", "iya", "ok", single emoji, one-word non-topic reply → AMBIGUOUS(a). STOP.
 
@@ -174,6 +175,7 @@ EXAMPLES:
 - "Aku capek BP susah cari mitra" → BRAINSTORM, 0.6/0.7/0.8
 - "Halo" → GREETING, 0.0/0.0/0.0
 - "kamu siapa" / "ini bot apa" → GREETING
+- "amartha ini apaan" / "jadi amartha apaan dah baru join" → KNOWLEDGE (the COMPANY, not the bot)
 - "ada course apa aja?" → TOPIC_LIST
 - "cuaca jakarta" / "2+2" / "resep nasi goreng" → OFF_SCOPE, 0.0/0.0/0.0
 - "ada bonus ga" (no context) → AMBIGUOUS
