@@ -89,8 +89,11 @@ _IDENTITY_PHRASES = (
 
 # ── Rule 5: greeting prefixes ────────────────────────────────────────────────
 # Already in the existing pipeline; centralised here for one-stop classifier.
+# "hi" is listed standalone (not just "hi " / "hi,") so the bare token "hi"
+# also matches — the prior list required a trailing space/punct, which sent
+# "hi" alone to the LLM unnecessarily.
 _GREETING_PREFIXES = (
-    "halo", "hai", "hi ", "hi,", "hi.", "hey", "hello",
+    "halo", "hai", "hi", "hi ", "hi,", "hi.", "hey", "hello",
     "pagi", "siang", "sore", "malam",
     "good morning", "good afternoon", "good evening",
     "selamat", "test ", "test,", "test.",

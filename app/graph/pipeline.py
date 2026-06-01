@@ -707,13 +707,49 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     """Friendly greeting / self-introduction.
 
     Two sub-shapes routed by the same node:
-      - Pure greeting ("halo", "hi") → warm one-liner.
+      - Pure greeting ("halo", "hi", "pagi") → hardcoded warm one-liner.
       - Identity / app-purpose question ("kamu siapa", "ini apps buat apa")
-        → lead with a 1-2 sentence self-introduction (name = A-Pedi, role =
-        Amarthapedia assistant for Amartha employees), then invite them to
-        ask about training topics. The LLM picks the shape from the user's
-        message.
+        → hardcoded self-introduction (name = A-Pedi, role = Amarthapedia
+        assistant for Amartha employees).
+
+    Both sub-shapes return fixed strings — no LLM call. The previous version
+    routed both to the LLM, which cost ~1.4K input tokens + 50-150 output
+    tokens per call to produce text the prompt itself already specified.
+    A 13k-user fleet can hit this handler thousands of times per day
+    ("halo", "pagi") for zero information gain.
     """
+    from app.graph.intent_rules import _is_greeting as _is_pure_greeting, _is_identity_question
+    from langchain_core.messages import AIMessage
+    user_msg = state["messages"][-1].content
+    low = user_msg.lower().strip()
+
+    if _is_pure_greeting(low):
+        # Mirror the user's language register for warmth.
+        if any(c in user_msg for c in ("halo", "hai", "pagi", "siang", "sore", "malam", "selamat")):
+            reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
+        else:
+            reply = "Hi! Anything I can help with from Amarthapedia?"
+        return {"messages": [AIMessage(content=reply)]}
+
+    if _is_identity_question(low):
+        # Identity / app-purpose. A-Pedi is the assistant's name; Amarthapedia
+        # is the LMS. Keep it 2 sentences max, mirror the user's language.
+        if any(c in user_msg for c in ("kamu", "lu", "lo", "ini apps", "ini aplikasi", "perkenalkan")):
+            reply = (
+                "Aku A-Pedi, asisten AI di Amarthapedia — LMS internal Amartha "
+                "untuk karyawan. Bisa bantu cari info dari materi training soal "
+                "produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
+            )
+        else:
+            reply = (
+                "I'm A-Pedi, the AI assistant for Amarthapedia — Amartha's "
+                "internal LMS for employees. I help find info from training "
+                "materials on products, policies, and other topics. What would you like to know?"
+            )
+        return {"messages": [AIMessage(content=reply)]}
+
+    # Fallback (rare — Tier-1 GREETING fired but our sub-checks didn't recognise
+    # the exact phrasing). Keep the LLM path as a safety net.
     llm = get_generate_llm()
     greet_sys = f"{PERSONA}\n" + GREETING_MODE_RULES
     response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
@@ -729,7 +765,24 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
     role names like "BP" or product names like "Modal" in the prompt
     would mislead the user when the KB changes — so we inject the live
     course list at runtime and instruct the LLM to draw options from it.
+
+    For PURE FILLER (no semantic content — "??", "...", single emoji,
+    "hmm"), we skip the LLM entirely and return a fixed invitation. The
+    LLM would only paraphrase the same canned line back, at 1.4K input
+    tokens per call. A 13k-user fleet hits this thousands of times daily.
     """
+    from app.graph.intent_rules import _is_pure_filler
+    from langchain_core.messages import AIMessage
+    user_msg = state["messages"][-1].content
+    low = user_msg.lower().strip()
+
+    if _is_pure_filler(low):
+        if any(ord(c) > 127 for c in user_msg):
+            reply = "Ada yang bisa aku bantu? Boleh sebut topiknya ya."
+        else:
+            reply = "Anything I can help with? Feel free to name a topic."
+        return {"messages": [AIMessage(content=reply)]}
+
     course_names = await _load_course_names()
     # Cap injection so a 50-course KB doesn't blow up the prompt. The LLM only
     # picks 2-3 suggestions anyway — feeding 50 wastes tokens and gives no extra
