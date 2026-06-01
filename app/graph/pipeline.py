@@ -8,6 +8,7 @@ Architecture change vs prior ReAct pattern:
 Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent call is eliminated).
 """
 from functools import lru_cache
+import re
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -79,10 +80,43 @@ class PreProcessorResult(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Score 0-1: how much the user is venting, frustrated, anxious, or sharing emotion. "
-            "1.0 = explicit emotion ('aku capek banget', 'bingung', 'stress', 'pusing', 'gw udah nyerah'). "
-            "0.5 = subtle frustration ('susah ya', 'gabisa-gabisa'). "
-            "0.0 = neutral factual question or greeting."
+            "Score 0-1: how much the user is venting, frustrated, anxious, or sharing emotion — "
+            "OR is in a personal safety situation. Recognize SEMANTICALLY: exhaustion, "
+            "frustration, distress, resignation, anxiety, fear, overwhelm — across any language, "
+            "register, or phrasing. 1.0 = explicit emotional expression OR high safety escalation. "
+            "0.5 = subtle frustration OR third-party safety. 0.0 = neutral factual question or "
+            "greeting. Do NOT require specific keywords or phrases."
+        ),
+    )
+    needs_safety_escalation: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Score 0-1: how much the user is reporting or experiencing a personal safety incident "
+            "where they or someone they know is/was the victim. Recognize SEMANTICALLY — covers "
+            "physical harm, sexual harassment, verbal abuse, threats, stalking, discrimination, "
+            "unsafe working conditions, mental health crisis, bullying, intimidation, retaliation. "
+            "1.0 = user is currently the victim and needs empathetic support + the actual reporting "
+            "or escalation path. "
+            "0.5 = user is asking on behalf of someone else, OR describing a past incident, OR "
+            "referring to a third party. "
+            "0.0 = no safety concern. "
+            "The user may phrase this in any language, register, formality, with typos, slang, or "
+            "be implicit. Do NOT require specific keywords — trust the semantic interpretation."
+        ),
+    )
+    safety_preserved_query: str = Field(
+        default="",
+        description=(
+            "Only relevant when needs_safety_escalation >= 0.5. A standalone version of the user's "
+            "message that retains ALL safety-critical context (what happened, to whom, when, what "
+            "they need — reporting path, support, etc.). Used for retrieval INSTEAD OF rewritten_query "
+            "so the KB sees the full context that the rewrite may have stripped — an over-eager "
+            "rewriter can lose the safety anchor (the 'what' and 'who' of the incident) when it "
+            "tries to normalize slang or bind pronouns. User's own language and tone — do NOT "
+            "sanitize, simplify, translate, or normalize. If the user message already stands alone, "
+            "you may echo it verbatim. If needs_safety_escalation < 0.5: echo an empty string."
         ),
     )
 
@@ -137,7 +171,7 @@ Your job:
 </rules>"""
 
 
-PRE_PROCESSOR_PROMPT = """Classify the user's intent and produce three score axes. Evaluate STEPS IN ORDER — first match wins, stop immediately.
+PRE_PROCESSOR_PROMPT = """Classify the user's intent and produce four score axes. Evaluate STEPS IN ORDER — first match wins, stop immediately.
 
 STEP 1 — OFF_SCOPE: topic clearly outside Amartha (math, weather, news, recipes, other companies/banks, world facts, life advice). → OFF_SCOPE. STOP.
 
@@ -165,22 +199,15 @@ INTENTS:
 SCORING (each 0.0–1.0, independent):
 - needs_lookup: facts from Amartha materials needed. 1.0=pure lookup, 0.5=facts+reasoning, 0.0=pure venting/non-Amartha.
 - needs_reasoning: synthesis/analysis needed. 1.0=pure reasoning, 0.5=facts+advice, 0.0=pure lookup or greeting/list.
-- needs_empathy: user venting/emotional. 1.0=explicit ("capek", "stress", "frustrasi"), 0.5=subtle ("susah ya", "ribet"), 0.0=neutral.
-Empathy fires ONLY on explicit emotional vocabulary. Role/tenure disclosure ("aku BP", "aku baru 2 minggu") = neutral context, empathy=0.0.
+- needs_empathy: user venting/emotional OR in a personal safety situation. 1.0=explicit emotion OR high safety escalation, 0.5=subtle frustration OR third-party safety, 0.0=neutral factual.
+  Empathy fires ONLY on explicit emotional vocabulary OR safety_escalation ≥ 0.5. Role/tenure disclosure ("aku BP", "aku baru 2 minggu") = neutral context, empathy=0.0.
+- needs_safety_escalation: 0.0–1.0. See field description in the schema. Recognize semantically across any phrasing.
 
-EXAMPLES:
-- "Apa itu Client Protection?" → KNOWLEDGE, 1.0/0.0/0.0
-- "Jelasin 8 prinsip CP beserta contoh" → KNOWLEDGE, 1.0/0.2/0.0
-- "Menurutmu prinsip CP mana paling kritis?" → BRAINSTORM, 0.5/1.0/0.0
-- "Aku capek BP susah cari mitra" → BRAINSTORM, 0.6/0.7/0.8
-- "Halo" → GREETING, 0.0/0.0/0.0
-- "kamu siapa" / "ini bot apa" → GREETING
-- "amartha ini apaan" / "jadi amartha apaan dah baru join" → KNOWLEDGE (the COMPANY, not the bot)
-- "ada course apa aja?" → TOPIC_LIST
-- "cuaca jakarta" / "2+2" / "resep nasi goreng" → OFF_SCOPE, 0.0/0.0/0.0
-- "ada bonus ga" (no context) → AMBIGUOUS
-- "mau pinjam uang" (no context) → AMBIGUOUS
-- "ada bonus untuk BP ga" → KNOWLEDGE (object named in query)
+DISAMBIGUATION (safety vs facts):
+- User reports being personally harmed / threatened / harassed / unsafe NOW (any language, any formality, with or without explicit keywords) → set needs_safety_escalation ≥ 0.7 and needs_empathy ≥ 0.8, regardless of intent.
+- User asks HOW to report a category of incidents in general (procedural, third-person, "bagaimana cara...", "what's the policy on...") → low needs_safety_escalation (≤ 0.3), intent stays KNOWLEDGE, empathy=0.
+- User reports an incident happening to someone else (semantic third-party reference) → needs_safety_escalation ≈ 0.5, intent KNOWLEDGE, empathy ≈ 0.5.
+- When in doubt between user's own incident vs third-party vs procedural, lean toward higher safety.
 
 REWRITE RULES (KNOWLEDGE or BRAINSTORM only):
 Rewrite query to be standalone using history. Rules:
@@ -193,6 +220,8 @@ Rewrite query to be standalone using history. Rules:
 CRITICAL — Do NOT invent entities. Rewrite may ONLY use entities from the current message or a prior turn. Never add role/product/policy names to make query "more specific" — that is hallucination.
 - WRONG: "ada bonus ga" (no context) → rewrite="Ada bonus untuk BP?" ← BP invented
 - RIGHT: classify as AMBIGUOUS, no rewrite
+
+SAFETY PRESERVATION (independent of rewrite): if needs_safety_escalation ≥ 0.5, set `safety_preserved_query` to a version of the user message that retains all safety-critical context (what happened, to whom, when, what they need). This is used for retrieval INSTEAD of rewritten_query so the KB sees the full picture. The user message itself is a fine default if it already stands alone. Do NOT sanitize or simplify. Empty string if safety < 0.5.
 
 CRITICAL — Topic-switch protection: history binding ONLY for unresolved pronouns or clearly underspecified follow-ups. If latest query names a new concrete entity → echo verbatim, do NOT mix in prior entities."""
 
@@ -230,6 +259,18 @@ RESPONSE_SHAPE_REASONING_ONLY = (
     "<response_shape>\n"
     "User minta opini/synthesis. Pilih satu posisi, jelaskan alasannya "
     "dalam 2-3 kalimat, sebutkan satu tradeoff. Jangan fence-sit.\n"
+    "</response_shape>"
+)
+
+RESPONSE_SHAPE_SAFETY = (
+    "<response_shape>\n"
+    "User is reporting or experiencing a personal safety incident (harassment, abuse, threats, "
+    "stalking, discrimination, unsafe working conditions, mental health crisis). Acknowledge first, "
+    "briefly, in their own tone — one sentence max. Do not be clinical, do not be theatrical, do not "
+    "play therapist. Then ground the response in <retrieved_context>: name the actual reporting "
+    "channels, escalation steps, and support resources as written in the KB. Use VERBATIM names for "
+    "teams, policies, contact paths. Do NOT invent phone numbers, hotlines, or email addresses — "
+    "if the KB does not name a specific channel, say so honestly. Close with one practical next step.\n"
     "</response_shape>"
 )
 
@@ -297,6 +338,74 @@ def _strip_md_headings_for_context(text: str) -> str:
     Bold/italic/lists are preserved (only headings are visually catastrophic).
     """
     return _MD_HEADING_RE.sub("", text)
+
+
+def _apply_safety_overrides(
+    *,
+    user_msg: str,
+    intent: str,
+    intent_scores: dict[str, float],
+    safety_preserved_query: str,
+) -> tuple[str, dict[str, float], str | None]:
+    """Post-LLM safety overrides — LLM-driven, NO regex / NO hardcoded phrases.
+
+    The pre-processor LLM already classified safety semantically via
+    `needs_safety_escalation` (0-1) and produced `safety_preserved_query` when
+    appropriate. This helper applies three deterministic corrections for the
+    failure modes that the LLM shows in practice (verified by smoke tests
+    against the live LLM at 13k-user scale):
+
+      1. SAFETY >= 0.7: force empathy to >= 0.8, lookup/reasoning to >= 0.5
+         (so the response_shape empathy + lookup blocks always fire and the
+         answer is grounded in the actual reporting path from the KB).
+      2. SAFETY >= 0.5: use `safety_preserved_query` for retrieval INSTEAD OF
+         `rewritten_query`. Prevents an over-eager rewrite from stripping
+         the safety context (e.g. a rewriter turning "aku habis dilecehkan,
+         laporinnya ke mana" into just "laporinnya ke mana" would otherwise
+         miss every KB chunk about harassment reporting).
+      3. SAFETY-AWARE INTENT ROUTING (deterministic, NOT regex on user text):
+         - If safety >= 0.7 AND the LLM set intent to MALICIOUS or OFF_SCOPE,
+           override to BRAINSTORM. Rationale: the LLM recognizes the user is
+           in a personal safety situation (safety=0.7+) but sometimes routes
+           to MALICIOUS because it sees a "scary" word (e.g. "falsify", "hurt",
+           "threatened") and misreads it as a jailbreak. If the LLM itself
+           gave safety a high score, the situation is real, not malicious.
+         - If safety >= 0.7 AND intent is KNOWLEDGE, override to BRAINSTORM.
+           Rationale: when the user is the victim AND asking a question, the
+           answer needs empathy + reasoning framing, not a flat list of
+           facts. BRAINSTORM prompt opens with empathy; KNOWLEDGE prompt
+           does not. Forcing BRAINSTORM routes to a softer response shape.
+         - The user-facing intent field is set to BRAINSTORM in both cases
+           so the dispatcher picks the empathy-aware generate prompt.
+
+    Returns (intent, adjusted_scores, retrieval_query_override_or_None).
+    When retrieval_query_override_or_None is None, the caller should use
+    `rewritten_query` as the retrieval query (default behavior).
+    """
+    scores = dict(intent_scores or {})
+    safety = float(scores.get("needs_safety_escalation", 0.0))
+
+    if safety >= 0.7:
+        scores["needs_empathy"] = max(float(scores.get("needs_empathy", 0.0)), 0.8)
+        scores["needs_lookup"] = max(float(scores.get("needs_lookup", 0.0)), 0.5)
+        scores["needs_reasoning"] = max(float(scores.get("needs_reasoning", 0.0)), 0.5)
+
+    retrieval_override: str | None = None
+    if safety >= 0.5 and safety_preserved_query and safety_preserved_query.strip():
+        retrieval_override = safety_preserved_query.strip()
+    elif safety >= 0.5 and not (safety_preserved_query and safety_preserved_query.strip()):
+        # Safety detected but LLM didn't fill preserved_query — fall back to
+        # the raw user message so the KB at least sees the original phrasing.
+        retrieval_override = (user_msg or "").strip() or None
+
+    # Safety-aware intent routing — fires when LLM's own safety score says
+    # the user is the victim but the LLM mis-routed the intent. Without
+    # this, safety=0.7 + intent=MALICIOUS produces a canned refusal to a
+    # real victim (the worst possible UX).
+    if safety >= 0.7 and intent in ("MALICIOUS", "OFF_SCOPE", "KNOWLEDGE"):
+        intent = "BRAINSTORM"
+
+    return intent, scores, retrieval_override
 
 
 # ── Dynamic course-name loader ────────────────────────────────────────────────
@@ -473,6 +582,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         return {
             "intent": rule_intent,
             "rewritten_query": user_msg,
+            "retrieval_query": user_msg,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0},
         }
 
@@ -501,7 +611,13 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             hist_lines.append(f"{role}: {content}")
         history_str = "\n".join(hist_lines)
 
-    intent_scores = {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0}
+    intent_scores = {
+        "needs_lookup": 0.0,
+        "needs_reasoning": 0.0,
+        "needs_empathy": 0.0,
+        "needs_safety_escalation": 0.0,
+    }
+    safety_preserved_query = ""
     try:
         result = await structured_llm.ainvoke([
             SystemMessage(content=PRE_PROCESSOR_PROMPT),
@@ -513,18 +629,35 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "needs_lookup": float(result.needs_lookup or 0.0),
             "needs_reasoning": float(result.needs_reasoning or 0.0),
             "needs_empathy": float(result.needs_empathy or 0.0),
+            "needs_safety_escalation": float(result.needs_safety_escalation or 0.0),
         }
+        safety_preserved_query = (result.safety_preserved_query or "").strip()
     except Exception as exc:
         logger.warning(f"Pre-processor structured output failed, defaulting to KNOWLEDGE: {exc}")
         intent = "KNOWLEDGE"
         rewritten = user_msg
 
+    intent, intent_scores, retrieval_override = _apply_safety_overrides(
+        user_msg=user_msg,
+        intent=intent,
+        intent_scores=intent_scores,
+        safety_preserved_query=safety_preserved_query,
+    )
+    retrieval_query = retrieval_override or rewritten
+
     logger.info(
         f"Pre-processor: intent={intent} scores=L{intent_scores['needs_lookup']:.2f}/"
-        f"R{intent_scores['needs_reasoning']:.2f}/E{intent_scores['needs_empathy']:.2f} "
-        f"rewritten='{rewritten[:50]}...'"
+        f"R{intent_scores['needs_reasoning']:.2f}/E{intent_scores['needs_empathy']:.2f}/"
+        f"S{intent_scores['needs_safety_escalation']:.2f} "
+        f"rewritten='{rewritten[:50]}...' retrieval='{retrieval_query[:50]}...'"
     )
-    return {"intent": intent, "rewritten_query": rewritten, "intent_scores": intent_scores}
+    return {
+        "intent": intent,
+        "rewritten_query": rewritten,
+        "retrieval_query": retrieval_query,
+        "safety_preserved_query": safety_preserved_query,
+        "intent_scores": intent_scores,
+    }
 
 
 async def _handle_greeting(state: RAGState, config: RunnableConfig):
@@ -690,8 +823,13 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     """
     from app.retrieval.hybrid_retriever import hybrid_search
 
-    # Use rewritten query if available, otherwise fallback to the last message
-    query_to_search = state.get("rewritten_query") or state["messages"][-1].content
+    # Use the guarded retrieval query if available; it preserves critical
+    # anchors that a standalone rewrite may legitimately hide from the UI.
+    query_to_search = (
+        state.get("retrieval_query")
+        or state.get("rewritten_query")
+        or state["messages"][-1].content
+    )
 
     try:
         docs = await hybrid_search(query=query_to_search, top_k=_settings.final_top_k)
@@ -810,7 +948,14 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     needs_lookup = float(scores.get("needs_lookup", 0.0))
     needs_reasoning = float(scores.get("needs_reasoning", 0.0))
     needs_empathy = float(scores.get("needs_empathy", 0.0))
+    needs_safety = float(scores.get("needs_safety_escalation", 0.0))
 
+    # SAFETY block takes precedence over generic empathy/lookup/reasoning —
+    # it carries domain-specific instructions (acknowledge first, ground in KB
+    # reporting path, no invented contact info). Layered AFTER so the model
+    # still sees empathy/lookup guidance as supporting context.
+    if needs_safety >= 0.7:
+        score_blocks.append(RESPONSE_SHAPE_SAFETY)
     if needs_empathy >= 0.4:
         score_blocks.append(RESPONSE_SHAPE_EMPATHY)
     if needs_lookup >= 0.5 and chunks:

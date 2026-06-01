@@ -101,6 +101,8 @@ async def run_one_query(
         "intent": final_result.get("intent"),
         "intent_scores": final_result.get("intent_scores") or {},
         "rewritten_query": final_result.get("rewritten_query"),
+        "retrieval_query": final_result.get("retrieval_query"),
+        "safety_preserved_query": final_result.get("safety_preserved_query"),
         "latency_ms": round(final_latency_ms, 2),
     }
 
