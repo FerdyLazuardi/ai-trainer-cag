@@ -127,7 +127,19 @@ Your job:
 2. VERBATIM NAMES still apply — Amartha's product/principle names must be copied exactly from <retrieved_context>. Never invent a CGAP-flavored name.
 3. Don't fabricate Amartha-specific facts (numbers, policies, role responsibilities). If the context doesn't say it, don't claim it as Amartha policy. You can still reason hypothetically: "Kalau aku jadi kamu, aku mungkin coba X — tapi cek lagi sama supervisor karena materi yang ku-pegang nggak detail soal itu."
 4. End on substance — a suggestion, a question that helps them think, or a clear position. No "semoga membantu".
-</rules>"""
+</rules>
+
+<reference_examples>
+These illustrate the BRAINSTORM mode — the user is thinking out loud, not asking a factual question. The model is expected to engage, empathise briefly, then reason.
+
+Example A: "aku stress banget akhir2 ini, gabisa tidur" → 1 short empathy clause, then practical 2-3 step suggestion (doc, talk to supervisor, rest). Don't ask the user to keep talking.
+
+Example B: "gimana kalau aku ngomong langsung ke supervisor tentang X?" → Engage with the scenario. Suggest a concrete approach, mention 1 trade-off, end with one specific next step.
+
+Example C: "menurut kamu, lebih baik A atau B untuk situasi X?" → Pick a side. State the choice + 1-sentence reasoning. Note 1 trade-off. Don't fence-sit.
+
+Example D: "aku bingung antara lanjutin kerja di sini atau resign" → Acknowledge the weight of the decision. Suggest 1-2 concrete considerations. End with a question that helps the user think, not a directive.
+</reference_examples>"""
 
 
 PRE_PROCESSOR_PROMPT = """Classify intent + score 4 axes. Recognize all semantics across any language/register — never require specific keywords.
@@ -162,7 +174,84 @@ REWRITE (KNOWLEDGE/BRAINSTORM only):
 - Use prior AI turns ONLY for literal entity names (course/product/principle names the AI listed). NEVER copy AI prose.
 - Latest names a new concrete topic → echo verbatim (TOPIC SWITCH).
 - NEVER invent entities. "ada bonus ga" (no context) → classify as AMBIGUOUS, no rewrite. False bind > missed bind.
-- History binding ONLY for unresolved pronouns or underspecified follow-ups. New topic → echo verbatim."""
+- History binding ONLY for unresolved pronouns or underspecified follow-ups. New topic → echo verbatim.
+
+# ENTITY GLOSSARY (Amartha-specific terms — use verbatim in rewrites/retrieval)
+
+PRODUCTS:
+- Modal: micro-loan product for borrowers (umkm/micro-entrepreneurs). Features: weekly repayment, group-liability model in some segments.
+- Simpanan: mandatory savings product, weekly deposits alongside loan repayment.
+- Pinjaman: generic term for loans. Modal is the specific product name.
+- AmarthaPay: digital wallet for disbursement + repayment.
+
+TEAMS / ROLES:
+- People Care: internal HR support, handles grievances (non-safety).
+- People Operations: HR operations (payroll, benefits, onboarding).
+- Risk: credit risk team, evaluates borrower creditworthiness.
+- Branch Manager: leads a branch office.
+- Field Officer (FO): on-the-ground staff visiting borrowers.
+- Branch Office (BO): local Amartha office.
+
+POLICIES / FRAMEWORKS:
+- Client Protection: principles ensuring fair treatment of borrowers (transparency, fair collection, data privacy, grievance mechanism).
+- Code of Conduct: employee behavior standards (conflict of interest, confidentiality, integrity).
+- Grievance Redress: mechanism for borrowers to file complaints.
+
+GENERAL CHANNELS:
+- peoplecare@amartha.com: email for general HR / employee support questions.
+- Hotline 0800-1234-5678: phone line for borrower complaints.
+
+COMMON ABBREVIATIONS:
+- NPL: Non-Performing Loan.
+- KYC: Know Your Customer.
+- AML: Anti-Money Laundering.
+- UMKM: Usaha Mikro, Kecil, dan Menengah (Indonesian: micro, small, medium enterprises).
+- BO: Branch Office.
+- FO: Field Officer.
+- HC: Headcount (employee count).
+- HCMS: Human Capital Management System.
+
+# CLASSIFICATION EXAMPLES (each shows intent + safety + empathy reasoning)
+
+Example 1 — Procedural 3rd-person:
+Q: "Bagaimana cara melaporkan kasus X di Amartha?" (How to report case X at Amartha?)
+→ intent=KNOWLEDGE, safety≤0.3, empathy=0.0
+REASONING: "cara melaporkan" = "how to report" = procedural question. The user is asking ABOUT the reporting process, not reporting a personal experience. 3rd-person framing. → KNOWLEDGE, low safety.
+
+Example 2 — Procedural in English:
+Q: "What is the procedure for filing a workplace complaint?"
+→ intent=KNOWLEDGE, safety≤0.3, empathy=0.0
+REASONING: "procedure for filing" = procedural. The user is asking ABOUT the process, not filing one. → KNOWLEDGE, low safety.
+
+Example 3 — General knowledge query:
+Q: "Apa itu Client Protection?" (What is Client Protection?)
+→ intent=KNOWLEDGE, safety=0.0, empathy=0.0
+REASONING: factual lookup about an Amartha framework. No safety/emotion involved. → KNOWLEDGE, all zero.
+
+Example 4 — 1st-person harm report (in any language/register, with or without typos):
+Q: "[1st-person present-tense statement about being personally harmed/threatened/harassed by someone, in any language, with or without slang/typos — e.g. 'aku baru aja [HARM_TERM_IN_USER_LANGUAGE] sama [PERSON], tolong'"
+→ intent=BRAINSTORM, safety≥0.7, empathy≥0.8
+REASONING: 1st-person present-tense report of being personally harmed. Even with colloquial phrasing / typos / no explicit safety keywords, this is a personal experience, NOT a procedural question. The framing (1st-person + present-tense + direct address) is the signal, not specific words. → BRAINSTORM, high safety + high empathy.
+
+Example 5 — 3rd-party report:
+Q: "Rekan kerja saya mengalami [adverse event] sama supervisor, dia harus lapor kemana?" (My colleague experienced [adverse event] by supervisor, where should they report?)
+→ intent=KNOWLEDGE, safety=0.5, empathy=0.5
+REASONING: 3rd-person (orang lain = someone else). User is asking on behalf of someone. → KNOWLEDGE, mid safety + mid empathy.
+
+Example 6 — Brainstorm / vent:
+Q: "[1st-person expression of emotional distress, no concrete topic — e.g. 'aku [EMOTION_WORD] banget akhir2 ini, [RELATED_SYMPTOM]'"
+→ intent=BRAINSTORM, safety=0.0, empathy=1.0
+REASONING: explicit emotional content, no concrete topic. User wants empathy + practical help. The signal is the emotional language, not specific words. → BRAINSTORM, high empathy, no safety.
+
+Example 7 — Topical follow-up with pronoun reference:
+Q: "kalau yang itu prosedurnya gimana?" (how about the procedure for that one?)
+→ intent=KNOWLEDGE, safety depends on prior turn, empathy=0.0
+REASONING: follow-up using pronoun reference. History anchor resolves "yang itu" to a prior topic. → KNOWLEDGE with PROPER history binding.
+
+Example 8 — Topic switch:
+Q: "oke, trs soal [NEW_TOPIC] gimana?" (ok, what about [NEW_TOPIC]?)
+→ intent=KNOWLEDGE, rewrite=verbatim NEW_TOPIC (drop the prior anchor)
+REASONING: latest names a new concrete topic. Even if it echoes a word from prior context, the framing indicates a new question. → KNOWLEDGE, rewrite = NEW_TOPIC verbatim."""
 
 
 # ─── Score-driven response-shape blocks ──────────────────────────────────────
@@ -563,8 +652,18 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     }
     safety_preserved_query = ""
     try:
+        # Wrap the static PRE_PROCESSOR_PROMPT in a cache_control content
+        # block so OpenRouter caches it across calls. TTL=1h instead of the
+        # default 5-min ephemeral — same user often returns to the same
+        # conversation within the hour, and 1h writes cost ~2x the 5-min
+        # write but amortize over many more reads. The dynamic history +
+        # query go in a user message (Gemini treats systemInstruction as
+        # immutable once cached — see OpenRouter prompt-caching docs).
         result = await structured_llm.ainvoke([
-            SystemMessage(content=PRE_PROCESSOR_PROMPT),
+            SystemMessage(content=[
+                {"type": "text", "text": PRE_PROCESSOR_PROMPT,
+                 "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+            ]),
             HumanMessage(content=f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {user_msg}")
         ], config=config)
         intent = result.intent
@@ -991,8 +1090,13 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # per query). The AMBIGUITY handler still injects a capped list because
     # IT needs to suggest topics; generate does not.
 
-    full_system = (
-        f"{base_prompt}"
+    # Static prefix (cached via cache_control) vs dynamic per-turn tail.
+    # OpenRouter charges cache_read at 25% of input price for Gemini, so
+    # isolating the static persona + base prompt in a cache breakpoint
+    # brings the 2nd+ call's effective cost down by ~50% on the cached
+    # portion (~1500 tokens).
+    static_prefix = base_prompt
+    dynamic_tail = (
         f"{score_block_str}"
         f"{pref_section}"
         f"{ltm_section}"
@@ -1010,7 +1114,24 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         max_fresh_turns=_settings.max_fresh_turns,
         max_ai_chars=_settings.max_history_ai_chars,
     )
-    messages = [SystemMessage(content=full_system)] + windowed_messages
+    # System message: static prefix wrapped in a content block with
+    # cache_control so OpenRouter routes the 2nd+ call to the same
+    # provider + serves the prefix from cache. TTL=1h — same user often
+    # returns to the same conversation within the hour. Per OpenRouter
+    # docs, the dynamic tail MUST live in a later user message (Gemini
+    # treats systemInstruction as immutable once cached).
+    system_msg = SystemMessage(content=[
+        {"type": "text", "text": static_prefix,
+         "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+    ])
+    # Inject the dynamic tail as the FIRST user message so the LLM sees it
+    # right after the system prompt, but it's excluded from the cache.
+    # The actual user query is the last message in windowed_messages.
+    dynamic_intro = HumanMessage(content=(
+        f"[Per-turn context — not cached, regenerated each turn]\n"
+        f"{dynamic_tail.strip()}"
+    ))
+    messages = [system_msg, dynamic_intro] + windowed_messages
     response = await llm.ainvoke(messages, config=config)
 
     # Defensive net — strip any leaked <retrieved_context>/<user_history>/etc.
