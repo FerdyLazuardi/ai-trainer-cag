@@ -43,38 +43,47 @@ _MATH_OP_RE = re.compile(r"\b\d+\s*[+\-*x×/÷]\s*\d+\b")
 # ── Rule 3: off-Amartha topical keywords ─────────────────────────────────────
 # Words that are unambiguously about NON-Amartha topics. Each entry is a
 # whole-word match (space-padded) to avoid catching substrings of legitimate
-# Amartha terms ("modal" must NOT match "modal usaha").
+# Amartha terms.
+#
+# CRITICAL — keep this list to terms that are NEVER part of a legitimate
+# Amartha question. Do NOT add bank/e-wallet/competitor names, "mandiri"
+# (= Indonesian "independent", core to Amartha's mission), "menteri" (govt
+# partnerships are in-scope), or "masak" (slang "really?!"). Those produce
+# false OFF_SCOPE blocks on real questions like "apakah Amartha kerja sama
+# BRI", "cara jadi mitra mandiri", "integrasi gopay". Genuine competitor
+# questions ("bunga deposito BCA") are still caught by the LLM classifier's
+# STEP 1 — which, unlike this regex, can tell an in-scope partnership question
+# from an off-scope one.
 _OFF_SCOPE_KEYWORDS = (
     # Weather
-    "cuaca", "weather", "hujan deras", "panas banget hari ini",
+    "cuaca", "weather", "hujan deras",
     # News / current affairs
-    "berita terkini", "berita hari ini", "headline", "breaking news",
+    "berita terkini", "berita hari ini", "headline berita", "breaking news",
     # Food / recipes
-    "resep", "recipe", "masak", "menu makan", "restoran",
+    "resep", "recipe", "menu makan", "restoran",
     # Sports
-    "skor bola", "pertandingan", "liga inggris", "premier league", "world cup",
-    # Politics / world facts
-    "siapa presiden", "ibu kota negara", "presiden indonesia",
-    "menteri keuangan", "menteri",
-    # Other companies / banks (non-Amartha)
-    "bca", "mandiri", "bri ", "bni ", "gopay", "ovo", "dana app",
-    "shopeepay", "tokopedia", "shopee", "grab", "gojek",
+    "skor bola", "liga inggris", "premier league", "world cup", "piala dunia",
+    # Politics / world facts (national leaders — never an Amartha topic)
+    "siapa presiden", "presiden indonesia", "ibu kota negara",
     # Celebrity / entertainment
-    "artis", "selebriti", "selebgram",
+    "selebriti", "selebgram", "gosip artis",
 )
 
 # ── Rule 4: bot-identity / app-purpose questions ─────────────────────────────
 # Exact-ish matches for "what/who is this" addressed to the bot/app.
-# Casual variants covered. Length-bounded to avoid catching long sentences
-# that just happen to contain "siapa".
+# CRITICAL: every phrase MUST anchor to an explicit bot/app reference
+# (kamu/lu/lo/apps/bot/aplikasi/who-are-you). Do NOT add bare phrases like
+# "ini apa" or "what is this" — those are greedy and wrongly swallow legitimate
+# topic lookups ("modal ini apa", "celengan ini apa", "BP ini apa sih"), routing
+# them to a self-introduction instead of an answer. Anything genuinely
+# ambiguous ("ini apa?" alone) must fall through to the LLM, which has context.
 _IDENTITY_PHRASES = (
-    # ID
-    "kamu siapa", "lu siapa", "lo siapa", "elu siapa",
-    "ini apa", "ini apps apa", "ini apps buat apa", "ini bot apa",
-    "kamu bot apa", "kamu apa sih", "lu apa sih",
-    "siapa kamu", "perkenalkan diri",
+    # ID — anchored to bot/app reference
+    "kamu siapa", "lu siapa", "lo siapa", "elu siapa", "siapa kamu",
+    "ini apps apa", "ini apps buat apa", "ini aplikasi apa", "ini bot apa",
+    "kamu bot apa", "kamu apa sih", "lu apa sih", "perkenalkan diri",
     # EN
-    "who are you", "what are you", "what is this", "what is this app",
+    "who are you", "what are you", "what is this app",
     "what is this bot", "introduce yourself",
 )
 
@@ -86,6 +95,20 @@ _GREETING_PREFIXES = (
     "good morning", "good afternoon", "good evening",
     "selamat", "test ", "test,", "test.",
 )
+
+# Greeting/filler tokens used to decide whether a message is a PURE greeting or
+# a greeting that PREFIXES a real question ("pagi, modal itu apa"). Only the
+# former should short-circuit to GREETING; the latter must reach the LLM so the
+# actual question gets answered.
+_GREETING_WORDS = {
+    "halo", "hai", "hi", "hey", "hello", "pagi", "siang", "sore", "malam",
+    "selamat", "datang", "test", "good", "morning", "afternoon", "evening",
+}
+# Conversational fluff that may trail a greeting without making it a question.
+_GREETING_FLUFF = {
+    "ya", "yaa", "dong", "donk", "kak", "ka", "min", "bang", "gan", "ges",
+    "gaes", "nih", "ni", "aja", "deh", "sih", "kok", "aku", "saya", "gw", "gue",
+}
 
 
 # ── Company-name guard ───────────────────────────────────────────────────────
@@ -158,10 +181,20 @@ def _is_identity_question(low: str) -> bool:
 
 
 def _is_greeting(low: str) -> bool:
-    """Short message that begins with a greeting prefix."""
+    """PURE greeting only — fires when the whole message is just salutation
+    (+ optional conversational fluff). A greeting that PREFIXES a real question
+    ("pagi, modal itu apa", "hi gimana cara daftar") must NOT short-circuit; it
+    falls through to the LLM so the actual question gets answered.
+    """
     if len(low) > 40:
         return False
-    return any(low.startswith(p) for p in _GREETING_PREFIXES)
+    if not any(low.startswith(p) for p in _GREETING_PREFIXES):
+        return False
+    # Tokenize, strip punctuation, and check every token is a greeting word or
+    # harmless fluff. Any "real" token (a topic/question word) → not pure → LLM.
+    tokens = re.findall(r"[a-zA-ZÀ-ſ]+", low)
+    leftover = [t for t in tokens if t not in _GREETING_WORDS and t not in _GREETING_FLUFF]
+    return len(leftover) == 0
 
 
 def classify(text: str) -> Optional[Intent]:
