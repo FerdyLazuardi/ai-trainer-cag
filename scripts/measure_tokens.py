@@ -23,7 +23,7 @@ from app.graph.pipeline import (
     RESPONSE_SHAPE_REASONING_WITH_LOOKUP,
 )
 from app.graph.intent_rules import classify as rule_classify
-from app.llm.client import get_llm
+from app.llm.client import get_llm, get_preprocessor_llm, get_generate_llm
 from app.config.settings import get_settings
 
 settings = get_settings()
@@ -35,7 +35,7 @@ async def measure_preproc(query: str, history=None) -> dict:
     history_str = "\n".join(f"User: {h}" if i % 2 == 0 else f"AI: {h}" for i, h in enumerate(history))
     user_msg_str = f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {query}"
 
-    llm = get_llm()
+    llm = get_preprocessor_llm()
     from app.graph.pipeline import PreProcessorResult
     structured = llm.with_structured_output(PreProcessorResult)
 
@@ -109,7 +109,7 @@ async def measure_generate(query: str, intent: str, chunks: list, history=None) 
             messages.append(HumanMessage(content=h[1]))
     messages.append(HumanMessage(content=query))
 
-    llm = get_llm()
+    llm = get_generate_llm()
     t0 = time.time()
     try:
         result = await llm.ainvoke(messages)
@@ -162,7 +162,7 @@ async def main():
             scores = r.get("scores", {})
             in_t = r.get("input_tokens", 0)
             out_t = r.get("output_tokens", 0)
-            cost = in_t / 1e6 * 0.30 + out_t / 1e6 * 2.50
+            cost = in_t / 1e6 * 0.075 + out_t / 1e6 * 0.30  # flash-lite
             print(f"  [{label:42s}] rule={rule!s:12s} -> {intent:12s} | "
                   f"L={scores.get('L', 0):.2f} R={scores.get('R', 0):.2f} "
                   f"E={scores.get('E', 0):.2f} S={scores.get('S', 0):.2f} | "
@@ -181,8 +181,8 @@ async def main():
         else:
             in_t = r.get("input_tokens") or 0
             out_t = r.get("output_tokens") or 0
-            cost_in = in_t / 1_000_000 * 0.30  # gemini-2.5-flash input cost
-            cost_out = out_t / 1_000_000 * 2.50
+            cost_in = in_t / 1_000_000 * 0.075  # flash-lite input cost
+            cost_out = out_t / 1_000_000 * 0.30  # flash-lite output cost
             cost_total = cost_in + cost_out
             print(f"  [{label:42s}] {in_t:>5} in + {out_t:>4} out = {in_t+out_t:>5} t | "
                   f"${cost_total:.6f}/call | {r['duration_s']:.1f}s")

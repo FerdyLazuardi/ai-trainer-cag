@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.config.settings import get_settings
 from app.graph.state import RAGState
-from app.llm.client import get_llm, get_preprocessor_llm
+from app.llm.client import get_llm, get_preprocessor_llm, get_generate_llm
 from app.llm.prompts import PERSONA, OUTPUT_CONTRACT
 from app.utils.token_counter import truncate_to_tokens
 
@@ -525,7 +525,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0},
         }
 
-    llm = get_llm()
+    llm = get_preprocessor_llm()
     structured_llm = llm.with_structured_output(PreProcessorResult)
 
     messages = state["messages"]
@@ -615,7 +615,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
         ask about training topics. The LLM picks the shape from the user's
         message.
     """
-    llm = get_llm()
+    llm = get_generate_llm()
     greet_sys = f"{PERSONA}\n" + GREETING_MODE_RULES
     response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
     return {"messages": [response]}
@@ -656,7 +656,7 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
             "topics, products, or roles."
         )
 
-    llm = get_llm()
+    llm = get_generate_llm()
     ambiguity_sys = (
         f"{PERSONA}\n"
         + AMBIGUITY_MODE_RULES.replace("{topics_rule}", topics_rule)
@@ -1000,7 +1000,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"
     )
 
-    llm = get_llm()
+    llm = get_generate_llm()
     # Window the raw turn history fed to the LLM. Older turns are already
     # captured by <previous_context> (the rolling summary), so attaching the
     # full turn list on top is redundant tokens. Keep the last N completed
