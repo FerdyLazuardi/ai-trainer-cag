@@ -111,13 +111,6 @@ _GREETING_FLUFF = {
 }
 
 
-# ── Company-name guard ───────────────────────────────────────────────────────
-# Standalone "amartha" = the COMPANY (a KB topic), not the assistant. Word
-# boundaries ensure this matches "amartha" but NOT "amarthapedia" (the LMS) or
-# "a-pedi" (the bot) — those remain assistant-identity references.
-_COMPANY_REF_RE = re.compile(r"\bamartha\b", re.IGNORECASE)
-
-
 def _is_pure_filler(low: str) -> bool:
     """Filler = no semantic content. '??', '...', single emoji, single word
     that is not a topic name (we conservatively only fire on punctuation/
@@ -166,16 +159,12 @@ def _is_identity_question(low: str) -> bool:
     """Bot-identity / app-purpose question. Length-bounded so 'siapa target
     pelanggan Modal' doesn't trigger.
 
-    Guard: if the user names the COMPANY "amartha" (standalone word), it's a
-    factual lookup about the company — NOT a question about the assistant.
-    Without this, greedy phrases like "ini apa" wrongly catch "amartha ini
-    apaan" (the company) and route it to GREETING instead of KNOWLEDGE.
-    `\\bamartha\\b` matches the company word but NOT "amarthapedia"/"a-pedi"
-    (the assistant), since there's no word boundary inside "amarthapedia".
+    Every phrase in _IDENTITY_PHRASES is anchored to an explicit bot/app
+    reference (kamu/lu/apps/bot/who-are-you), so topic lookups like "modal ini
+    apa" or "amartha ini apaan" do NOT match here — no company-name guard
+    needed. Anything genuinely ambiguous falls through to the LLM.
     """
     if len(low) > 60:
-        return False
-    if _COMPANY_REF_RE.search(low):
         return False
     return any(p in low for p in _IDENTITY_PHRASES)
 
