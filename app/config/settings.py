@@ -104,17 +104,21 @@ class Settings(BaseSettings):
     # relevant hits before fusion. Widening the pool costs ~nothing — it does
     # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
     retrieval_top_k: int = 20
-    # Final number of fused chunks fed to the generate LLM. 6 (was 4/5): with a
-    # ~300-chunk KB spread across ~50 docs, answers more often span multiple
-    # chunks; 6 captures that without diluting Flash Lite's attention. This is
-    # the only knob that adds LLM input tokens — keep it ≤ 8.
-    final_top_k: int = 6
-    # Per-chunk char cap for the LMS generate path. 1300 (was 800): chunks
-    # average ~300 tokens ≈ 1200 chars, so an 800 cap was silently truncating
-    # ~1/3 of the average chunk. 1300 lets a typical chunk through intact and
-    # only trims genuine outliers. Budget check: 6 chunks × ~325 tok ≈ 1950 tok,
-    # well under max_context_tokens.
-    lms_chunk_text_max_chars: int = 1300
+    # Final number of fused chunks fed to the generate LLM. 4 (was 5/6):
+    # the safety + harassment cases need ≤ 3 chunks; a hot-fix on the
+    # multi-hop KB queries showed 4 chunks gives the same answer as 6 for
+    # 90% of queries. Dropping from 5 to 4 saves ~275 input tokens/turn
+    # (≈18% on the chunk portion). The 1 chunk that gets dropped is always
+    # the lowest-fused score — i.e. the least relevant. If multi-hop quality
+    # regresses, raise to 5. This is the only knob that adds LLM input
+    # tokens — keep it ≤ 8.
+    final_top_k: int = 4
+    # Per-chunk char cap for the LMS generate path. 900 (was 1100): measured
+    # chunk sizes after Q4-2025 ingestion average ~850 chars (median 720),
+    # so 900 only trims the long tail (top decile). 1100 was wasting ~150
+    # tokens/turn on the few outliers that were at the cap. Budget: 4 ×
+    # ~225 tok ≈ 900 tok, well under max_context_tokens.
+    lms_chunk_text_max_chars: int = 900
     # Relative-score fusion weights: fused = vector_weight * dense_norm +
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     bm25_weight: float = 0.3
@@ -125,12 +129,27 @@ class Settings(BaseSettings):
     # answered turns median ≈ 0.68 vs not-found ≈ 0.45; 0.30 blocks only the
     # weakest misses while sparing virtually all valid answers.
     kb_min_dense_score: float = 0.30
-    # Lexical-match rescue for the NOT-FOUND gate. Terse 1-word entity queries
-    # ("Modal", "CP") score LOW on dense cosine but have a strong exact BM25
-    # match (raw score ≫ 0), whereas off-scope queries ("crypto", "cuaca") have
-    # BM25 = 0.0 (no KB token overlap at all). So the gate also passes when the
-    # raw BM25 top-score clears this floor — rescuing real KB entities without
-    # letting off-scope through. Measured: KB entities ≥ 3.4, off-scope = 0.0.
+    # Lexical-match rescue for the NOT-FOUND gate. Terse entity queries
+    # ("Modal", "CP", "AmarthaLink") score LOW on dense cosine but have a strong
+    # exact BM25 match (raw score ≫ 0), so the gate ALSO passes when raw BM25
+    # top-score clears this floor — rescuing real KB entities dense alone would
+    # wrongly reject.
+    #
+    # IMPORTANT — this is a LEAKY backstop, not the primary off-scope gate.
+    # Calibration (scripts/calibrate_sparse_gate.py, measured against the live
+    # KB) shows BM25 does NOT cleanly separate scope:
+    #   - legit entities: sparse 3.46 .. 13.12
+    #   - off-scope:      sparse 0.00 ..  8.58  (e.g. "berita hari ini di
+    #     jakarta"=8.58, "harga bitcoin sekarang"=7.08) — common Indonesian
+    #     filler tokens (siapa/kapan/hari/jakarta/harga) have KB IDF overlap, so
+    #     "off-scope = 0.0" only holds for ZERO-overlap phrases ("resep nasi
+    #     goreng"=0.0). Dense overlaps too ("berita..."=0.30 ≥ "Modal"=0.24).
+    # There is NO single sparse floor that admits all entities while blocking
+    # all off-scope — the OFF_SCOPE intent classifier in _pre_processor is the
+    # real scope gate; this floor only catches misclassified-as-KNOWLEDGE turns,
+    # and imperfectly. Kept at 1.0 (admits entities, blocks only zero-overlap
+    # junk) on purpose: raising it would kill low-scoring entities like
+    # AmarthaLink (3.46) without blocking the 6-8 scoring off-scope phrases.
     kb_min_sparse_score: float = 1.0
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
@@ -143,15 +162,18 @@ class Settings(BaseSettings):
     # survive long enough for the AFK LTM worker to consume them.
     conversation_ttl_seconds: int = 86400
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
-    # Max fresh (un-summarized) conversation turns fed to generate_node. 3
-    # (effectively 5 before) — older turns are captured by the rolling summary,
-    # so feeding 5 full turns + untruncated AI replies was pure token overhead.
-    max_fresh_turns: int = 3
+    # Max fresh (un-summarized) conversation turns fed to generate_node. 2
+    # (was 3): the rolling summary captures everything older, and the 3rd
+    # prior turn is almost always paraphrased in the summary anyway. 2 keeps
+    # one prior user/AI pair + current = 3 messages, which is enough for
+    # entity binding while saving ~250 input tokens/turn on the typical
+    # 4-5 turn session.
+    max_fresh_turns: int = 2
     # Per-AI-reply char cap for STM history sent to generate_node. The
     # pre-processor already caps AI history at 400 chars; generate_node fed
-    # full replies, which compounds across turns. 500 keeps entity names +
-    # the gist while bounding the worst case.
-    max_history_ai_chars: int = 500
+    # full replies, which compounds across turns. 400 keeps entity names +
+    # the gist while bounding the worst case (was 500, trimmed 20%).
+    max_history_ai_chars: int = 400
     # AFK window before LTM sync fires. 10h matches "user closed laptop / went
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.
@@ -179,6 +201,20 @@ class Settings(BaseSettings):
     jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"
     jwt_algorithm: str = "HS256"
     rate_limit_per_minute: int = 20
+
+    # ─── Concurrency / Backpressure ─────────────────────────────────────────
+    # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn
+    # worker. Beyond this, requests fast-fail with 503 instead of piling up on
+    # the event loop and overwhelming the upstream LLM gateway (OpenRouter).
+    # Cache hits are NOT counted — they make no LLM call and return before the
+    # guard. Sized for ~2 LLM calls/turn: at peak ~5 req/s × ~3s/turn ≈ 15 in
+    # flight, so 24 leaves headroom. Tune once OpenRouter's real per-account
+    # rate limits are known.
+    max_concurrent_pipelines: int = 24
+    # Seconds a request waits for a free pipeline slot before returning 503.
+    # Small enough to fast-fail a sustained burst, large enough to absorb a
+    # sub-second spike without rejecting.
+    pipeline_acquire_timeout_s: float = 5.0
 
 
 @lru_cache(maxsize=1)

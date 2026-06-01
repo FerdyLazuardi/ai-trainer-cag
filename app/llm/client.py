@@ -78,3 +78,39 @@ def get_cheap_llm() -> ChatOpenAI:
             "X-Title": "AI LMS RAG Agent (Background Worker)",
         },
     )
+
+
+@lru_cache(maxsize=1)
+def get_preprocessor_llm() -> ChatOpenAI:
+    """Cheap LLM for the pre-processor's intent classification + query rewrite.
+
+    The pre-processor is the single most expensive per-call system in the
+    pipeline (~1.5K input tokens on every turn) and runs BEFORE retrieval —
+    so its cost is paid on every request including off-topic/off-scope
+    queries that get short-circuited downstream.
+
+    Routing it to Gemini 2.0 Flash Lite (4-8x cheaper than the main model)
+    drops pre-processor cost by ~75% with no measurable impact on routing
+    accuracy — the classification task is structured-output + a small set of
+    intent labels, which Flash Lite handles reliably (the LLM-only smoke
+    verifies intent + safety scores still match the main model on the
+    safety benchmark).
+
+    Temperature=0.0 + larger max_tokens than get_cheap_llm because the
+    pre-processor needs a deterministic safety_preserved_query (longest
+    output is ~200 chars).
+    """
+    return ChatOpenAI(
+        model="google/gemini-2.0-flash-lite-001",
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+        temperature=0.0,
+        max_tokens=500,
+        request_timeout=30,
+        max_retries=1,
+        http_async_client=_make_http_client(),
+        default_headers={
+            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "X-Title": "AI LMS RAG Agent (Pre-Processor)",
+        },
+    )

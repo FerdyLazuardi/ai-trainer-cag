@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from typing import Literal, Optional
 
-Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE"]
+Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"]
 
 # ── Rule 1: pure punctuation / filler ────────────────────────────────────────
 # Matches messages that are ONLY punctuation, whitespace, or a single short
@@ -94,6 +94,32 @@ _GREETING_PREFIXES = (
     "pagi", "siang", "sore", "malam",
     "good morning", "good afternoon", "good evening",
     "selamat", "test ", "test,", "test.",
+)
+
+# ── Rule 6: topic-list meta-questions ─────────────────────────────────────────
+# Phrases that ask "what topics/courses/materials do you have?" — must NOT
+# trigger if user already names a topic (those go to KNOWLEDGE). All phrases
+# are anchored to a meta-marker (topik/tema/materi/course/pelatihan/available)
+# to avoid false positives on real questions.
+#
+# Saves ~1500 LLM input tokens per qualifying query by short-circuiting the
+# LLM pre-processor call entirely. The handler then injects the topic list.
+_TOPIC_LIST_PHRASES = (
+    # ID
+    "ada topik apa", "topik apa aja", "topik apa saja",
+    "ada materi apa", "materi apa aja", "materi apa saja",
+    "ada course apa", "course apa aja", "course apa saja",
+    "ada课程 apa",  # accidentally-id-mixed; defensive
+    "list topik", "list materi", "list course", "list pelatihan",
+    "topik yang tersedia", "materi yang tersedia",
+    "course yang tersedia", "pelatihan yang tersedia",
+    "topik apa yang", "materi apa yang", "course apa yang",
+    # EN
+    "what topics", "what courses", "what materials", "what training",
+    "available topics", "available courses", "available materials",
+    "list of topics", "list of courses", "list of materials",
+    "topics available", "courses available", "materials available",
+    "what do you have", "what can i learn", "what can you teach",
 )
 
 # Greeting/filler tokens used to decide whether a message is a PURE greeting or
@@ -186,6 +212,17 @@ def _is_greeting(low: str) -> bool:
     return len(leftover) == 0
 
 
+def _is_topic_list(low: str) -> bool:
+    """Meta-question about available topics/courses. Length-bounded so long
+    questions about specific topics don't trigger. Every phrase is anchored
+    to a topic-meta marker (topik/materi/course/available/list) so a real
+    knowledge question like "apa itu Modal" or "jelasin CP" does NOT match.
+    """
+    if len(low) > 80:
+        return False
+    return any(p in low for p in _TOPIC_LIST_PHRASES)
+
+
 def classify(text: str) -> Optional[Intent]:
     """Return a high-confidence intent, or None if no rule fires.
 
@@ -208,4 +245,6 @@ def classify(text: str) -> Optional[Intent]:
         return "OFF_SCOPE"
     if _is_greeting(low):
         return "GREETING"
+    if _is_topic_list(low):
+        return "TOPIC_LIST"
     return None
