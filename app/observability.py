@@ -197,6 +197,12 @@ def set_current_span_attributes(attrs: dict[str, Any]) -> None:
     span itself — intent classification, scoring axes, latency breakdowns.
 
     Numbers and strings pass through; nested dicts/lists are JSON-encoded.
+    String values are run through `redact_pii()` first so emails /
+    phone numbers / NIK / NPWP / credit cards in `rewritten_query`,
+    `intent_scores`, or any other free-form field don't end up in
+    Phoenix traces. (Commit 85b1507 added the same protection to
+    set_current_span_io; this commit extends it to the per-attribute
+    path which has the same leak surface.)
     """
     if _tracer_provider is None or not attrs:
         return
@@ -204,16 +210,24 @@ def set_current_span_attributes(attrs: dict[str, Any]) -> None:
         import json as _json
         from opentelemetry import trace as _trace
 
+        from app.utils.pii import redact_pii
+
         span = _trace.get_current_span()
         if span is None or not span.is_recording():
             return
         for key, value in attrs.items():
             if value is None:
                 continue
-            if isinstance(value, (str, bool, int, float)):
+            if isinstance(value, str):
+                span.set_attribute(key, redact_pii(value))
+            elif isinstance(value, (bool, int, float)):
                 span.set_attribute(key, value)
             else:
-                span.set_attribute(key, _json.dumps(value, default=str))
+                # Dicts/lists: JSON-encode first, then redact the
+                # resulting string. This catches nested PII (a dict
+                # like {'rewritten_query': 'ferdy@x.com'}) without
+                # requiring a recursive walker.
+                span.set_attribute(key, redact_pii(_json.dumps(value, default=str)))
     except Exception:
         pass
 
