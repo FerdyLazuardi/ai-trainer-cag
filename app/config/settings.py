@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    # ─── CORS ──────────────────────────────────────────────────────────────
+    # Previously main.py used allow_origins=["*"] + allow_credentials=True,
+    # which is a forbidden combination — browsers will refuse to send cookies
+    # or Authorization headers, but the misconfiguration still leaks
+    # preflight responses to any origin and signals 'this API trusts every
+    # caller'. Default to the dev compose ports; override in prod via env.
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:8000",
+            "http://localhost:8001",
+        ]
+    )
+
     # ─── PostgreSQL ─────────────────────────────────────────────────────────
     postgres_host: str = "localhost"
     postgres_port: int = 5432

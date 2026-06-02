@@ -124,10 +124,14 @@ def create_app() -> FastAPI:
     # ─── CORS ───────────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        # Allowlist, not wildcard. Wildcard is incompatible with
+        # allow_credentials=True and signals a misconfigured API.
+        allow_origins=settings.cors_allow_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Restrict to what we actually serve. SSE streaming and the
+        # auth-bearer header cover the entire /api/v1 surface.
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
 
     # ─── Routes ─────────────────────────────────────────────────────────────
