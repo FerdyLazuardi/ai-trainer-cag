@@ -138,7 +138,13 @@ def trace_attributes(
 
 
 def set_current_span_io(*, input: Any | None = None, output: Any | None = None) -> None:
-    """Set INPUT_VALUE / OUTPUT_VALUE on the active span (OpenInference convention)."""
+    """Set INPUT_VALUE / OUTPUT_VALUE on the active span (OpenInference convention).
+
+    The `input` and `output` payloads are run through redact_io() before
+    serialization, so PII (emails, phone numbers, NIK, NPWP, credit
+    card numbers) is masked before it lands in Phoenix. Other fields
+    (intent, scores, conversation_id) pass through unchanged.
+    """
     if _tracer_provider is None:
         return
     try:
@@ -146,18 +152,37 @@ def set_current_span_io(*, input: Any | None = None, output: Any | None = None) 
         from opentelemetry import trace as _trace
         from openinference.semconv.trace import SpanAttributes
 
+        from app.utils.pii import redact_io
+
         span = _trace.get_current_span()
         if span is None or not span.is_recording():
             return
         if input is not None:
+            # Only redact dict-shaped I/O (the common case from chat.py);
+            # a raw string is still passed through the redact_pii path
+            # so ad-hoc string callers also get coverage.
+            if isinstance(input, dict):
+                payload = redact_io(input)
+            elif isinstance(input, str):
+                from app.utils.pii import redact_pii
+                payload = redact_pii(input)
+            else:
+                payload = input
             span.set_attribute(
                 SpanAttributes.INPUT_VALUE,
-                input if isinstance(input, str) else _json.dumps(input, default=str),
+                payload if isinstance(payload, str) else _json.dumps(payload, default=str),
             )
         if output is not None:
+            if isinstance(output, dict):
+                payload = redact_io(output)
+            elif isinstance(output, str):
+                from app.utils.pii import redact_pii
+                payload = redact_pii(output)
+            else:
+                payload = output
             span.set_attribute(
                 SpanAttributes.OUTPUT_VALUE,
-                output if isinstance(output, str) else _json.dumps(output, default=str),
+                payload if isinstance(payload, str) else _json.dumps(payload, default=str),
             )
     except Exception:
         pass
