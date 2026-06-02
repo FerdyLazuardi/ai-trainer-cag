@@ -32,6 +32,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Starting application", env=settings.app_env)
 
+    # Production-only guard: refuse to boot if the JWT secret looks like a
+    # dev placeholder. Catches the "forgot to set env in prod" failure mode
+    # where the entire /api/v1/chat* surface becomes forgeable.
+    if settings.app_env == "production" and "dev" in settings.jwt_secret.lower():
+        raise RuntimeError(
+            "JWT_SECRET contains 'dev' — refusing to start. Set a real secret in production."
+        )
+
     # Start BatchLogger background task
     await batch_logger.start()
 

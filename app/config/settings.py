@@ -198,7 +198,11 @@ class Settings(BaseSettings):
     askfer_chunk_text_max_chars: int = 600
 
     # ─── Security ───────────────────────────────────────────────────────────
-    jwt_secret: str = "your-super-secret-jwt-key-for-local-dev"
+    # Required, no default. A dev fallback string ("your-super-secret...") was
+    # previously baked into the code, which meant a prod deploy that forgot
+    # to set JWT_SECRET booted with a publicly known signing key. Pydantic
+    # now refuses to construct Settings() if this is missing.
+    jwt_secret: str = Field(..., min_length=32)
     jwt_algorithm: str = "HS256"
     rate_limit_per_minute: int = 20
 
