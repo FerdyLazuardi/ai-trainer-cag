@@ -6,6 +6,17 @@ from functools import lru_cache
 
 import httpx
 from langchain_openai import ChatOpenAI
+from loguru import logger
+from openai import APIError, APIStatusError, APITimeoutError, RateLimitError
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    retry,
+    retry_if_exception,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.config.settings import get_settings
 
@@ -31,10 +42,96 @@ def _make_http_client() -> httpx.AsyncClient:
     )
 
 
+# OpenAI SDK's built-in max_retries=1 is a no-op when http_async_client is
+# provided (langchain ChatOpenAI bypasses the default sync/async client
+# when a custom async client is set, so urllib3.Retry is never reached).
+# We wrap ainvoke() with tenacity so transient OpenRouter errors
+# (429, 500, 502, 503, 504, timeouts) get exponential backoff retry.
+# Non-retriable errors (400 bad request, 401 auth, 402 out of credits,
+# 403 forbidden) bubble up immediately — those won't fix themselves.
+_RETRYABLE_EXCEPTIONS = (
+    RateLimitError,        # 429
+    APITimeoutError,       # request timed out
+    APIStatusError,        # 5xx; we'll filter on status_code below
+    APIError,              # catch-all for connection drops
+)
+_NON_RETRYABLE_5XX = (500, 501, 502, 503, 504)
+
+
+def _should_retry(exc: BaseException) -> bool:
+    """Decide whether a given exception is worth retrying.
+
+    Returns True for:
+      - RateLimitError (429) — back off and retry
+      - APITimeoutError — transient network
+      - APIStatusError with status_code in {500,501,502,503,504}
+      - Other APIError subclasses (connection drops, protocol errors)
+    Returns False for:
+      - 400, 401, 402, 403, 404 — these are caller errors that retry
+        won't fix
+      - Any non-APIError exception (e.g. our own ValueError, KeyError)
+    """
+    if isinstance(exc, RateLimitError):
+        return True
+    if isinstance(exc, APITimeoutError):
+        return True
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in _NON_RETRYABLE_5XX
+    if isinstance(exc, APIError):
+        # Connection drops, protocol errors, etc. — retry.
+        return True
+    return False
+
+
+def _wrap_with_retry(llm: ChatOpenAI) -> None:
+    """Replace llm.ainvoke with a tenacity-wrapped version.
+
+    The singleton is created once per process (@lru_cache), so the
+    monkey-patch is a one-time operation. Each call gets its own retry
+    state via the @retry decorator, so concurrent callers don't share
+    retry counters.
+
+    Backoff: 1s, 2s, 4s, 8s (capped at 8s) on the first two retries.
+    Max 3 attempts total (1 initial + 2 retries).
+
+    Retries on: 429, 5xx, APITimeoutError, generic APIError (connection
+    drops, protocol errors). Does NOT retry on: 400, 401, 402, 403, 404 —
+    those are caller errors that retry won't fix.
+    """
+    original_ainvoke = llm.ainvoke
+
+    def _log_before_sleep(retry_state):
+        logger.warning(
+            "LLM call failed, retrying",
+            attempt=retry_state.attempt_number,
+            next_sleep=retry_state.next_action.sleep if retry_state.next_action else None,
+            error_type=type(retry_state.outcome.exception()).__name__ if retry_state.outcome else None,
+            error=str(retry_state.outcome.exception())[:200] if retry_state.outcome else None,
+        )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        # Use a custom predicate (not retry_if_exception_type) so we can
+        # apply both the type filter AND the status-code filter in one
+        # step. Otherwise tenacity matches the type and re-runs before
+        # _should_retry gets a chance to veto 4xx errors.
+        retry=retry_if_exception(lambda exc: _should_retry(exc)),
+        reraise=True,
+        before_sleep=_log_before_sleep,
+    )
+    async def _retried(*args, **kwargs):
+        return await original_ainvoke(*args, **kwargs)
+
+    # ChatOpenAI is a pydantic BaseModel, which blocks arbitrary attribute
+    # assignment. Use object.__setattr__ to bypass the pydantic handler.
+    object.__setattr__(llm, "ainvoke", _retried)
+
+
 @lru_cache(maxsize=1)
 def get_llm() -> ChatOpenAI:
     """Return the singleton LLM client configured for 9Router/OpenRouter."""
-    return ChatOpenAI(
+    llm = ChatOpenAI(
         model=settings.llm_model,
 
         # openai_api_key="ollama",
@@ -53,6 +150,8 @@ def get_llm() -> ChatOpenAI:
             "X-Title": "AI LMS RAG Agent",
         },
     )
+    _wrap_with_retry(llm)
+    return llm
 
 
 @lru_cache(maxsize=1)
@@ -66,7 +165,7 @@ def get_cheap_llm() -> ChatOpenAI:
     The judge LLM is intentionally pinned regardless of `LLM_MODEL` so eval
     scores stay comparable week-over-week.
     """
-    return ChatOpenAI(
+    llm = ChatOpenAI(
         model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
@@ -80,6 +179,8 @@ def get_cheap_llm() -> ChatOpenAI:
             "X-Title": "AI LMS RAG Agent (Background Worker)",
         },
     )
+    _wrap_with_retry(llm)
+    return llm
 
 
 @lru_cache(maxsize=1)
@@ -103,7 +204,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
     pre-processor needs a deterministic safety_preserved_query (longest
     output is ~200 chars).
     """
-    return ChatOpenAI(
+    llm = ChatOpenAI(
         model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
@@ -117,6 +218,8 @@ def get_preprocessor_llm() -> ChatOpenAI:
             "X-Title": "AI LMS RAG Agent (Pre-Processor)",
         },
     )
+    _wrap_with_retry(llm)
+    return llm
 
 
 @lru_cache(maxsize=1)
@@ -144,7 +247,7 @@ def get_generate_llm() -> ChatOpenAI:
     Temperature=0.0 mirrors the main LLM config; max_tokens=600 leaves
     room for the longest typical brainstorm answer.
     """
-    return ChatOpenAI(
+    llm = ChatOpenAI(
         model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
@@ -158,3 +261,5 @@ def get_generate_llm() -> ChatOpenAI:
             "X-Title": "AI LMS RAG Agent (Generate)",
         },
     )
+    _wrap_with_retry(llm)
+    return llm
