@@ -8,10 +8,46 @@ from app.config.settings import get_settings
 from app.database.postgres import AsyncSessionLocal
 from app.eval.tasks import eval_turn_task
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
+from app.ingestion.pipeline import ingest_document
 from app.ingestion.portfolio_sync import sync_portfolio_knowledge_base
 from app.observability import setup_phoenix, flush as flush_traces, is_observability_enabled
 
 settings = get_settings()
+
+async def ingest_text_task(ctx: dict, text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
+    """arq task: ingest a single document off the API request path.
+
+    The text payload is bounded at 200,000 chars by IngestRequest validation,
+    so the worker's embedding + Qdrant upsert runs without OOM risk. The
+    task opens its own AsyncSession (the API process no longer holds one
+    for the duration of the embedding pipeline).
+    """
+    logger.info("arq ingest_text_task starting", title=title, source=source, text_len=len(text))
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await ingest_document(
+                text=text,
+                session=session,
+                metadata=metadata,
+                title=title,
+                source=source,
+            )
+            await session.commit()
+        logger.info(
+            "arq ingest_text_task complete",
+            document_id=result.document_id,
+            chunks=result.chunks_count,
+            tokens=result.total_tokens,
+        )
+        return {
+            "document_id": result.document_id,
+            "chunks_count": result.chunks_count,
+            "total_tokens": result.total_tokens,
+        }
+    except Exception as exc:
+        logger.error("arq ingest_text_task failed", error=str(exc))
+        raise
+
 
 async def sync_moodle_task(ctx: dict, course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
     """arq task to run the moodle sync."""
@@ -411,6 +447,7 @@ class WorkerSettings:
         database=settings.redis_db,
         password=settings.redis_password if settings.redis_password else None,
     )
-    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task]
+    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task, ingest_text_task]
     on_startup = startup
     on_shutdown = shutdown
+    max_jobs = 1

@@ -2,14 +2,15 @@
 POST /ingest endpoint — accepts raw text and triggers the ingestion pipeline.
 POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync.
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from arq import create_pool
 from arq.connections import RedisSettings, ArqRedis
+from arq.jobs import Job
 
-from app.api.schemas import IngestRequest, IngestResponse
+from app.api.schemas import IngestRequest, IngestEnqueuedResponse, IngestStatusResponse
 from app.database.postgres import get_db, AsyncSessionLocal
 from app.ingestion.pipeline import ingest_document
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
@@ -39,14 +40,21 @@ async def get_arq_redis() -> ArqRedis:
     return _arq_pool
 
 # ... (keep existing ingest endpoint) ...
-@router.post("/ingest", response_model=IngestResponse, summary="Ingest a document into the RAG system")
+@router.post(
+    "/ingest",
+    response_model=IngestEnqueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a document for ingestion into the RAG knowledge base",
+)
 async def ingest(
     request: IngestRequest,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> IngestResponse:
+) -> IngestEnqueuedResponse:
     """
-    Ingest raw text into the RAG knowledge base.
+    Enqueue raw text for background ingestion. Returns 202 with a job_id
+    that can be polled via GET /ingest/{job_id}. The job is processed by
+    the arq worker so a 200 KB body no longer ties up the API process or
+    a Postgres session.
     """
     logger.info(
         "Ingestion request received",
@@ -56,29 +64,61 @@ async def ingest(
         user=current_user.username,
     )
 
-    try:
-        result = await ingest_document(
-            text=request.text,
-            session=db,
-            metadata=request.metadata,
-            title=request.title,
-            source=request.source,
-        )
-    except Exception as exc:
-        logger.error("Ingestion failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
-
-    logger.info(
-        "Ingestion complete",
-        document_id=result.document_id,
-        chunks=result.chunks_count,
-        tokens=result.total_tokens,
+    redis = await get_arq_redis()
+    job = await redis.enqueue_job(
+        "ingest_text_task",
+        text=request.text,
+        title=request.title,
+        source=request.source,
+        metadata=request.metadata,
     )
+    logger.info("Ingestion enqueued", job_id=job.job_id, text_len=len(request.text))
+    return IngestEnqueuedResponse(job_id=job.job_id, status="queued")
 
-    return IngestResponse(
-        document_id=result.document_id,
-        chunks_count=result.chunks_count,
-        total_tokens=result.total_tokens,
+
+@router.get(
+    "/ingest/{job_id}",
+    response_model=IngestStatusResponse,
+    summary="Get the status of an enqueued ingestion job",
+)
+async def ingest_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+) -> IngestStatusResponse:
+    """Poll an ingestion job's status. 'complete' carries the document_id."""
+    redis = await get_arq_redis()
+    job = Job(job_id, redis)
+    info = await job.info()
+
+    # arq 0.25 returns None while the job is queued (or has been GC'd).
+    # We can't distinguish the two with a single lookup, but neither is
+    # useful to the caller — report 'queued' optimistically.
+    if info is None:
+        return IngestStatusResponse(job_id=job_id, status="queued")
+
+    # arq 0.25 JobResult fields: success: bool|None, result: Any,
+    # finish_time: float|None. Map to the 4-state status the API contract
+    # promises.
+    if info.finish_time is None:
+        status_str = "in_progress"
+        result_dict: dict | None = None
+        error: str | None = None
+    elif info.success is True:
+        status_str = "complete"
+        result_dict = info.result if isinstance(info.result, dict) else None
+        error = None
+    else:
+        status_str = "failed"
+        result_dict = None
+        error = str(info.result) if info.result is not None else "unknown error"
+
+    return IngestStatusResponse(
+        job_id=job_id,
+        status=status_str,
+        document_id=result_dict.get("document_id") if result_dict else None,
+        chunks_count=result_dict.get("chunks_count") if result_dict else None,
+        total_tokens=result_dict.get("total_tokens") if result_dict else None,
+        error=error,
     )
 
 

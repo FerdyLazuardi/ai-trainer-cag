@@ -41,7 +41,10 @@ class ChatResponse(BaseModel):
 # ─── Ingestion ────────────────────────────────────────────────────────────────
 
 class IngestRequest(BaseModel):
-    text: str = Field(..., min_length=10, description="Raw document text to ingest")
+    # 200,000 chars (~200 KB) hard cap. Defense-in-depth on top of the
+    # content-length middleware in main.py. A 50 MB request would OOM the
+    # API process during JSON parsing long before Pydantic validation.
+    text: str = Field(..., min_length=10, max_length=200_000, description="Raw document text to ingest")
     title: str = Field(default="", description="Document title")
     source: str = Field(default="", description="Source URL or file path")
     metadata: dict = Field(default_factory=dict, description="Arbitrary key-value metadata")
@@ -56,6 +59,20 @@ class IngestRequest(BaseModel):
             }
         }
     }
+
+
+class IngestEnqueuedResponse(BaseModel):
+    job_id: str
+    status: str = "queued"
+
+
+class IngestStatusResponse(BaseModel):
+    job_id: str
+    status: str  # "queued" | "in_progress" | "complete" | "failed"
+    document_id: str | None = None
+    chunks_count: int | None = None
+    total_tokens: int | None = None
+    error: str | None = None
 
 
 class IngestResponse(BaseModel):

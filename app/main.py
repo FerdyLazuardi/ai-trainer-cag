@@ -5,7 +5,7 @@ Initializes all DB connections on startup and tears them down on shutdown.
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -120,6 +120,29 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.app_debug else None,
         lifespan=lifespan,
     )
+
+    # ─── Request body size cap ─────────────────────────────────────────────
+    # Reject obviously oversized bodies before they reach the JSON parser.
+    # A 50 MB POST to /ingest would otherwise OOM the API process during
+    # the read of the request body, long before Pydantic's max_length on
+    # IngestRequest.text (200_000 chars) could fire. 256 KB is a small
+    # overhead above the 200 KB text cap to cover JSON envelope fields.
+    MAX_REQUEST_BYTES = 256 * 1024  # 256 KB
+
+    @app.middleware("http")
+    async def enforce_max_body(request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > MAX_REQUEST_BYTES:
+                    return HTMLResponse(
+                        content=f'{{"detail":"Request body too large. Max {MAX_REQUEST_BYTES} bytes."}}',
+                        status_code=413,
+                        media_type="application/json",
+                    )
+            except ValueError:
+                pass
+        return await call_next(request)
 
     # ─── CORS ───────────────────────────────────────────────────────────────
     app.add_middleware(
