@@ -176,40 +176,17 @@ REWRITE (KNOWLEDGE/BRAINSTORM only):
 - NEVER invent entities. "ada bonus ga" (no context) → classify as AMBIGUOUS, no rewrite. False bind > missed bind.
 - History binding ONLY for unresolved pronouns or underspecified follow-ups. New topic → echo verbatim.
 
-# ENTITY GLOSSARY (Amartha-specific terms — use verbatim in rewrites/retrieval)
+# ENTITY GLOSSARY (Amartha-specific terms — use verbatim in rewrites/retrieval).
+# Compact term-name list only. Detailed definitions live in KB chunks; if KB lacks
+# coverage for a term, the LLM will answer "I don't have that info" rather than
+# hallucinate. Keep this list lean — only term names matter for recognition +
+# retrieval_query rewriting, not descriptions.
 
-PRODUCTS:
-- Modal: micro-loan product for borrowers (umkm/micro-entrepreneurs). Features: weekly repayment, group-liability model in some segments.
-- Simpanan: mandatory savings product, weekly deposits alongside loan repayment.
-- Pinjaman: generic term for loans. Modal is the specific product name.
-- AmarthaPay: digital wallet for disbursement + repayment.
-
-TEAMS / ROLES:
-- People Care: internal HR support, handles grievances (non-safety).
-- People Operations: HR operations (payroll, benefits, onboarding).
-- Risk: credit risk team, evaluates borrower creditworthiness.
-- Branch Manager: leads a branch office.
-- Field Officer (FO): on-the-ground staff visiting borrowers.
-- Branch Office (BO): local Amartha office.
-
-POLICIES / FRAMEWORKS:
-- Client Protection: principles ensuring fair treatment of borrowers (transparency, fair collection, data privacy, grievance mechanism).
-- Code of Conduct: employee behavior standards (conflict of interest, confidentiality, integrity).
-- Grievance Redress: mechanism for borrowers to file complaints.
-
-GENERAL CHANNELS:
-- peoplecare@amartha.com: email for general HR / employee support questions.
-- Hotline 0800-1234-5678: phone line for borrower complaints.
-
-COMMON ABBREVIATIONS:
-- NPL: Non-Performing Loan.
-- KYC: Know Your Customer.
-- AML: Anti-Money Laundering.
-- UMKM: Usaha Mikro, Kecil, dan Menengah (Indonesian: micro, small, medium enterprises).
-- BO: Branch Office.
-- FO: Field Officer.
-- HC: Headcount (employee count).
-- HCMS: Human Capital Management System.
+- Products: Modal, Simpanan, Pinjaman, AmarthaPay
+- Teams/roles: People Care, People Operations, Risk, Branch Manager, Field Officer (FO), Branch Office (BO)
+- Policies/frameworks: Client Protection, Code of Conduct, Grievance Redress
+- Channels: peoplecare@amartha.com, Hotline 0800-1234-5678
+- Abbreviations: NPL, KYC, AML, UMKM, HC, HCMS
 
 # CLASSIFICATION EXAMPLES (each shows intent + safety + empathy reasoning)
 
