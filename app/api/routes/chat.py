@@ -22,6 +22,7 @@ from app.agents.memory import (
     clear_conversation_history
 )
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
+from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
 from app.database.models import UserProfile
 from app.graph.pipeline import get_rag_graph
@@ -496,6 +497,23 @@ async def chat(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
+    # Pipeline semaphore — caps concurrent RAG work to settings.max_concurrent_pipelines.
+    # Acquired before any embedding/LLM work; released as the function returns.
+    # Raises HTTP 503 with Retry-After: 5 on saturation so clients back off
+    # instead of queueing invisibly.
+    _sem = await acquire_pipeline_slot()
+    try:
+        return await _run_chat(request, background_tasks, current_user, _sem)
+    finally:
+        _sem.release()
+
+
+async def _run_chat(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User,
+    _sem,
+) -> ChatResponse:
     start_time = time.perf_counter()
     conversation_id = request.conversation_id or str(uuid.uuid4())
     await _verify_conversation_ownership(conversation_id, current_user)
@@ -811,6 +829,12 @@ async def chat_stream(
     req: Request,
     current_user: User = Depends(get_current_user),
 ):
+    # Pipeline semaphore — held for the ENTIRE SSE stream, not just the
+    # function body. The release callable is captured by both inner
+    # generators (cache-hit and rag-stream) and invoked in their `finally`
+    # so the permit returns when the stream ends or the client disconnects.
+    # Raises HTTP 503 with Retry-After: 5 on saturation.
+    sem_release = await acquire_pipeline_slot_or_503()
     start_time = time.perf_counter()
     conversation_id = request.conversation_id or str(uuid.uuid4())
     await _verify_conversation_ownership(conversation_id, current_user)
@@ -825,33 +849,36 @@ async def chat_stream(
 
     if cached:
         async def _stream_cached():
-            latency_ms = (time.perf_counter() - start_time) * 1000
-            if resolved_query != request.query:
-                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
-
-            words = cached["answer"].split(" ")
-            chunk_size = 4
-            for i in range(0, len(words), chunk_size):
-                chunk = " ".join(words[i:i + chunk_size])
-                if i > 0:
-                    chunk = " " + chunk
-                yield f"data: {json.dumps({'token': chunk})}\n\n"
-                await asyncio.sleep(0.02)
-
-            sources_list = list(cached.get("sources", []))
-            yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
-
-            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
-
-            # FIX 2: a cache hit is still session activity. Refresh last_active
-            # + (re)schedule the AFK LTM sync (the helper updates
-            # `rag:last_active` internally) so an all-cache-hit session still
-            # persists LTM and the AFK guard doesn't misfire. No memory is
-            # re-injected — the cached answer is already final.
             try:
-                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
-            except Exception as e:
-                logger.warning(f"Cache-hit AFK LTM schedule failed: {e}")
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                if resolved_query != request.query:
+                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                words = cached["answer"].split(" ")
+                chunk_size = 4
+                for i in range(0, len(words), chunk_size):
+                    chunk = " ".join(words[i:i + chunk_size])
+                    if i > 0:
+                        chunk = " " + chunk
+                    yield f"data: {json.dumps({'token': chunk})}\n\n"
+                    await asyncio.sleep(0.02)
+
+                sources_list = list(cached.get("sources", []))
+                yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
+
+                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+
+                # FIX 2: a cache hit is still session activity. Refresh last_active
+                # + (re)schedule the AFK LTM sync (the helper updates
+                # `rag:last_active` internally) so an all-cache-hit session still
+                # persists LTM and the AFK guard doesn't misfire. No memory is
+                # re-injected — the cached answer is already final.
+                try:
+                    await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+                except Exception as e:
+                    logger.warning(f"Cache-hit AFK LTM schedule failed: {e}")
+            finally:
+                sem_release()
 
         return StreamingResponse(_stream_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1131,5 +1158,9 @@ async def chat_stream(
             task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as bg_err:
             logger.warning(f"Stream background task error: {bg_err}")
+        finally:
+            # Always release the pipeline permit at end of stream (normal
+            # completion OR client disconnect OR exception in the generator).
+            sem_release()
 
     return StreamingResponse(_stream_rag(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

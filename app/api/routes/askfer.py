@@ -19,6 +19,7 @@ from loguru import logger
 
 from app.api.askfer_deps import rate_limit_by_ip
 from app.api.routes.ingest import get_arq_redis
+from app.api.concurrency import acquire_pipeline_slot_or_503
 from app.api.schemas import AskferRequest, AskferSyncRequest
 from app.config.settings import get_settings
 from app.graph.askfer_pipeline import get_askfer_graph
@@ -72,6 +73,10 @@ async def askfer_stream(
     client_ip: str = Depends(rate_limit_by_ip),
 ):
     """Stateless SSE stream. No auth, no conversation history."""
+    # Pipeline semaphore — held for the entire SSE stream. Both the cache-hit
+    # and rag-stream paths release the permit in their generator's `finally`.
+    # Raises HTTP 503 with Retry-After: 5 on saturation.
+    sem_release = await acquire_pipeline_slot_or_503()
     start_time = time.perf_counter()
     query = request.query
     logger.info("Askfer request", query=query[:80], ip=client_ip)
@@ -96,19 +101,22 @@ async def askfer_stream(
 
     if cached:
         async def _stream_cached():
-            latency_ms = (time.perf_counter() - start_time) * 1000
-            words = cached["answer"].split(" ")
-            chunk_size = 4
-            for i in range(0, len(words), chunk_size):
-                chunk = " ".join(words[i:i + chunk_size])
-                if i > 0:
-                    chunk = " " + chunk
-                yield f"data: {json.dumps({'token': chunk})}\n\n"
-                await asyncio.sleep(0.02)
-            yield (
-                f"event: done\ndata: "
-                f"{json.dumps({'sources': cached.get('sources', []), 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
-            )
+            try:
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                words = cached["answer"].split(" ")
+                chunk_size = 4
+                for i in range(0, len(words), chunk_size):
+                    chunk = " ".join(words[i:i + chunk_size])
+                    if i > 0:
+                        chunk = " " + chunk
+                    yield f"data: {json.dumps({'token': chunk})}\n\n"
+                    await asyncio.sleep(0.02)
+                yield (
+                    f"event: done\ndata: "
+                    f"{json.dumps({'sources': cached.get('sources', []), 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
+                )
+            finally:
+                sem_release()
         return StreamingResponse(
             _stream_cached(),
             media_type="text/event-stream",
@@ -264,6 +272,10 @@ async def askfer_stream(
             task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as exc:
             logger.warning(f"Askfer background task error: {exc}")
+        finally:
+            # Release the pipeline permit at end of stream (normal completion,
+            # client disconnect, or exception inside the generator).
+            sem_release()
 
     return StreamingResponse(
         _stream_askfer(),
