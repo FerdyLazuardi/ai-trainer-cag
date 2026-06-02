@@ -21,6 +21,7 @@ instead of queueing invisibly.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Callable
 
 from fastapi import HTTPException, status
@@ -29,6 +30,19 @@ from app.config.settings import get_settings
 
 _settings = get_settings()
 _pipeline_sem: asyncio.Semaphore = asyncio.Semaphore(_settings.max_concurrent_pipelines)
+
+# Pipeline semaphore is in-process. Scaling to multiple uvicorn workers
+# (--workers 2 or more) would multiply the effective concurrency gate
+# (e.g. 2 workers * 24 = 48 in-flight LLM calls), which the 8 GB host
+# cannot sustain and which silently defeats the safety margin of
+# `max_concurrent_pipelines`. Fail loud at startup instead.
+_workers_env = os.getenv("WEB_CONCURRENCY", "1")
+if _workers_env not in ("1", ""):
+    raise RuntimeError(
+        f"Pipeline semaphore is in-process; WEB_CONCURRENCY must be 1, "
+        f"got {_workers_env!r}. Set in docker-compose command or move "
+        f"semaphore to a Redis token-bucket first."
+    )
 
 
 def _release_slot() -> None:
