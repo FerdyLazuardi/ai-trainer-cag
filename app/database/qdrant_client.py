@@ -18,6 +18,8 @@ from qdrant_client.models import (
     Distance,
     HnswConfigDiff,
     PayloadSchemaType,
+    ScalarQuantization,
+    ScalarQuantizationConfig,
     VectorParams,
 )
 from qdrant_client import models
@@ -58,6 +60,13 @@ class QdrantManager:
             hnsw_config=HnswConfigDiff(
                 m=16,
                 ef_construct=100,
+            ),
+            quantization_config=ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                ),
             ),
             on_disk_payload=True,
         )
@@ -106,6 +115,29 @@ class QdrantManager:
             await self.client.delete_collection(name)
             await create_fn()
         else:
+            # Backfill scalar quantization on pre-existing collections
+            # that were created before this audit fix. The new
+            # create_fn() above already includes the quantization
+            # config; existing collections need an explicit
+            # update_collection() call to get the same treatment
+            # (Qdrant does not retroactively apply quantization to
+            # data already indexed under float32). Re-indexing
+            # happens lazily as new points are upserted.
+            if info.config.quantization_config is None:
+                logger.info(
+                    f"Collection {name} missing quantization — applying",
+                    collection=name,
+                )
+                await self.client.update_collection(
+                    collection_name=name,
+                    quantization_config=ScalarQuantization(
+                        scalar=ScalarQuantizationConfig(
+                            type=models.ScalarType.INT8,
+                            quantile=0.99,
+                            always_ram=True,
+                        ),
+                    ),
+                )
             logger.info(
                 f"Collection {name} OK",
                 dim=stored_dim or self.dim,
@@ -134,6 +166,13 @@ class QdrantManager:
             hnsw_config=HnswConfigDiff(
                 m=16,
                 ef_construct=100,
+            ),
+            quantization_config=ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                ),
             ),
             on_disk_payload=True,
         )
@@ -179,6 +218,13 @@ class QdrantManager:
             hnsw_config=HnswConfigDiff(
                 m=16,
                 ef_construct=100,
+            ),
+            quantization_config=ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                ),
             ),
             on_disk_payload=True,
         )
@@ -229,6 +275,13 @@ class QdrantManager:
             hnsw_config=HnswConfigDiff(
                 m=16,
                 ef_construct=100,
+            ),
+            quantization_config=ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                ),
             ),
             on_disk_payload=True,
         )

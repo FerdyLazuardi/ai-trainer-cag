@@ -17,6 +17,7 @@ at ingestion (`Settings.embed_model`, text-embedding-3-small @1536) and the
 sparse side uses the SAME fastembed BM25 encoder the vector store used to write
 documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
 """
+import asyncio
 from functools import lru_cache
 
 from loguru import logger
@@ -110,7 +111,15 @@ async def hybrid_search(
 
     # 1. Encode the query: dense (same embed model as ingestion) + sparse BM25.
     dense_vec = await Settings.embed_model.aget_query_embedding(query)
-    sparse_idx, sparse_val = _get_sparse_encoder()([query])
+    # fastembed's BM25 encode is a synchronous, CPU-bound call (tokenize +
+    # stopword + Snowball stem + IDF — pure Python, no await). On the single
+    # uvicorn worker it would block the event loop for the duration. Offload to
+    # a thread so the loop stays free for other in-flight requests' I/O. Note:
+    # BM25 is GIL-bound so this frees the loop rather than truly parallelizing,
+    # but per-query cost is sub-millisecond — this is defensive hygiene for long
+    # rewritten queries + future load, not a throughput unlock.
+    encoder = _get_sparse_encoder()
+    sparse_idx, sparse_val = await asyncio.to_thread(encoder, [query])
 
     # 2. One batched round-trip: dense KNN + sparse BM25 KNN over a `pool`-sized
     #    candidate set per modality.
@@ -122,12 +131,19 @@ async def hybrid_search(
                 using=_DENSE_VECTOR_NAME,
                 limit=pool,
                 with_payload=True,
+                # Cap the HNSW search beam at 64. Qdrant's default is
+                # 128, which is fine for high-recall offline jobs but
+                # ~2x the CPU on a hot path. 64 keeps p95 recall close
+                # to 128 for top_k<=20 and cuts the per-search CPU
+                # cost noticeably.
+                params={"hnsw_ef": 64},
             ),
             rest.QueryRequest(
                 query=rest.SparseVector(indices=sparse_idx[0], values=sparse_val[0]),
                 using=_SPARSE_VECTOR_NAME,
                 limit=pool,
                 with_payload=True,
+                params={"hnsw_ef": 64},
             ),
         ],
     )
