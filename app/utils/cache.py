@@ -39,6 +39,13 @@ _last_cache_prune_ts: float = 0.0
 # Minimum gap between prune sweeps. The sweep itself is one delete-by-filter,
 # so once per 10 min is plenty to keep the collection bounded.
 _CACHE_PRUNE_INTERVAL_SECONDS = 600
+# Hard cap on semantic_cache size. At 600 DAU each generating ~5 cached
+# responses/session, the cache would otherwise grow ~3k points/day and OOM
+# Qdrant within weeks (each point is 1536-d float32 = 6KB just for the
+# vector, plus payload). When count > MAX, prune the oldest 10% in one
+# sweep so we never hit a cliff.
+_SEMANTIC_CACHE_MAX_POINTS = 50_000
+_SEMANTIC_CACHE_PRUNE_BATCH = 5_000
 
 
 def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
@@ -68,7 +75,9 @@ async def _ensure_semantic_collection() -> None:
             vectors_config=qdrant_models.VectorParams(
                 size=settings.embedding_dim,
                 distance=qdrant_models.Distance.COSINE,
-            )
+                on_disk=True,
+            ),
+            on_disk_payload=True,
         )
         logger.info("semantic_cache collection created")
 
@@ -294,8 +303,24 @@ async def set_cached_response(
 async def _maybe_prune_semantic_cache(qdrant) -> None:
     """Delete expired semantic_cache points, throttled to one sweep per interval.
 
-    Fire-and-forget: any failure is logged and swallowed so a prune hiccup never
-    breaks the cache-write path.
+    Two eviction triggers, both throttled to once per interval so we
+    don't pay the cost on every write:
+
+      1. TTL sweep: delete every point older than the configured
+         cache_query_ttl_seconds. Catches long-tail traffic that
+         writes a few points/day forever (otherwise a niche persona
+         could keep points alive for months).
+
+      2. Size cap: if total count > _SEMANTIC_CACHE_MAX_POINTS,
+         delete the oldest _SEMANTIC_CACHE_PRUNE_BATCH points. This
+         is the actual OOM prevention — at 600 DAU each generating
+         ~5 cached responses/session the cache would otherwise grow
+         ~3k points/day. Keeping the ceiling at 50k bounds RAM at
+         ~300MB (50k × 6KB vectors) on the 8GB host, leaving the
+         rest for the other 4 Qdrant collections + Postgres + Redis.
+
+    Fire-and-forget: any failure is logged and swallowed so a prune
+    hiccup never breaks the cache-write path.
     """
     global _last_cache_prune_ts
     now = time.time()
@@ -303,6 +328,7 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
         return
     _last_cache_prune_ts = now  # claim the slot before awaiting so concurrent writers don't double-sweep
     try:
+        # 1. TTL sweep: physically delete all expired points.
         cutoff = now - settings.cache_query_ttl_seconds
         await qdrant.client.delete(
             collection_name="semantic_cache",
@@ -318,7 +344,51 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
             ),
             wait=False,
         )
-        logger.debug("semantic_cache prune sweep issued", cutoff_epoch=round(cutoff))
+        logger.debug("semantic_cache TTL sweep issued", cutoff_epoch=round(cutoff))
+
+        # 2. Size cap: if the collection is over the hard ceiling,
+        # drop the oldest N points by created_at. count() is cheap
+        # (returns the Qdrant-side cached count, no scan).
+        info = await qdrant.client.get_collection("semantic_cache")
+        count = info.points_count or 0
+        if count > _SEMANTIC_CACHE_MAX_POINTS:
+            # Fetch the oldest batch by ascending created_at, then
+            # delete by id list. Two round-trips but bounded.
+            scroll = await qdrant.client.scroll(
+                collection_name="semantic_cache",
+                scroll_filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="created_at",
+                            range=qdrant_models.Range(
+                                lt=now - 60  # ignore writes from the last 60s
+                            ),
+                        )
+                    ]
+                ),
+                order_by=qdrant_models.OrderBy(
+                    key="created_at",
+                    direction=qdrant_models.Direction.ASC,
+                ),
+                limit=_SEMANTIC_CACHE_PRUNE_BATCH,
+                with_payload=False,
+                with_vectors=False,
+            )
+            old_ids = [str(p.id) for p in (scroll[0] or [])]
+            if old_ids:
+                await qdrant.client.delete(
+                    collection_name="semantic_cache",
+                    points_selector=qdrant_models.PointIdsListSelector(
+                        points=old_ids,
+                    ),
+                    wait=False,
+                )
+                logger.info(
+                    "semantic_cache size-cap prune",
+                    count_before=count,
+                    pruned=len(old_ids),
+                    cap=_SEMANTIC_CACHE_MAX_POINTS,
+                )
     except Exception as exc:
         logger.warning("semantic_cache prune failed (non-fatal)", error=str(exc))
 
