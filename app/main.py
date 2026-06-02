@@ -179,18 +179,31 @@ def create_app() -> FastAPI:
             "test_ui": "/test-ui" if settings.app_debug else "hidden"
         }
 
-    @app.get("/test-ui", summary="Chat UI (Development)")
+    @app.get("/test-ui", summary="Chat UI (Development)", include_in_schema=settings.app_debug)
     async def chat_ui():
-        """Serve the simple chat interface for testing."""
+        """Serve the simple chat interface for testing.
+
+        Gated on APP_DEBUG. In production this route returns 404 even
+        though it's registered — the audit flagged it as a dev
+        playground that any internet visitor can hit to fire
+        arbitrary queries at the LLM/Qdrant (cost amplification +
+        prompt-cache-miss provocation).
+        """
+        if not settings.app_debug:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Not Found")
         index_path = os.path.join(static_dir, "index.html")
         if os.path.exists(index_path):
             with open(index_path, "r", encoding="utf-8") as f:
                 return HTMLResponse(content=f.read())
         return {"message": "UI files not found."}
 
-    @app.get("/askfer-ui", summary="Askfer Portfolio Chat UI (Development)")
+    @app.get("/askfer-ui", summary="Askfer Portfolio Chat UI (Development)", include_in_schema=settings.app_debug)
     async def askfer_ui():
-        """Serve the Askfer dev preview chat interface."""
+        """Serve the Askfer dev preview chat interface. Same gating as /test-ui."""
+        if not settings.app_debug:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Not Found")
         askfer_path = os.path.join(static_dir, "askfer.html")
         if os.path.exists(askfer_path):
             with open(askfer_path, "r", encoding="utf-8") as f:
