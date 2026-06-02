@@ -39,11 +39,11 @@ services:
       - ./logs:/app/logs
       - peped_hf_cache:/root/.cache/huggingface
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz',timeout=3).status==200 else 1)"]
       interval: 15s
       timeout: 5s
       retries: 3
-    command: [ "uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1" ]
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1" ]
 
   worker:
     build: .
@@ -79,8 +79,8 @@ services:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
-      - peped_hf_cache:/root/.cache/huggingface
-    command: [ "uv", "run", "arq", "app.worker.WorkerSettings" ]
+      - peped_hf_cache:/app/.cache/huggingface
+    command: [ "arq", "app.worker.WorkerSettings" ]
 
   postgres:
     image: postgres:16
@@ -110,7 +110,14 @@ services:
     # so the cgroup limit never fires before redis's own LRU eviction does.
     mem_limit: 768m
     mem_reservation: 128m
-    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    # volatile-lru (NOT allkeys-lru): this single Redis is shared by the query
+    # cache, conversation history, the arq job QUEUE, rate-limit counters, and
+    # the agent_log buffer. allkeys-lru would evict ANY key under memory
+    # pressure — including queued LTM/eval jobs and the log buffer, which carry
+    # NO TTL — silently dropping scheduled work. volatile-lru only evicts keys
+    # that have an explicit TTL (cache/history/rate-limit), so the untled queue
+    # + buffer are never sacrificed to make room for cache growth.
+    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6381:6379"
     restart: unless-stopped

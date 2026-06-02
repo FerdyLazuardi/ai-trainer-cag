@@ -28,11 +28,36 @@ def setup_logging(debug: bool = False) -> None:
     )
 
     # ─── JSON file sink (structured, for production log aggregation) ─────────
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    # Try the bind-mounted ./logs first (host-visible, what devs expect on
+    # local docker-compose). If the destination file is NOT writable —
+    # which happens when the container runs as a non-root user and the
+    # host mount is owned by a different UID, or when an old log file
+    # was created by root and is mode 0644 — fall back to a per-user
+    # cache path inside the container's writable layer. The console sink
+    # above is always available, so logs are never lost.
+    import os
+    primary_log_dir = Path("logs")
+    primary_log_path = primary_log_dir / "app.json"
+    try:
+        primary_log_dir.mkdir(exist_ok=True)
+        # Must open the actual destination in append mode — a fresh-file
+        # test misses the case where an existing file in the dir is owned
+        # by a different user.
+        with open(primary_log_path, "a"):
+            pass
+        structured_log_path = primary_log_path
+    except (PermissionError, OSError):
+        fallback_log_dir = Path(os.environ.get("XDG_CACHE_HOME", "/tmp")) / "ai-lms-agent-logs"
+        fallback_log_dir.mkdir(parents=True, exist_ok=True)
+        structured_log_path = fallback_log_dir / "app.json"
+        logger.warning(
+            "Primary log dir not writable, using fallback",
+            primary=str(primary_log_path),
+            fallback=str(structured_log_path),
+        )
 
     logger.add(
-        log_dir / "app.json",
+        structured_log_path,
         level="INFO",
         format="{message}",
         serialize=True,          # outputs as JSON
