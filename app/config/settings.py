@@ -46,7 +46,10 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
-    postgres_password: str = "admin"
+    # No default. 'admin'/'postgres' defaults that ship in tutorials let a
+    # fresh deploy come up with an open database; pydantic-settings will
+    # raise on a missing POSTGRES_PASSWORD env var instead.
+    postgres_password: str = Field(...)
     # Pool sizing: base 10 + overflow 20 = up to 30 concurrent connections.
     # Sized so a burst of in-flight requests doesn't exhaust the pool now that
     # streaming endpoints no longer hold a connection for the SSE lifetime.
