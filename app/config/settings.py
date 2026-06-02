@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     )
 
     # ─── Application ───────────────────────────────────────────────────────
-    app_env: Literal["development", "staging", "production"] = "development"
+    # Required, no default. The previous 'development' default meant a prod
+    # deploy that forgot to set APP_ENV would boot with dev bypass active
+    # (auth.py:36 — no JWT required) and rate limiting disabled (auth.py:79).
+    # Pydantic raises ValidationError at startup if this is missing.
+    app_env: Literal["development", "staging", "production"] = Field(..., env="APP_ENV")
     app_debug: bool = False
     app_host: str = "0.0.0.0"
     app_port: int = 8000
