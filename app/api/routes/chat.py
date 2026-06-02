@@ -890,12 +890,14 @@ async def chat_stream(
                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
                 token_count = 0
-                # Canned-response nodes (malicious / topic_list) return an
-                # AIMessage directly without invoking an LLM, so no
+                # Canned-response nodes (malicious / topic_list / greeting
+                # Tier-2 / ambiguity Tier-2 / low_relevance / off_scope) return
+                # an AIMessage directly without invoking an LLM, so no
                 # `on_chat_model_stream` event fires for them. We emit their
-                # content from on_chain_end instead. Guarded by a flag to
-                # avoid double-emission.
-                canned_emitted = False
+                # content from on_chain_end instead. Per-node flag prevents
+                # double-emission when greeting/ambiguity fall through to LLM
+                # (e.g. "hmm" routes through LLM in _handle_ambiguity).
+                streamed_nodes: set[str] = set()
 
                 async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
                     kind = event.get("event", "")
@@ -918,14 +920,20 @@ async def chat_stream(
                                     resolved_query = new_rewrite
                                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
-                    # Canned-response nodes (malicious / topic_list / low_relevance / off_scope)
-                    # return an AIMessage directly without invoking an LLM, so no
-                    # `on_chat_model_stream` event fires for them. Emit their
-                    # content from on_chain_end instead.
+                    # Canned-response nodes return an AIMessage directly without
+                    # invoking an LLM, so no `on_chat_model_stream` event fires
+                    # for them. Emit their content from on_chain_end instead.
+                    # Covers: greeting/ambiguity (Tier-2 hardcoded, no LLM),
+                    # malicious/topic_list/low_relevance/off_scope (deterministic
+                    # canned replies). Skip if LLM streaming already emitted
+                    # tokens for this node (e.g. "hmm" → LLM ambiguity).
                     if (
                         kind == "on_chain_end"
-                        and event.get("name") in ("malicious", "topic_list", "low_relevance", "off_scope")
-                        and not canned_emitted
+                        and event.get("name") in (
+                            "greeting", "ambiguity",
+                            "malicious", "topic_list", "low_relevance", "off_scope",
+                        )
+                        and event.get("name") not in streamed_nodes
                     ):
                         out = event.get("data", {}).get("output", {})
                         msgs = out.get("messages") if isinstance(out, dict) else None
@@ -941,6 +949,7 @@ async def chat_stream(
                     if kind == "on_chat_model_stream":
                         node_name = event.get("metadata", {}).get("langgraph_node")
                         if node_name in ("generate_node", "greeting", "ambiguity"):
+                            streamed_nodes.add(node_name)
                             chunk = event.get("data", {}).get("chunk")
                             if chunk and hasattr(chunk, "content") and chunk.content:
                                 token = chunk.content
