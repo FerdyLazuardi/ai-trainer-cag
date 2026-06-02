@@ -3,6 +3,7 @@ Hybrid query cache decorator.
 Caches RAG pipeline results first using Redis (exact match), 
 then using Qdrant (semantic similarity match) to catch variations of the same query.
 """
+import asyncio
 import hashlib
 import json
 import time
@@ -298,6 +299,134 @@ async def set_cached_response(
         await _maybe_prune_semantic_cache(qdrant)
     except Exception as exc:
         logger.warning("Semantic cache SET failed", error=str(exc))
+
+
+async def get_or_compute_cached_response(
+    query: str,
+    compute_fn,
+    *,
+    course_id: int | None = None,
+    cache_namespace: str = "rag",
+    lock_ttl_seconds: int = 30,
+    wait_total_seconds: float = 8.0,
+    poll_interval_seconds: float = 0.4,
+) -> tuple[dict, bool]:
+    """Get a cached response OR compute one — with single-flight semantics.
+
+    On a cold cache (or after a flush), N concurrent users asking the
+    same question would otherwise each fire their own LLM call. With
+    600 DAU, p99 of the first request after a cache flush is the
+    cost of N parallel calls, not 1.
+
+    Pattern:
+      1. Try cache (Redis exact, then Qdrant semantic).
+      2. If hit → return (cached_dict, True).
+      3. If miss → try to acquire a Redis SETNX lock keyed on the
+         same cache key. If we get the lock, run `compute_fn`,
+         store the result, release the lock, return (result, False).
+      4. If another caller holds the lock, poll Redis exact cache
+         for the result they will publish, up to wait_total_seconds.
+         If the result appears, return it. If the wait times out,
+         fall through to compute_fn anyway (defense in depth — a
+         stuck lock must not hang the request indefinitely).
+
+    Returns a tuple (dict, from_cache: bool) so callers can log /
+    meter cache-hit vs cache-compute differently. The dict format
+    matches `get_cached_response()`: {"answer": ..., "sources":
+    [...], "namespace": ...} and is suitable for return as the
+    `cached` field of /api/v1/chat.
+
+    `compute_fn` is an async callable that takes no arguments and
+    returns the same dict shape. It will be called AT MOST ONCE
+    per (key, time window) across all concurrent callers.
+    """
+    # 1. Cache lookup (fast path)
+    cached = await get_cached_response(
+        query, course_id=course_id, cache_namespace=cache_namespace,
+    )
+    if cached is not None:
+        return cached, True
+
+    # 2. Miss: try single-flight lock.
+    redis = get_redis_client()
+    key = _cache_key(query, course_id, namespace=cache_namespace)
+    lock_key = f"{key}:lock"
+    # SET NX EX: atomic acquire-or-fail. value is a random nonce so
+    # release only fires on the lock we own (not someone else's).
+    nonce = uuid.uuid4().hex
+    got_lock = False
+    try:
+        got_lock = await redis.set(lock_key, nonce, nx=True, ex=lock_ttl_seconds)
+    except Exception as exc:
+        logger.warning("singleflight SETNX failed (falling through to compute): {}", exc)
+
+    if got_lock:
+        try:
+            result = await compute_fn()
+            return result, False
+        finally:
+            # Release only if WE still own the lock (Lua: get+del
+            # only if value matches). Without the Lua check, a slow
+            # compute past lock_ttl could let another caller
+            # delete our (now-stale) lock value.
+            try:
+                await _release_lock_if_owner(redis, lock_key, nonce)
+            except Exception as exc:
+                logger.warning("singleflight lock release failed (non-fatal): {}", exc)
+
+    # 3. Another caller is computing. Poll Redis exact cache for
+    # the result they'll publish.
+    waited = 0.0
+    while waited < wait_total_seconds:
+        await asyncio.sleep(poll_interval_seconds)
+        waited += poll_interval_seconds
+        try:
+            raw = await redis.get(key)
+            if raw:
+                return json.loads(raw), True
+        except Exception as exc:
+            logger.warning("singleflight poll failed (continuing): {}", exc)
+
+    # 4. Timeout: fall through to compute anyway. The lock holder
+    # may have crashed; we cannot let their absence starve us.
+    logger.warning(
+        "singleflight wait timed out, computing anyway",
+        waited_s=round(waited, 2),
+        lock_key=lock_key,
+    )
+    result = await compute_fn()
+    return result, False
+
+
+_LUA_RELEASE_IF_OWNER = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+async def _release_lock_if_owner(redis, key: str, nonce: str) -> None:
+    """Release a single-flight lock only if WE still own it.
+
+    Implemented as a small Lua script so the GET+DEL is atomic.
+    A slow compute_fn() can let the lock TTL expire, in which case
+    another caller may now hold the lock — deleting it would
+    let a THIRD caller compute redundantly.
+    """
+    # The redis-py async client exposes script loading via .eval().
+    # Fall back to a non-atomic delete if the script fails to load
+    # (e.g. older redis-server without eval).
+    try:
+        await redis.eval(_LUA_RELEASE_IF_OWNER, 1, key, nonce)
+    except Exception:
+        try:
+            current = await redis.get(key)
+            if current == nonce:
+                await redis.delete(key)
+        except Exception:
+            pass
 
 
 async def _maybe_prune_semantic_cache(qdrant) -> None:
