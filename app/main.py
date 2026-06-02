@@ -197,9 +197,81 @@ def create_app() -> FastAPI:
                 return HTMLResponse(content=f.read())
         return {"message": "Askfer UI files not found."}
         
-    @app.get("/health", summary="Health Check")
+    @app.get("/health", summary="Liveness Check (always 200 if process is up)")
     async def health_check() -> dict:
+        """Liveness probe — does NOT check downstream services.
+
+        Use /readyz for readiness. K8s/Proxmox should hit /health as the
+        liveness probe (so the container is not killed for transient
+        downstream hiccups) and /readyz for routing (so traffic is shed
+        when Postgres/Qdrant/Redis are unreachable).
+        """
         return {"status": "ok", "env": settings.app_env}
+
+    @app.get("/readyz", summary="Readiness Check (verifies Postgres + Qdrant + Redis)")
+    async def readyz() -> dict:
+        """Readiness probe — pings every downstream the API depends on.
+
+        Returns 200 with a per-component status dict when all three
+        backends are reachable within a 2s timeout each; returns 503
+        (with the same dict, one of whose values is "down") if any one
+        is unreachable. Load balancers should pull this instance out
+        of rotation when 503, without killing the process (that's
+        /health's job).
+        """
+        import asyncio as _asyncio
+        from fastapi.responses import JSONResponse
+
+        from app.database import postgres as _pg
+        from app.database.qdrant_client import get_qdrant_client
+        from app.database.redis_client import get_redis_client
+
+        async def _check_postgres() -> str:
+            try:
+                async with _pg.engine.connect() as conn:
+                    await _asyncio.wait_for(
+                        conn.execute(__import__("sqlalchemy").text("SELECT 1")),
+                        timeout=2.0,
+                    )
+                return "ok"
+            except Exception:
+                return "down"
+
+        async def _check_qdrant() -> str:
+            try:
+                client = get_qdrant_client()
+                # QdrantManager wraps AsyncQdrantClient; .client exposes the
+                # raw async client with a .get_collections() coroutine.
+                await _asyncio.wait_for(client.client.get_collections(), timeout=2.0)
+                return "ok"
+            except Exception:
+                return "down"
+
+        async def _check_redis() -> str:
+            try:
+                redis = get_redis_client()
+                await _asyncio.wait_for(redis.ping(), timeout=2.0)
+                return "ok"
+            except Exception:
+                return "down"
+
+        pg, qd, rd = await _asyncio.gather(
+            _check_postgres(), _check_qdrant(), _check_redis(),
+            return_exceptions=True,
+        )
+        # If a check raised instead of returning "ok"/"down", surface the
+        # error in the response so operators can see WHY it's down.
+        def _norm(v) -> str:
+            if isinstance(v, Exception):
+                logger.warning("readyz component error: {}", v)
+                return f"error: {type(v).__name__}"
+            return v
+        pg, qd, rd = _norm(pg), _norm(qd), _norm(rd)
+        all_ok = all(s == "ok" for s in (pg, qd, rd))
+        return JSONResponse(
+            status_code=200 if all_ok else 503,
+            content={"status": "ok" if all_ok else "degraded", "postgres": pg, "qdrant": qd, "redis": rd},
+        )
 
     return app
 
