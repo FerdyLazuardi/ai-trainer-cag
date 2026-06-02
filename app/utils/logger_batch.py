@@ -19,6 +19,16 @@ from app.utils.pii import redact_pii
 # chokepoint between the request path and the durable log table.
 _PII_COLUMNS = ("query", "rewritten_query", "answer")
 
+# Hard cap on the Redis list length. The list is a buffer between the
+# request path and the agent_logs Postgres table; in steady state it's
+# flushed every 10s and stays under 50 entries. 1000 is 20x the
+# steady-state ceiling — anything beyond means the flush worker is
+# broken (DB down, OOM, etc.) and we should drop the oldest rather
+# than let the list grow unbounded. LTRIM keeps the most recent
+# 1000 entries, which is what an operator debugging a stuck flush
+# actually wants.
+_LOG_BUFFER_MAX = 1000
+
 
 def _redact_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Return a shallow copy of `entry` with PII columns redacted.
@@ -90,13 +100,28 @@ class BatchLogger:
         redacted = _redact_entry(log_entry)
 
         try:
-            # LPUSH is O(1).
-            await redis.lpush(self.redis_key, json.dumps(redacted))
-            
+            # LPUSH + LTRIM in a single pipeline so the cap is applied
+            # atomically — there's no window where the list could be
+            # LPUSH'd without an LTRIM following it. The transaction
+            # wraps both ops, so if either fails, neither lands.
+            #
+            # LTRIM keeps indices 0.._LOG_BUFFER_MAX-1 (the most
+            # recent N entries). If the flush worker is broken and the
+            # list would otherwise grow unboundedly, the oldest entries
+            # are dropped — which is the right failure mode for a
+            # short-lived buffer. The console log on the next flush
+            # failure will surface the underlying cause.
+            payload = json.dumps(redacted)
+            async with redis.pipeline(transaction=True) as pipe:
+                pipe.lpush(self.redis_key, payload)
+                pipe.ltrim(self.redis_key, 0, _LOG_BUFFER_MAX - 1)
+                pipe.llen(self.redis_key)
+                results = await pipe.execute()
+            list_len = results[2]
+
             # If we've reached the threshold, we could signal the worker to flush immediately.
             # But the requirement says "when a threshold is reached OR timer expires".
             # For simplicity, we check the length and flush if it's > batch_size.
-            list_len = await redis.llen(self.redis_key)
             if list_len >= self.batch_size:
                 # Trigger an immediate background flush without blocking the request.
                 # Track the task so Python doesn't GC it mid-flight.
