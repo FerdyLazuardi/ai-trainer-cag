@@ -450,4 +450,9 @@ class WorkerSettings:
     functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task, ingest_text_task]
     on_startup = startup
     on_shutdown = shutdown
-    max_jobs = 1
+    # Default 2 in-flight jobs: the worker container ships with 1 vCPU / 1 GB
+    # and each ingest job embeds + upserts in series. 1 was undersized (a single
+    # Moodle course of 100+ chunks backed up the queue), and going higher than
+    # 2 risks OOM under concurrent Qdrant/Postgres roundtrips.
+    max_jobs = 2
+    job_timeout = 600
