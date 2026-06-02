@@ -9,6 +9,30 @@ from sqlalchemy import insert
 from app.database.models import AgentLog
 from app.database.postgres import AsyncSessionLocal
 from app.database.redis_client import get_redis_client
+from app.utils.pii import redact_pii
+
+
+# Columns of AgentLog that may contain user free-form text. These are the
+# three fields where a PII (email, phone, NIK, NPWP, credit card) can
+# land if the user typed it. We redact at the batch-insert boundary
+# (not at call sites) so no caller can forget — this is the single
+# chokepoint between the request path and the durable log table.
+_PII_COLUMNS = ("query", "rewritten_query", "answer")
+
+
+def _redact_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallow copy of `entry` with PII columns redacted.
+
+    Non-PII columns (ids, scores, ints, bools) pass through unchanged.
+    Missing columns are left missing (we don't synthesize empty
+    strings; SQLAlchemy would interpret that as 'user typed
+    nothing' and break downstream eval queries).
+    """
+    out = dict(entry)
+    for col in _PII_COLUMNS:
+        if col in out and isinstance(out[col], str):
+            out[col] = redact_pii(out[col])
+    return out
 
 
 class BatchLogger:
@@ -45,16 +69,29 @@ class BatchLogger:
         await self.flush()
 
     async def add_log(self, log_entry: Dict[str, Any]):
-        """Buffer a log entry in Redis."""
+        """Buffer a log entry in Redis.
+
+        The entry is run through `_redact_entry()` so PII (emails,
+        phones, NIK, NPWP, credit cards) in `query` / `rewritten_query`
+        / `answer` is masked before it lands in Redis. This is the
+        single chokepoint between the request path and the durable
+        agent_logs Postgres table; callers don't need to remember
+        to redact.
+        """
         redis = get_redis_client()
-        
+
         # Add timestamp if not present
         if "created_at" not in log_entry:
             log_entry["created_at"] = datetime.now(timezone.utc).isoformat()
-        
+
+        # Redact free-form text fields in-place (a copy) so PII
+        # never reaches Redis. We mutate the local dict only; the
+        # caller's reference is left alone.
+        redacted = _redact_entry(log_entry)
+
         try:
             # LPUSH is O(1).
-            await redis.lpush(self.redis_key, json.dumps(log_entry))
+            await redis.lpush(self.redis_key, json.dumps(redacted))
             
             # If we've reached the threshold, we could signal the worker to flush immediately.
             # But the requirement says "when a threshold is reached OR timer expires".
