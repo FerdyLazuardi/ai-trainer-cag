@@ -67,7 +67,7 @@ def get_cheap_llm() -> ChatOpenAI:
     scores stay comparable week-over-week.
     """
     return ChatOpenAI(
-        model="google/gemini-2.5-flash-lite",
+        model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=0.3,
@@ -104,7 +104,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
     output is ~200 chars).
     """
     return ChatOpenAI(
-        model="google/gemini-2.5-flash-lite",
+        model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=0.0,
@@ -145,7 +145,7 @@ def get_generate_llm() -> ChatOpenAI:
     room for the longest typical brainstorm answer.
     """
     return ChatOpenAI(
-        model="google/gemini-2.5-flash-lite",
+        model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=0.0,

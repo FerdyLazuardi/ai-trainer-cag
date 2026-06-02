@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemini-2.5-flash"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
+    # Cheap-Lite pin for background tasks (memory summarization, eval judge,
+    # pre-processor intent classification, generate node). 4-8x cheaper
+    # than `llm_model` per the per-token OpenRouter pricing. Pinned by
+    # default so eval scores and routing accuracy stay comparable week-
+    # over-week; override with `CHEAP_LLM_MODEL` env var if you need a
+    # different trade-off.
+    cheap_llm_model: str = "google/gemini-2.5-flash-lite"
 
     # ─── Phoenix (Observability — self-hosted) ──────────────────────────────
     phoenix_endpoint: str = Field(default="http://phoenix:6006", alias="PHOENIX_ENDPOINT")
