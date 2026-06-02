@@ -98,7 +98,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     if low_msg.startswith(GREETING_PREFIXES) and len(low_msg) < 60:
         return {"intent": "GREETING", "rewritten_query": user_msg}
 
-    llm = get_llm()
+    llm = get_preprocessor_llm()
     structured = llm.with_structured_output(AskferPreProcessorResult)
     try:
         result = await structured.ainvoke(
