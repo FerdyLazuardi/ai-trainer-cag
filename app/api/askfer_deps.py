@@ -24,8 +24,17 @@ def _client_ip(request: Request) -> str:
 async def rate_limit_by_ip(request: Request) -> str:
     """Public endpoint guard: rate-limit by client IP. No auth.
 
-    Fail-open if Redis errors (mirrors `auth.py` pattern) — abuse would still
-    be blocked at infra layer, and we'd rather serve real visitors than 500.
+    Fail-closed in production, fail-open in development (same policy
+    as `app.api.auth.get_current_user`):
+
+      - Production: a Redis outage means the rate limiter is
+        untrustworthy. Returning 503 lets the LB shed the instance
+        via /readyz, and an attacker who can DoS Redis can't bypass
+        the rate limit.
+      - Development: a 30s Redis blip would otherwise brick the
+        local iteration loop. The dev env is single-instance, so a
+        hard 503 would be the worst of both worlds (no healthy
+        peers but the user is still logged out).
     """
     ip = _client_ip(request)
     redis = get_redis_client()
@@ -47,5 +56,13 @@ async def rate_limit_by_ip(request: Request) -> str:
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning(f"Askfer rate limit Redis error (allowing request): {exc}")
+        logger.error(f"Askfer rate limit Redis error: {exc}")
+        if settings.app_env == "production":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter unavailable. Please retry shortly.",
+                headers={"Retry-After": "5"},
+            ) from exc
+        else:
+            logger.warning("Askfer rate limit Redis error (dev: allowing request)")
     return ip

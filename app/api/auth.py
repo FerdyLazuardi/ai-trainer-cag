@@ -82,7 +82,7 @@ async def get_current_user(
     redis = get_redis_client()
     rate_limit_key = f"rate_limit:{user.user_id}"
     limit = settings.rate_limit_per_minute
-    
+
     try:
         # Atomic pipeline: incr + expire in a single round-trip to avoid TOCTOU
         pipe = redis.pipeline()
@@ -90,7 +90,7 @@ async def get_current_user(
         pipe.expire(rate_limit_key, 60)
         results = await pipe.execute()
         request_count = results[0]
-        
+
         if request_count > limit:
             logger.warning(f"Rate limit exceeded for {user.user_id}")
             raise HTTPException(
@@ -101,5 +101,22 @@ async def get_current_user(
         raise
     except Exception as e:
         logger.error(f"Rate limiting error: {e}")
-        
+        # Fail-closed in production: a Redis outage means the rate
+        # limiter is untrustworthy, so the safest default is to refuse
+        # the request and let /readyz shed the instance from the load
+        # balancer. Operators get paged via the 503, the LB pulls us
+        # out, and users on the still-healthy instance (if any)
+        # continue normally.
+        #
+        # Fail-open in development: 30s Redis blips would otherwise
+        # brick the local iteration loop. The dev environment is
+        # single-instance, so a hard 503 would be the worst of both
+        # worlds (no healthy peers, but logged out anyway).
+        if settings.app_env == "production":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter unavailable. Please retry shortly.",
+                headers={"Retry-After": "5"},
+            ) from e
+
     return user
