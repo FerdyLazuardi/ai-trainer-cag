@@ -66,3 +66,48 @@ async def rate_limit_by_ip(request: Request) -> str:
         else:
             logger.warning("Askfer rate limit Redis error (dev: allowing request)")
     return ip
+
+
+async def rate_limit_sync_by_ip(request: Request) -> str:
+    """Tighter rate limit for /askfer/sync (admin re-sync trigger).
+
+    Gated on `X-Admin-Secret`, not JWT — so a compromised secret
+    bypasses user-level limits. Each call enqueues a full
+    re-scrape (homepage + projects + CV) which can OOM Qdrant
+    if fired in a loop. Cap at 5 calls per 60s per IP. The admin
+    workflow needs ~1 call per refresh, so 5/min is plenty of
+    headroom.
+
+    Same fail-closed-in-prod / fail-open-in-dev policy as
+    `rate_limit_by_ip`.
+    """
+    ip = _client_ip(request)
+    redis = get_redis_client()
+    key = f"askfer:sync:rate:{ip}"
+    limit = 5
+    window = 60
+
+    try:
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, window)
+        results = await pipe.execute()
+        count = results[0]
+        if count > limit:
+            logger.warning(f"Askfer sync rate limit exceeded for {ip}: {count}/{limit}")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Askfer sync rate limit exceeded. Limit is {limit}/{window}s.",
+                headers={"Retry-After": str(window)},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Askfer sync rate limit Redis error: {exc}")
+        if settings.app_env == "production":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter unavailable. Please retry shortly.",
+                headers={"Retry-After": "5"},
+            ) from exc
+    return ip

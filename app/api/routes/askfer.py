@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
-from app.api.askfer_deps import rate_limit_by_ip
+from app.api.askfer_deps import rate_limit_by_ip, rate_limit_sync_by_ip
 from app.api.routes.ingest import get_arq_redis
 from app.api.concurrency import acquire_pipeline_slot_or_503
 from app.api.schemas import AskferRequest, AskferSyncRequest
@@ -288,6 +288,7 @@ async def askfer_stream(
 async def askfer_sync(
     request: AskferSyncRequest,
     x_admin_secret: str = Header(..., alias="X-Admin-Secret"),
+    _client_ip: str = Depends(rate_limit_sync_by_ip),
 ):
     """Enqueue an arq job to re-scrape homepage + projects + CV. Requires
     `X-Admin-Secret` header matching ASKFER_ADMIN_SECRET (constant-time check)."""
