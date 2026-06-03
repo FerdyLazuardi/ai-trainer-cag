@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 from arq.connections import RedisSettings
+from arq.cron import cron
 from loguru import logger
 
 from app.config.logging import setup_logging
@@ -110,6 +111,12 @@ async def _profile_watcher_task():
     os.makedirs(profile_dir, exist_ok=True)
     logger.info("Profile watcher started", path=profile_dir)
 
+    # Skip file watching in production — no one edits profile.md there,
+    # and the 1000ms poll loop burns CPU on every worker heartbeat.
+    if settings.app_env == "production":
+        logger.info("Profile watcher disabled in production (app_env=production)")
+        return
+
     try:
         # Polling is required when running inside a container with a bind mount
         # from a Windows/macOS host — inotify events aren't forwarded across
@@ -216,7 +223,7 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     # ── Guard 1: Deduplication ────────────────────────────────────────────────
     # Only the FIRST task to acquire this key proceeds; subsequent ones abort.
     dedup_key = f"rag:ltm:syncing:{conversation_id}"
-    acquired = await redis.set(dedup_key, "1", nx=True, ex=3600)   # 1-hour TTL
+    acquired = await redis.set(dedup_key, "1", nx=True, ex=300)   # 5-min TTL — task completes in <30s; shorter TTL means a crashed task unblocks within 5min instead of 1h
     if not acquired:
         logger.info("LTM sync: skipped (another task already running)", conversation_id=conversation_id)
         return {"status": "skipped", "reason": "dedup_lock"}
@@ -402,13 +409,17 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
                     user_profile = UserProfile(user_id=user_id)
                     session.add(user_profile)
 
-                if prefs_data.get("role"):
+                # Write any non-null prefs. For fields that were explicitly
+                # set to None by the LLM (e.g. user said "stop using formal tone"),
+                # we check if the key is present in prefs_data — present+None means
+                # explicit clear; missing key means no signal (leave unchanged).
+                if "role" in prefs_data:
                     user_profile.role = prefs_data["role"]
-                if prefs_data.get("preferred_tone"):
+                if "preferred_tone" in prefs_data:
                     user_profile.preferred_tone = prefs_data["preferred_tone"]
-                if prefs_data.get("formatting_pref"):
+                if "formatting_pref" in prefs_data:
                     user_profile.formatting_pref = prefs_data["formatting_pref"]
-                if prefs_data.get("custom_instructions"):
+                if "custom_instructions" in prefs_data:
                     user_profile.custom_instructions = prefs_data["custom_instructions"]
 
                 # Touch updated_at so the stale-prefs filter knows when this was last confirmed.
@@ -439,6 +450,17 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
     return {"status": "synced"}
 
+async def prune_ltm_cron_task(ctx: dict) -> dict[str, Any]:
+    """Cron task: run daily to prune LTM vectors older than 60 days across all users."""
+    logger.info("Starting global LTM pruning cron job")
+    try:
+        from app.agents.long_term_memory_qdrant import qdrant_ltm
+        deleted = await qdrant_ltm.prune_global_inactive_episodes(days_old=60.0)
+        return {"status": "pruned", "deleted_episodes": deleted}
+    except Exception as exc:
+        logger.error(f"Global LTM pruning failed: {exc}")
+        raise
+
 class WorkerSettings:
     """arq worker configuration."""
     redis_settings = RedisSettings(
@@ -447,7 +469,11 @@ class WorkerSettings:
         database=settings.redis_db,
         password=settings.redis_password if settings.redis_password else None,
     )
-    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task, ingest_text_task]
+    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task, ingest_text_task, prune_ltm_cron_task]
+    cron_jobs = [
+        # Run daily at 2:00 AM UTC
+        cron(prune_ltm_cron_task, hour=2, minute=0)
+    ]
     on_startup = startup
     on_shutdown = shutdown
     # Default 2 in-flight jobs: the worker container ships with 1 vCPU / 1 GB

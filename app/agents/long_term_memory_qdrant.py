@@ -133,6 +133,7 @@ class QdrantLTMService:
                 query_filter=self._build_user_filter(user_id),
                 limit=_LTM_CANDIDATES,
                 with_payload=True,
+                score_threshold=0.70,  # only inject episodes with meaningful semantic similarity
             )
             results = response.points
         except Exception as exc:
@@ -148,7 +149,8 @@ class QdrantLTMService:
         scored: list[tuple[float, object]] = []
         for hit in results:
             payload = hit.payload or {}
-            created_at = float(payload.get("created_at") or now)
+            raw_created = payload.get("created_at")
+            created_at = float(raw_created) if raw_created is not None else now
             age_days = max(0.0, (now - created_at) / 86400.0)
             decay = math.exp(-age_days / _LTM_DECAY_DAYS)
             final_score = float(hit.score or 0.0) * decay
@@ -336,6 +338,59 @@ class QdrantLTMService:
             )
         except Exception as exc:
             logger.warning("LTM: prune_user_episodes failed", user_id=user_id, error=str(exc))
+
+    async def prune_global_inactive_episodes(self, days_old: float = 60.0) -> int:
+        """Global prune: delete all episodes older than `days_old` across all users.
+
+        Runs as a daily cron job to keep Qdrant memory usage bounded. Unlike
+        `prune_user_episodes` which caps per-user count, this deletes stale
+        history for inactive users.
+        """
+        cutoff_epoch = time.time() - (days_old * 86400.0)
+        qdrant = get_qdrant_client()
+        total_deleted = 0
+        try:
+            next_offset = None
+            while True:
+                # Scroll globally (no user filter) to find stale points
+                batch, next_offset = await qdrant.client.scroll(
+                    collection_name=_LTM_COLLECTION,
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=False,
+                    offset=next_offset,
+                )
+                if not batch:
+                    break
+
+                to_delete = []
+                for p in batch:
+                    # Missing created_at defaults to 0 (very old) so it gets pruned
+                    created_at = float((p.payload or {}).get("created_at") or 0.0)
+                    if created_at < cutoff_epoch:
+                        to_delete.append(p.id)
+
+                if to_delete:
+                    await qdrant.client.delete(
+                        collection_name=_LTM_COLLECTION,
+                        points_selector=PointIdsList(points=to_delete),
+                        wait=False,
+                    )
+                    total_deleted += len(to_delete)
+
+                if next_offset is None:
+                    break
+
+            if total_deleted > 0:
+                logger.info(
+                    "LTM: global pruning complete",
+                    deleted_episodes=total_deleted,
+                    days_old=days_old,
+                )
+            return total_deleted
+        except Exception as exc:
+            logger.error("LTM: global prune failed", error=str(exc))
+            return 0
 
 
 # Singleton

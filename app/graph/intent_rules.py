@@ -88,12 +88,24 @@ _IDENTITY_PHRASES = (
 )
 
 # ── Rule 5: greeting prefixes ────────────────────────────────────────────────
-# Already in the existing pipeline; centralised here for one-stop classifier.
-# "hi" is listed standalone (not just "hi " / "hi,") so the bare token "hi"
-# also matches — the prior list required a trailing space/punct, which sent
-# "hi" alone to the LLM unnecessarily.
+# Regex-based to catch common Indonesian typo elongations:
+# "halooo", "haiiii", "heiii", "heyy", "helloooo", etc.
+# Pattern anchored at start of string, case-insensitive applied at call site.
+_GREETING_PREFIX_RE = re.compile(
+    r"^("
+    r"halo+|hai+|hei+|hi+|hey+|hello+"   # salutations with elongation
+    r"|pagi|siang|sore|malam"              # time-of-day greetings
+    r"|good\s+(morning|afternoon|evening)" # English time greetings
+    r"|selamat"                            # formal ID opener
+    r"|permisi|excuse\s+me"                # polite openers
+    r"|test"                               # test messages
+    r")[\s,\.!?]*",                        # optional trailing punct/space
+    re.IGNORECASE,
+)
+
+# Keep tuple for backward compat (used in _handle_greeting language detect)
 _GREETING_PREFIXES = (
-    "halo", "hai", "hi", "hi ", "hi,", "hi.", "hey", "hello",
+    "halo", "hai", "hei", "hi ", "hi,", "hi.", "hey", "hello",
     "pagi", "siang", "sore", "malam",
     "good morning", "good afternoon", "good evening",
     "selamat", "test ", "test,", "test.",
@@ -112,7 +124,6 @@ _TOPIC_LIST_PHRASES = (
     "ada topik apa", "topik apa aja", "topik apa saja",
     "ada materi apa", "materi apa aja", "materi apa saja",
     "ada course apa", "course apa aja", "course apa saja",
-    "ada课程 apa",  # accidentally-id-mixed; defensive
     "list topik", "list materi", "list course", "list pelatihan",
     "topik yang tersedia", "materi yang tersedia",
     "course yang tersedia", "pelatihan yang tersedia",
@@ -130,13 +141,16 @@ _TOPIC_LIST_PHRASES = (
 # former should short-circuit to GREETING; the latter must reach the LLM so the
 # actual question gets answered.
 _GREETING_WORDS = {
-    "halo", "hai", "hi", "hey", "hello", "pagi", "siang", "sore", "malam",
+    "halo", "hai", "hei", "hi", "hey", "hello", "pagi", "siang", "sore", "malam",
     "selamat", "datang", "test", "good", "morning", "afternoon", "evening",
+    "permisi", "excuse", "me",
+    "assalamualaikum", "assalam", "waalaikumsalam", "waalaykum",
 }
 # Conversational fluff that may trail a greeting without making it a question.
 _GREETING_FLUFF = {
     "ya", "yaa", "dong", "donk", "kak", "ka", "min", "bang", "gan", "ges",
     "gaes", "nih", "ni", "aja", "deh", "sih", "kok", "aku", "saya", "gw", "gue",
+    "wr", "wb", "semua", "semuanya", "teman", "temen", "guys", "all",
 }
 
 
@@ -171,12 +185,15 @@ def _is_math(text: str) -> bool:
 
 
 def _is_off_scope_keyword(low: str) -> bool:
-    """Match any off-scope keyword. Whole-word for short keywords, raw
-    substring for multi-word phrases (less false-positive risk)."""
+    """Match any off-scope keyword. Whole-word match for both single and
+    multi-word keywords to avoid catching substrings of legitimate terms."""
     padded = " " + low + " "
     for kw in _OFF_SCOPE_KEYWORDS:
         if " " in kw:
-            if kw in low:
+            # Multi-word: pad with spaces so "berita terkini" doesn't match
+            # "soal berita terkininya" (the trailing "nya" would be caught
+            # by the unpadded `kw in low` check).
+            if f" {kw} " in padded:
                 return True
         else:
             if f" {kw} " in padded:
@@ -203,14 +220,22 @@ def _is_greeting(low: str) -> bool:
     (+ optional conversational fluff). A greeting that PREFIXES a real question
     ("pagi, modal itu apa", "hi gimana cara daftar") must NOT short-circuit; it
     falls through to the LLM so the actual question gets answered.
+
+    Uses regex to catch elongated typos: "halooo", "haiiii", "heiii", "heyy".
     """
-    if len(low) > 40:
+    if len(low) > 60:
         return False
-    if not any(low.startswith(p) for p in _GREETING_PREFIXES):
+    m = _GREETING_PREFIX_RE.match(low)
+    if not m:
         return False
-    # Tokenize, strip punctuation, and check every token is a greeting word or
-    # harmless fluff. Any "real" token (a topic/question word) → not pure → LLM.
-    tokens = re.findall(r"[a-zA-ZÀ-ſ]+", low)
+    # Check the REMAINDER after the greeting prefix — if empty or only fluff,
+    # it's a pure greeting. This avoids the token-set lookup failing on
+    # elongated forms like "heiii" or "halooo" that aren't in _GREETING_WORDS.
+    remainder = low[m.end():].strip()
+    if not remainder:
+        return True
+    # Tokenize remainder, check every token is harmless fluff.
+    tokens = re.findall(r"[a-zA-ZÀ-ſ]+", remainder)
     leftover = [t for t in tokens if t not in _GREETING_WORDS and t not in _GREETING_FLUFF]
     return len(leftover) == 0
 

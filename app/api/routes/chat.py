@@ -265,13 +265,26 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
             )
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
     else:
-        # No owner yet — claim it
+        # No owner yet — claim atomically with SET NX to prevent TOCTOU race.
+        # Two concurrent requests for the same new conversation_id could both
+        # see stored_owner=None and both "claim" it; NX ensures only one wins.
+        claimed = await redis.set(owner_key, current_user.user_id, nx=True, ex=86400 * 7)
+        if not claimed:
+            # Another request claimed it between our GET and SET — re-read to verify
+            actual_owner = await redis.get(owner_key)
+            if actual_owner and actual_owner != current_user.user_id:
+                logger.error(
+                    "Ownership race lost — another user claimed this conversation_id",
+                    conversation_id=conversation_id,
+                    current_user_id=current_user.user_id,
+                    actual_owner=actual_owner,
+                )
+                raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
         logger.info(
             "Claiming conversation ownership",
             conversation_id=conversation_id,
-            new_owner=current_user.user_id
+            new_owner=current_user.user_id,
         )
-        await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
 async def _prepare_rag_context(
     request: ChatRequest,
     current_user: User,
@@ -285,14 +298,25 @@ async def _prepare_rag_context(
     """
     from llama_index.core import Settings as LISettings
     from app.config.embedding_config import ensure_llamaindex_configured
+    from app.graph.intent_rules import classify as _tier1_classify
+    import time as _time
+
+    _t0 = _time.perf_counter()
+
+    # Tier-1 pre-check: skip embedding entirely for greetings/fillers.
+    _tier1_intent = _tier1_classify(resolved_query)
+    _skip_embedding = _tier1_intent in ("GREETING", "AMBIGUOUS")
 
     # Embed once — reused by cache lookup, LTM lookup, and cache write.
-    try:
-        ensure_llamaindex_configured()
-        query_embedding = await LISettings.embed_model.aget_query_embedding(resolved_query)
-    except Exception as exc:
-        logger.warning(f"Failed to compute query embedding once: {exc}")
-        query_embedding = None
+    query_embedding = None
+    if not _skip_embedding:
+        try:
+            ensure_llamaindex_configured()
+            query_embedding = await LISettings.embed_model.aget_query_embedding(resolved_query)
+            logger.debug(f"[TIMING] embedding: {_time.perf_counter()-_t0:.2f}s")
+        except Exception as exc:
+            logger.warning(f"Failed to compute query embedding once: {exc}")
+            query_embedding = None
 
     # Cache pre-filter: skip cache lookup for queries that need fresh
     # synthesis/empathy. Cache stores KNOWLEDGE-shaped answers — feeding them
@@ -309,20 +333,22 @@ async def _prepare_rag_context(
         r"role[\s-]?play|anggap kamu)\b",
         re.IGNORECASE,
     )
-    skip_cache = bool(_OPINION_REGEX.search(resolved_query))
+    skip_cache = _skip_embedding or bool(_OPINION_REGEX.search(resolved_query))
     if skip_cache:
         logger.debug(
-            "Cache lookup skipped — query matches opinion/synthesis pattern",
+            "Cache lookup skipped — greeting/filler or opinion/synthesis pattern",
             query=resolved_query[:60],
         )
 
     cached = None
     if not skip_cache:
+        _t_cache_start = _time.perf_counter()
         cached = await get_cached_response(
             resolved_query,
             course_id=request.course_id,
             query_embedding=query_embedding,
         )
+        logger.debug(f"[TIMING] get_cached_response: {_time.perf_counter()-_t_cache_start:.2f}s")
     if cached:
         return {"cached": cached, "query_embedding": query_embedding}
 
@@ -340,6 +366,23 @@ async def _prepare_rag_context(
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
 
+    # For Tier-1 intents (GREETING, AMBIGUOUS), skip all expensive I/O:
+    # no history summarization (avoids LLM call), no LTM, no UserProfile.
+    # These intents have hardcoded responses that don't use any of this context.
+    if _skip_embedding:
+        return {
+            "cached": None,
+            "initial_state": {
+                "messages": [HumanMessage(content=resolved_query)],
+                "conversation_id": conversation_id,
+                "conversation_summary": "",
+                "user_profile": {"summary": "", "course_names": []},
+                "user_preferences": None,
+            },
+            "query_embedding": None,
+            "was_personalized": False,
+        }
+
     async def _load_ltm_if_eligible():
         if not ltm_eligible:
             return {"summary": "", "course_names": []}
@@ -352,14 +395,11 @@ async def _prepare_rag_context(
     async def _load_user_profile_if_eligible():
         if not ltm_eligible:
             return None
-        # Short-lived session: open, fetch, release immediately. This keeps the
-        # pooled connection out of the SSE stream's lifecycle (the stream can
-        # run 5-10s; holding a connection that whole time starves the pool).
-        # UserProfile is read into plain column attrs (expire_on_commit=False),
-        # so it stays usable after the session closes.
         async with AsyncSessionLocal() as session:
             return await session.get(UserProfile, user_id)
 
+    logger.debug(f"[TIMING] pre-gather: {_time.perf_counter()-_t0:.2f}s")
+    _t_gather_start = _time.perf_counter()
     (
         (summary, recent_history),
         ltm_profile,
@@ -373,6 +413,7 @@ async def _prepare_rag_context(
         _load_ltm_if_eligible(),
         _load_user_profile_if_eligible(),
     )
+    logger.debug(f"[TIMING] gather(history+ltm+profile): {_time.perf_counter()-_t_gather_start:.2f}s, total_so_far: {_time.perf_counter()-_t0:.2f}s")
 
     messages = []
     for turn in recent_history:
@@ -854,6 +895,11 @@ async def chat_stream(
                 if resolved_query != request.query:
                     yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
+                # Release semaphore BEFORE fake playback — cache hits don't need
+                # a pipeline slot. Holding it for ~4s of word-by-word streaming
+                # wastes a concurrent slot for zero compute work.
+                sem_release()
+
                 words = cached["answer"].split(" ")
                 chunk_size = 4
                 for i in range(0, len(words), chunk_size):
@@ -878,9 +924,89 @@ async def chat_stream(
                 except Exception as e:
                     logger.warning(f"Cache-hit AFK LTM schedule failed: {e}")
             finally:
-                sem_release()
+                pass  # semaphore already released before playback started
 
         return StreamingResponse(_stream_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ── Redis greeting cache check (before Tier-1) ───────────────────────────
+    # Any query that was previously answered as GREETING (from LangGraph or
+    # Tier-1 fast-path) is cached here with 1h TTL. This catches sapaan like
+    # "assalamualaikum" that don't match Tier-1 regex but were cached after
+    # first LangGraph run. Serves ~7ms from Redis, bypassing everything.
+    _low_q = resolved_query.lower().strip()
+    _greeting_cache_key = f"rag:greeting:{_low_q[:80]}"
+    _redis_client = get_redis_client()
+    _cached_greeting_resp = None
+    try:
+        _cached_greeting_resp = await _redis_client.get(_greeting_cache_key)
+    except Exception:
+        pass
+
+    if _cached_greeting_resp:
+        _cached_greeting_text = _cached_greeting_resp if isinstance(_cached_greeting_resp, str) else _cached_greeting_resp.decode()
+        logger.info("Greeting Redis cache HIT", query=resolved_query[:60])
+
+        async def _stream_greeting_cached():
+            try:
+                sem_release()
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                yield f"data: {json.dumps({'token': _cached_greeting_text})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
+                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=_cached_greeting_text)
+                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+            finally:
+                pass
+
+        return StreamingResponse(_stream_greeting_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ── Tier-1 fast-path: bypass LangGraph entirely for GREETING/AMBIGUOUS ──
+    # LangGraph astream_events has significant overhead (~15-50s) even for
+    # hardcoded responses. For Tier-1 intents we already know the response —
+    # stream it directly without touching the graph.
+    from app.graph.intent_rules import classify as _t1_classify, _is_greeting as _is_pure_greeting, _is_identity_question
+    _t1_intent = _t1_classify(resolved_query)
+    if _t1_intent in ("GREETING", "AMBIGUOUS"):
+        low_q = _low_q
+
+        # Determine fast reply
+        if _t1_intent == "GREETING":
+            if _is_pure_greeting(low_q):
+                if any(c in low_q for c in ("halo", "hai", "hei", "pagi", "siang", "sore", "malam", "selamat", "permisi", "assalam", "waalaikum")):
+                    _fast_reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
+                else:
+                    _fast_reply = "Hi! Anything I can help with from Amarthapedia?"
+            elif _is_identity_question(low_q):
+                if any(c in low_q for c in ("kamu", "lu", "lo", "ini apps", "ini aplikasi", "perkenalkan")):
+                    _fast_reply = "Aku A-Pedi, asisten AI di Amarthapedia — LMS internal Amartha untuk karyawan. Bisa bantu cari info dari materi training soal produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
+                else:
+                    _fast_reply = "I'm A-Pedi, the AI assistant for Amarthapedia — Amartha's internal LMS for employees. What would you like to know?"
+            else:
+                _fast_reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
+        else:  # AMBIGUOUS / pure filler
+            if any(ord(c) > 127 for c in resolved_query):
+                _fast_reply = "Ada yang bisa aku bantu? Boleh sebut topiknya ya."
+            else:
+                _fast_reply = "Anything I can help with? Feel free to name a topic."
+
+        # Cache this greeting response for 1 hour
+        try:
+            await _redis_client.set(_greeting_cache_key, _fast_reply, ex=3600)
+        except Exception:
+            pass
+
+        async def _stream_tier1():
+            try:
+                sem_release()
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                yield f"data: {json.dumps({'token': _fast_reply})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
+                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=_fast_reply)
+                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+            finally:
+                pass
+
+        logger.info(f"Tier-1 fast-path bypass LangGraph: {_t1_intent}", query=resolved_query[:60])
+        return StreamingResponse(_stream_tier1(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     initial_state = context["initial_state"]
     rag_graph = get_rag_graph()
@@ -1032,6 +1158,17 @@ async def chat_stream(
         except Exception as exc:
             logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
+            # Still append partial history so the turn isn't silently lost.
+            # full_answer may be empty/partial — that's acceptable for error turns.
+            if resolved_query:
+                try:
+                    await append_to_history(
+                        conversation_id=conversation_id,
+                        user_message=resolved_query,
+                        assistant_message="[error: pipeline failed]",
+                    )
+                except Exception:
+                    pass
             return
 
         # Drain any buffered preamble. If the guard caught a leak, this
@@ -1088,6 +1225,19 @@ async def chat_stream(
             logger.warning(f"Stream Phoenix score logging failed: {_err}")
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
+
+        # ── Greeting Redis cache write ─────────────────────────────────────
+        # Cache GREETING responses so repeated sapaan ("assalamualaikum",
+        # "selamat pagi", etc.) from 13k users are served instantly next time
+        # without going through LangGraph again. TTL 1h — greeting responses
+        # are static and don't need freshness guarantees.
+        if intent == "GREETING" and full_answer and len(full_answer) < 500:
+            try:
+                _greeting_key = f"rag:greeting:{resolved_query.lower().strip()[:80]}"
+                await get_redis_client().set(_greeting_key, full_answer, ex=3600)
+                logger.debug("Greeting response cached", query=resolved_query[:60])
+            except Exception:
+                pass
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)

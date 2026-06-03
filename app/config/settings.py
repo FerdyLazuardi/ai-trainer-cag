@@ -95,10 +95,10 @@ class Settings(BaseSettings):
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_base_url: str = "https://9router.ferdy-fadhil-lazuardi.my.id/v1"
     openrouter_embedding_url: str | None = None
     ollama_base_url: str = "http://172.16.10.2:11434/v1"
-    llm_model: str = "google/gemini-2.5-flash"
+    llm_model: str = "gc/gemini-2.5-flash-lite"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     # Cheap-Lite pin for background tasks (memory summarization, eval judge,
@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # default so eval scores and routing accuracy stay comparable week-
     # over-week; override with `CHEAP_LLM_MODEL` env var if you need a
     # different trade-off.
-    cheap_llm_model: str = "google/gemini-2.5-flash-lite"
+    cheap_llm_model: str = "gc/gemini-2.5-flash-lite"
 
     # ─── Phoenix (Observability — self-hosted) ──────────────────────────────
     phoenix_endpoint: str = Field(default="http://phoenix:6006", alias="PHOENIX_ENDPOINT")

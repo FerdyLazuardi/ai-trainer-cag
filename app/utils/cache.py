@@ -147,10 +147,13 @@ async def get_cached_response(
         course_id = None
 
     # 1. Exact match (Redis)
+    import time as _time_cache
+    _t_redis = _time_cache.perf_counter()
     redis = get_redis_client()
     key = _cache_key(query, course_id, namespace=cache_namespace)
     try:
         raw = await redis.get(key)
+        logger.debug(f"[CACHE TIMING] redis.get: {_time_cache.perf_counter()-_t_redis:.3f}s")
         if raw:
             data = json.loads(raw)
             logger.info("Redis Exact Cache HIT", query=query[:60], course_id=course_id, namespace=cache_namespace)
@@ -159,9 +162,13 @@ async def get_cached_response(
     except Exception as exc:
         logger.warning("Redis cache GET failed", error=str(exc))
 
-    # 2. Semantic match (Qdrant)
+    # 2. Semantic match (Qdrant) — wrapped in 3s timeout so a slow/hung Qdrant
+    # never blocks the hot path for 10+ seconds on a cache miss.
+    _t_ensure = _time_cache.perf_counter()
+    import asyncio as _asyncio
     try:
         await _ensure_semantic_collection()
+        logger.debug(f"[CACHE TIMING] _ensure_semantic_collection: {_time_cache.perf_counter()-_t_ensure:.3f}s")
 
         if query_embedding is None:
             ensure_llamaindex_configured()
@@ -182,11 +189,6 @@ async def get_cached_response(
                     match=qdrant_models.MatchValue(value=course_id),
                 )
             )
-        # TTL guard: never serve a semantically-matched entry older than the
-        # cache TTL, even if it hasn't been physically pruned yet. Entries
-        # written before `created_at` was introduced have no such field and are
-        # excluded by this range filter (treated as expired — acceptable, they
-        # age out on next write).
         min_created = time.time() - settings.cache_query_ttl_seconds
         must_clauses.append(
             qdrant_models.FieldCondition(
@@ -196,23 +198,30 @@ async def get_cached_response(
         )
         query_filter = qdrant_models.Filter(must=must_clauses)
 
-        search_result = await qdrant.client.query_points(
-            collection_name="semantic_cache",
-            query=query_embedding,
-            limit=1,
-            with_payload=True,
-            score_threshold=_SEMANTIC_THRESHOLD,
-            query_filter=query_filter
-        )
+        try:
+            search_result = await _asyncio.wait_for(
+                qdrant.client.query_points(
+                    collection_name="semantic_cache",
+                    query=query_embedding,
+                    limit=1,
+                    with_payload=True,
+                    score_threshold=_SEMANTIC_THRESHOLD,
+                    query_filter=query_filter
+                ),
+                timeout=3.0,
+            )
+        except _asyncio.TimeoutError:
+            logger.debug("Semantic cache query timed out (>3s) — treating as miss")
+            search_result = None
 
-        if search_result.points:
+        if search_result is not None and search_result.points:
             best_hit = search_result.points[0]
             logger.info("Qdrant Semantic Cache HIT", query=query[:60], score=round(best_hit.score, 4), course_id=course_id, namespace=cache_namespace)
             _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
             return best_hit.payload
 
     except Exception as exc:
-        logger.warning("Semantic cache GET failed", error=str(exc))
+        logger.warning(f"Semantic cache GET failed: {type(exc).__name__}: {exc}")
 
     logger.debug("Cache MISS", query=query[:60], course_id=course_id, namespace=cache_namespace)
     _log_cache_event(hit=False, course_id=course_id)
@@ -298,7 +307,7 @@ async def set_cached_response(
         # unbounded growth without a delete-by-filter on every write.
         await _maybe_prune_semantic_cache(qdrant)
     except Exception as exc:
-        logger.warning("Semantic cache SET failed", error=str(exc))
+        logger.warning(f"Semantic cache SET failed: {type(exc).__name__}: {exc}")
 
 
 async def get_or_compute_cached_response(

@@ -92,7 +92,7 @@ async def get_current_user(
     # want unfettered ability to load-test, replay golden eval queries, and
     # iterate on prompts without hitting 429s. Real Moodle users still rate-
     # limited normally.
-    if user.user_id == "dev_user_123" or settings.app_env == "development":
+    if settings.app_env == "development":
         return user
 
     redis = get_redis_client()
@@ -163,21 +163,24 @@ def _client_ip(request: Request) -> str:
 async def _check_brute_force_throttle(request: Request) -> None:
     """If this IP has too many recent auth failures, 429 the request.
 
-    Reads (does NOT increment) the failure counter. The counter is
-    incremented by `_record_auth_failure()` from the except block
-    when jwt.decode raises. A single INCR per failed request keeps
-    the threshold semantics clean: 30 failed requests → 31st gets
-    429. The key rotates every 60s (via the suffix), so the counter
-    self-expires. We don't EXPIRE explicitly — a stale bucket just
-    sits in Redis until idle eviction.
+    Uses a Redis ZSET sliding window: each failure is stored as a scored
+    member (score = timestamp), old entries are pruned on each check.
+    This avoids the fixed-window bypass where 30 failures at :59 + 30 at
+    :01 = 60 in 2 seconds with no throttle.
     """
     ip = _client_ip(request)
-    bucket = int(time.time()) // _BRUTE_FORCE_WINDOW_SECONDS
-    key = f"bf:auth:{ip}:{bucket}"
+    key = f"bf:auth:sw:{ip}"
+    now = time.time()
+    window_start = now - _BRUTE_FORCE_WINDOW_SECONDS
     try:
         redis = get_redis_client()
-        n_raw = await redis.get(key)
-        n = int(n_raw) if n_raw is not None else 0
+        pipe = redis.pipeline()
+        # Remove entries older than the sliding window
+        pipe.zremrangebyscore(key, "-inf", window_start)
+        # Count remaining failures in the window
+        pipe.zcard(key)
+        results = await pipe.execute()
+        n = results[1]
         if n > _BRUTE_FORCE_MAX_FAILURES:
             logger.warning(f"Brute-force throttle engaged for IP {ip} (n={n})")
             raise HTTPException(
@@ -195,16 +198,23 @@ async def _check_brute_force_throttle(request: Request) -> None:
 
 
 async def _record_auth_failure(request: Request) -> None:
-    """Increment the same counter _check_brute_force_throttle reads from.
+    """Add a timestamped entry to the sliding-window ZSET for this IP.
 
     Called from the except block when jwt.decode raises. Best-effort —
     if Redis is down the throttle check itself will fail open.
     """
     ip = _client_ip(request)
-    bucket = int(time.time()) // _BRUTE_FORCE_WINDOW_SECONDS
-    key = f"bf:auth:{ip}:{bucket}"
+    key = f"bf:auth:sw:{ip}"
+    now = time.time()
     try:
         redis = get_redis_client()
-        await redis.incr(key)
+        pipe = redis.pipeline()
+        # Use a unique member per failure (timestamp + random suffix) so
+        # multiple failures in the same millisecond don't overwrite each other.
+        member = f"{now}:{id(request)}"
+        pipe.zadd(key, {member: now})
+        # TTL = window * 2 so old ZSETs self-expire
+        pipe.expire(key, _BRUTE_FORCE_WINDOW_SECONDS * 2)
+        await pipe.execute()
     except Exception as e:
         logger.warning(f"Failed to record auth failure (non-fatal): {e}")

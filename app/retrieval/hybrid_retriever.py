@@ -41,6 +41,15 @@ _SPARSE_VECTOR_NAME = "text-sparse"
 _SPARSE_MODEL = "Qdrant/bm25"
 
 
+_sparse_semaphore: asyncio.Semaphore | None = None
+
+def _get_sparse_semaphore() -> asyncio.Semaphore:
+    global _sparse_semaphore
+    if _sparse_semaphore is None:
+        _sparse_semaphore = asyncio.Semaphore(1)
+    return _sparse_semaphore
+
+
 @lru_cache(maxsize=1)
 def _get_sparse_encoder():
     """Load the fastembed BM25 sparse query encoder once (process lifetime).
@@ -110,16 +119,21 @@ async def hybrid_search(
     qdrant = get_qdrant_client()
 
     # 1. Encode the query: dense (same embed model as ingestion) + sparse BM25.
-    dense_vec = await Settings.embed_model.aget_query_embedding(query)
-    # fastembed's BM25 encode is a synchronous, CPU-bound call (tokenize +
-    # stopword + Snowball stem + IDF — pure Python, no await). On the single
-    # uvicorn worker it would block the event loop for the duration. Offload to
-    # a thread so the loop stays free for other in-flight requests' I/O. Note:
-    # BM25 is GIL-bound so this frees the loop rather than truly parallelizing,
-    # but per-query cost is sub-millisecond — this is defensive hygiene for long
-    # rewritten queries + future load, not a throughput unlock.
+    # Run both encodings concurrently — they are independent I/O + CPU calls.
+    # Dense: async OpenAI API call. Sparse: CPU-bound fastembed BM25 offloaded
+    # to a thread so the event loop stays free.
     encoder = _get_sparse_encoder()
-    sparse_idx, sparse_val = await asyncio.to_thread(encoder, [query])
+    
+    async def _encode_sparse():
+        # Semaphore limits concurrency to 1, preventing fastembed (onnxruntime)
+        # from saturating all CPU cores and starving the asyncio event loop.
+        async with _get_sparse_semaphore():
+            return await asyncio.to_thread(encoder, [query])
+
+    dense_vec, (sparse_idx, sparse_val) = await asyncio.gather(
+        Settings.embed_model.aget_query_embedding(query),
+        _encode_sparse(),
+    )
 
     # 2. One batched round-trip: dense KNN + sparse BM25 KNN over a `pool`-sized
     #    candidate set per modality.
@@ -143,7 +157,7 @@ async def hybrid_search(
                 using=_SPARSE_VECTOR_NAME,
                 limit=pool,
                 with_payload=True,
-                params={"hnsw_ef": 64},
+                # No hnsw_ef for sparse — sparse uses inverted index, not HNSW.
             ),
         ],
     )

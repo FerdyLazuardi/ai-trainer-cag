@@ -70,10 +70,29 @@ def setup_phoenix(
 
     Returns True on success, False on failure (caller logs).
     Idempotent — second call is a no-op.
+    Skips setup if Phoenix OTLP endpoint is unreachable to avoid
+    background retry spam in the logs.
     """
     global _tracer_provider, _phoenix_client
     if _tracer_provider is not None:
         return True
+
+    # Quick reachability check — if Phoenix is not running, skip setup
+    # entirely so the OTLP exporter doesn't flood logs with retry errors.
+    import socket
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(otlp_endpoint)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 4317
+        sock = socket.create_connection((host, port), timeout=1)
+        sock.close()
+    except (OSError, Exception):
+        import logging
+        logging.getLogger(__name__).info(
+            f"Phoenix not reachable at {otlp_endpoint} — tracing disabled"
+        )
+        return False
 
     from phoenix.otel import register
     from openinference.instrumentation.langchain import LangChainInstrumentor

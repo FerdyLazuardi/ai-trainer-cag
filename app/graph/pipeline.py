@@ -7,6 +7,7 @@ Architecture change vs prior ReAct pattern:
 
 Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent call is eliminated).
 """
+import asyncio
 from functools import lru_cache
 import re
 from typing import Any, Literal
@@ -407,7 +408,10 @@ def _apply_safety_overrides(
     # the user is the victim but the LLM mis-routed the intent. Without
     # this, safety=0.7 + intent=MALICIOUS produces a canned refusal to a
     # real victim (the worst possible UX).
-    if safety >= 0.7 and intent in ("MALICIOUS", "OFF_SCOPE", "KNOWLEDGE"):
+    # Override to BRAINSTORM for any intent when safety is high — the user is
+    # reporting a personal safety incident and needs empathy + resources,
+    # not a greeting, clarifying question, canned refusal, or flat KB lookup.
+    if safety >= 0.7 and intent != "BRAINSTORM":
         intent = "BRAINSTORM"
 
     return intent, scores, retrieval_override
@@ -422,6 +426,15 @@ def _apply_safety_overrides(
 # scales linearly with KB size (50 courses ≈ 600+ wasted tokens per query).
 _COURSE_CACHE_TTL_SECONDS = 600  # 10 minutes
 _course_cache: dict[str, Any] = {"courses": [], "expires_at": 0.0}
+_course_cache_lock: asyncio.Lock | None = None
+
+
+def _get_course_cache_lock() -> asyncio.Lock:
+    """Lazy-init the cache lock (must be created inside a running event loop)."""
+    global _course_cache_lock
+    if _course_cache_lock is None:
+        _course_cache_lock = asyncio.Lock()
+    return _course_cache_lock
 
 
 async def _load_course_names() -> list[str]:
@@ -429,37 +442,45 @@ async def _load_course_names() -> list[str]:
 
     Same source the TOPIC_LIST handler uses, so suggestions advertised in
     AMBIGUITY responses never drift from what the user gets when they ask
-    "apa aja topiknya". TTL-cached. Failures return []; callers fall back to a
-    generic clarifying question.
+    "apa aja topiknya". TTL-cached with asyncio Lock for single-flight refresh
+    to prevent thundering herd on cache expiry.
     """
     import time as _time
 
     now = _time.time()
+    # Fast path: cache is still valid
     if now < _course_cache["expires_at"] and _course_cache["courses"]:
         return _course_cache["courses"]
 
-    from sqlalchemy import select, distinct
-    from sqlalchemy.sql import text as sql_text
+    # Slow path: acquire lock so only one coroutine refreshes at a time
+    lock = _get_course_cache_lock()
+    async with lock:
+        # Re-check after acquiring lock — another coroutine may have refreshed
+        now = _time.time()
+        if now < _course_cache["expires_at"] and _course_cache["courses"]:
+            return _course_cache["courses"]
 
-    from app.database.postgres import AsyncSessionLocal
+        from sqlalchemy import select, distinct
+        from sqlalchemy.sql import text as sql_text
+        from app.database.postgres import AsyncSessionLocal
 
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(distinct(sql_text("metadata->>'course_name'")).label("course_name"))
-                .select_from(sql_text("documents"))
-                .where(sql_text("metadata->>'course_name' IS NOT NULL"))
-                .where(sql_text("metadata->>'course_name' <> ''"))
-            )
-            rows = (await session.execute(stmt)).all()
-            courses = sorted({r.course_name for r in rows if r.course_name})
-    except Exception as exc:
-        logger.warning(f"Course-name load failed (Postgres): {exc}")
-        return []
+        try:
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    select(distinct(sql_text("metadata->>'course_name'")).label("course_name"))
+                    .select_from(sql_text("documents"))
+                    .where(sql_text("metadata->>'course_name' IS NOT NULL"))
+                    .where(sql_text("metadata->>'course_name' <> ''"))
+                )
+                rows = (await session.execute(stmt)).all()
+                courses = sorted({r.course_name for r in rows if r.course_name})
+        except Exception as exc:
+            logger.warning(f"Course-name load failed (Postgres): {exc}")
+            return []
 
-    _course_cache["courses"] = courses
-    _course_cache["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
-    return courses
+        _course_cache["courses"] = courses
+        _course_cache["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
+        return courses
 
 
 def _sanitize_answer(text: str) -> str:
@@ -592,25 +613,21 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         }
 
     llm = get_preprocessor_llm()
-    structured_llm = llm.with_structured_output(PreProcessorResult)
+    # Note: with_structured_output uses OpenAI function calling which some
+    # providers (9Router) don't support. Use manual JSON parsing instead.
+    # Append JSON schema instruction to prompt so model returns raw JSON.
+    _JSON_SUFFIX = (
+        "\n\nRespond ONLY with a valid JSON object matching this schema (no markdown, no explanation):\n"
+        '{"intent": "<INTENT>", "rewritten_query": "<str>", "needs_lookup": <0.0-1.0>, '
+        '"needs_reasoning": <0.0-1.0>, "needs_empathy": <0.0-1.0>, '
+        '"needs_safety_escalation": <0.0-1.0>, "safety_preserved_query": "<str>"}'
+    )
 
     messages = state["messages"]
 
-    # Build history for pronoun-resolution rewriting. We include BOTH user and
-    # AI turns because references like "soal product itu" right after the AI
-    # listed available topics need the AI's list to resolve. To bound the
-    # risk of AI hallucinations leaking into the next retrieval query, we cap
-    # AI content at 400 chars — entity names (course names, principle names)
-    # appear early in canned/structured replies, and the rewriter prompt is
-    # explicitly told to prefer literal entity names from history when the
-    # user's reference is otherwise unresolvable.
+    # Build history for pronoun-resolution rewriting.
     history_str = ""
     if len(messages) > 1:
-        # Cap history to the last 2 completed turns (= 4 messages: U/A/U/A)
-        # — older turns are in conversation_summary which the generate path
-        # already injects via <previous_context>. Sending more here is pure
-        # token overhead: the rewriter only needs the immediately-prior pair
-        # to resolve pronouns like "it/that/the product you mentioned".
         recent = messages[-5:-1]
         hist_lines: list[str] = []
         for m in recent:
@@ -629,20 +646,21 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     }
     safety_preserved_query = ""
     try:
-        # Wrap the static PRE_PROCESSOR_PROMPT in a cache_control content
-        # block so OpenRouter caches it across calls. TTL=1h instead of the
-        # default 5-min ephemeral — same user often returns to the same
-        # conversation within the hour, and 1h writes cost ~2x the 5-min
-        # write but amortize over many more reads. The dynamic history +
-        # query go in a user message (Gemini treats systemInstruction as
-        # immutable once cached — see OpenRouter prompt-caching docs).
-        result = await structured_llm.ainvoke([
-            SystemMessage(content=[
-                {"type": "text", "text": PRE_PROCESSOR_PROMPT,
-                 "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-            ]),
+        import json as _json
+        raw = await llm.ainvoke([
+            SystemMessage(content=PRE_PROCESSOR_PROMPT + _JSON_SUFFIX),
             HumanMessage(content=f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {user_msg}")
         ], config=config)
+        raw_content = raw.content if isinstance(raw.content, str) else str(raw.content)
+        # Strip markdown code fences if present
+        raw_content = raw_content.strip()
+        if raw_content.startswith("```"):
+            raw_content = raw_content.split("```")[1]
+            if raw_content.startswith("json"):
+                raw_content = raw_content[4:]
+            raw_content = raw_content.strip()
+        parsed = _json.loads(raw_content)
+        result = PreProcessorResult(**parsed)
         intent = result.intent
         rewritten = result.rewritten_query.strip() or user_msg
         intent_scores = {
@@ -727,6 +745,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
 
     # Fallback (rare — Tier-1 GREETING fired but our sub-checks didn't recognise
     # the exact phrasing). Keep the LLM path as a safety net.
+    logger.warning(f"_handle_greeting: LLM fallback triggered for user_msg={user_msg!r} low={low!r}")
     llm = get_generate_llm()
     greet_sys = f"{PERSONA}\n" + GREETING_MODE_RULES
     response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
@@ -843,25 +862,16 @@ async def _handle_topic_list(state: RAGState, config: RunnableConfig):
     No LLM call, no retrieval. Cheap + deterministic.
     """
     from langchain_core.messages import AIMessage
-    from sqlalchemy import select, distinct
-    from sqlalchemy.sql import text as sql_text
-
-    from app.database.postgres import AsyncSessionLocal
     from app.utils.lang import history_is_indonesian
 
     # Detect language across the WHOLE history (see app/utils/lang.py for why).
     is_id = history_is_indonesian(state.get("messages"))
 
     try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(distinct(sql_text("metadata->>'course_name'")).label("course_name"))
-                .select_from(sql_text("documents"))
-                .where(sql_text("metadata->>'course_name' IS NOT NULL"))
-                .where(sql_text("metadata->>'course_name' <> ''"))
-            )
-            rows = (await session.execute(stmt)).all()
-            course_names = sorted({r.course_name for r in rows if r.course_name})
+        # Reuse _load_course_names() which has a 10-minute TTL cache —
+        # avoids a duplicate Postgres query and ensures TOPIC_LIST and
+        # AMBIGUITY handlers always show the same course list.
+        course_names = await _load_course_names()
     except Exception as exc:
         logger.warning(f"Topic list query failed: {exc}")
         msg = (

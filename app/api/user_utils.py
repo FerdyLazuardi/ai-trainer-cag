@@ -11,13 +11,14 @@ def is_real_user(user_id: str, role: str) -> bool:
     Blocked cases:
     - Empty or whitespace-only user_id
     - Literal "None" / "null" / "undefined" (from str() conversion bug)
+    - Dev bypass user (dev_user_123) — not a real Moodle user
     - Role is NOT "moodle_user"
     """
     if not user_id or not user_id.strip():
         return False
     if role != "moodle_user":
         return False
-    if user_id.lower() in ("none", "null", "undefined"):
+    if user_id.lower() in ("none", "null", "undefined", "dev_user_123"):
         return False
     return True
 

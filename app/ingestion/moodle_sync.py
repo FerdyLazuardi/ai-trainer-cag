@@ -251,10 +251,8 @@ async def _ingest_markdown(
         existing.ingestion_state = "processing"
         existing.content_hash = content_hash
         existing.metadata_ = metadata # Ensure metadata is updated with new course_id if it changed
-        
-        # Flush course cache
-        from app.utils.cache import flush_cache_by_course
-        await flush_cache_by_course(moodle_course_id)
+        # Cache flush moved to end of function — after all DB writes are staged — to
+        # avoid flushing cache mid-transaction when a later step could still fail.
     else:
         doc = Document(
             id=document_id,
@@ -386,6 +384,17 @@ async def _ingest_markdown(
         doc.total_chunks = len(nodes)
 
     await session.flush()
+
+    # Flush the query cache AFTER all DB writes are staged (post-flush, pre-commit).
+    # This is safer than mid-function: if anything above raised an exception,
+    # we never reach here, so the cache is only invalidated when ingestion succeeded.
+    # The commit itself happens in the caller (sync_moodle_task / worker.py).
+    try:
+        from app.utils.cache import flush_cache_by_course
+        await flush_cache_by_course(moodle_course_id)
+    except Exception as _cache_exc:
+        logger.warning(f"Cache flush after ingest failed (non-fatal): {_cache_exc}")
+
     logger.info("Ingestion complete", source=filename, chunks=len(nodes), tokens=total_tokens)
     return len(nodes)
 
