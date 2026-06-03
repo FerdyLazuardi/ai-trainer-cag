@@ -28,6 +28,7 @@ tests/
 logs/
 *.log
 *.txt
+!requirements.txt
 docker_logs*
 test_llm.py
 docs/superpowers/
