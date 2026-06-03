@@ -646,6 +646,10 @@ async def _run_chat(
             latency_ms = (time.perf_counter() - start_time) * 1000
             final_message = result["messages"][-1]
             answer = final_message.content if hasattr(final_message, "content") else str(final_message)
+            llm_tokens_used = 0
+            if hasattr(final_message, "response_metadata"):
+                llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
+
 
             # Compute observability attrs BEFORE the span exits — set_current_*
             # only writes to the active span, so doing this after `with` would
@@ -791,6 +795,7 @@ async def _run_chat(
             "answer": answer,
             "chunks_retrieved": actual_chunks,
             "latency_ms": round(latency_ms, 2),
+            "llm_tokens_used": llm_tokens_used,
             "cache_hit": False,
             **_quality_log_fields(intent, result.get("intent_scores"), max_chunk_score),
         }
@@ -1280,6 +1285,7 @@ async def chat_stream(
                 "answer": full_answer,
                 "chunks_retrieved": len(retrieved_context),
                 "latency_ms": round(latency_ms, 2),
+                "llm_tokens_used": token_count,
                 "cache_hit": False,
                 **_quality_log_fields(intent, stream_intent_scores, stream_max_score),
             })

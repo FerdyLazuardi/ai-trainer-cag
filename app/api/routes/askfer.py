@@ -265,6 +265,7 @@ async def askfer_stream(
                 "answer": full_answer,
                 "chunks_retrieved": len(retrieved_context),
                 "latency_ms": round(latency_ms, 2),
+                "llm_tokens_used": token_count,
                 "cache_hit": False,
             })
             task = asyncio.create_task(asyncio.to_thread(_flush_traces))
