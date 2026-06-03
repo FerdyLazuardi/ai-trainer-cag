@@ -19,37 +19,43 @@ def verify_api_key(api_key: str = Security(api_key_header)):
 
 @router.get("/logs", summary="Get aggregated logs for Dashboard")
 async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dict[str, Any]:
-    # Menggunakan async context meskipun SQLAlchemy di sini synchronous
-    # Karena kita membaca dengan cepat, ini masih aman untuk load admin.
-    with engine.connect() as conn:
+    async with engine.connect() as conn:
         # Total Interactions
-        total_q = conn.execute(text("SELECT COUNT(*) FROM agent_logs")).scalar() or 0
+        total_q_res = await conn.execute(text("SELECT COUNT(*) FROM agent_logs"))
+        total_q = total_q_res.scalar() or 0
+        
         # Average Latency
-        avg_lat = conn.execute(text("SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL")).scalar() or 0.0
+        avg_lat_res = await conn.execute(text("SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL"))
+        avg_lat = avg_lat_res.scalar() or 0.0
+        
         # Cache Hit Rate
-        cache_hits = conn.execute(text("SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs")).scalar() or 0
+        cache_hits_res = await conn.execute(text("SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs"))
+        cache_hits = cache_hits_res.scalar() or 0
         hit_rate = (float(cache_hits) / float(total_q) * 100) if total_q > 0 else 0.0
 
         # Intents
-        intents_result = conn.execute(text("SELECT intent, COUNT(*) as count FROM agent_logs GROUP BY intent")).fetchall()
+        intents_result_exec = await conn.execute(text("SELECT intent, COUNT(*) as count FROM agent_logs GROUP BY intent"))
+        intents_result = intents_result_exec.fetchall()
         intents = [{"intent": str(row[0]), "count": int(row[1])} for row in intents_result]
 
         # Trends
-        trends_result = conn.execute(text("""
+        trends_result_exec = await conn.execute(text("""
             SELECT DATE(created_at) as date, COUNT(*) as queries
             FROM agent_logs
             GROUP BY DATE(created_at)
             ORDER BY date ASC
-        """)).fetchall()
+        """))
+        trends_result = trends_result_exec.fetchall()
         trends = [{"date": str(row[0]), "queries": int(row[1])} for row in trends_result]
 
         # Recent Logs
-        logs_result = conn.execute(text("""
+        logs_result_exec = await conn.execute(text("""
             SELECT created_at, intent, latency_ms, cache_hit, query, answer
             FROM agent_logs
             ORDER BY created_at DESC
             LIMIT :limit
-        """), {"limit": limit}).fetchall()
+        """), {"limit": limit})
+        logs_result = logs_result_exec.fetchall()
         
         logs = [
             {
