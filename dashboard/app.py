@@ -90,6 +90,12 @@ with tab_overview:
         st.info("Belum ada data log.")
     else:
         df_logs = pd.DataFrame(logs)
+        
+        # Defensive programming: ensure new columns exist in case the backend API is outdated
+        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved']:
+            if col not in df_logs.columns:
+                df_logs[col] = None
+                
         # Calculate latency in seconds
         df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         
