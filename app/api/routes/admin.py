@@ -50,7 +50,7 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
 
         # Recent Logs
         logs_result_exec = await conn.execute(text("""
-            SELECT created_at, intent, latency_ms, cache_hit, query, answer
+            SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved
             FROM agent_logs
             ORDER BY created_at DESC
             LIMIT :limit
@@ -64,7 +64,10 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
                 "latency_ms": float(row[2]) if row[2] is not None else 0.0,
                 "cache_hit": bool(row[3]),
                 "query": str(row[4]),
-                "answer": str(row[5])
+                "answer": str(row[5]),
+                "session_id": str(row[6]) if row[6] else "Unknown",
+                "tokens": int(row[7]) if row[7] is not None else 0,
+                "retrieved": int(row[8]) if row[8] is not None else 0
             }
             for row in logs_result
         ]
