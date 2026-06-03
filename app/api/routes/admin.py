@@ -50,7 +50,8 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
 
         # Recent Logs
         logs_result_exec = await conn.execute(text("""
-            SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved
+            SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved,
+                   faithfulness_score, needs_empathy, needs_reasoning, needs_lookup
             FROM agent_logs
             ORDER BY created_at DESC
             LIMIT :limit
@@ -67,7 +68,11 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
                 "answer": str(row[5]),
                 "session_id": str(row[6]) if row[6] else "Unknown",
                 "tokens": int(row[7]) if row[7] is not None else 0,
-                "retrieved": int(row[8]) if row[8] is not None else 0
+                "retrieved": int(row[8]) if row[8] is not None else 0,
+                "faithfulness": float(row[9]) if row[9] is not None else None,
+                "empathy": float(row[10]) if row[10] is not None else None,
+                "reasoning": float(row[11]) if row[11] is not None else None,
+                "lookup": float(row[12]) if row[12] is not None else None
             }
             for row in logs_result
         ]

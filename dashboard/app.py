@@ -99,7 +99,7 @@ with tab_overview:
         
         # Use dataframe selection
         event = st.dataframe(
-            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'retrieved', 'cache_hit', 'query_short', 'answer_short']],
+            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'retrieved', 'cache_hit', 'faithfulness', 'empathy', 'reasoning', 'lookup', 'query_short', 'answer_short']],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -119,6 +119,8 @@ with tab_overview:
                 
             with st.chat_message("assistant"):
                 st.write(selected_log['answer'])
+                st.caption(f"📚 Retrieved Chunks: {selected_log.get('retrieved', 0)}")
+                st.caption(f"⚖️ Faithfulness: {selected_log.get('faithfulness', 'N/A')} | Empathy: {selected_log.get('empathy', 'N/A')} | Reasoning: {selected_log.get('reasoning', 'N/A')} | Lookup: {selected_log.get('lookup', 'N/A')}")
 
 with tab_explorer:
     st.subheader("🕵️ Eksplorasi Riwayat Sesi")
@@ -131,18 +133,31 @@ with tab_explorer:
         if 'latency_ms' in df_logs.columns:
             df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         
-        # Get unique sessions and their latest activity time
+        # Group by session_id to get summary
         if 'session_id' in df_logs.columns:
-            session_info = df_logs.groupby('session_id')['created_at'].max().reset_index()
-            session_info = session_info.sort_values('created_at', ascending=False)
-            unique_sessions = session_info['session_id'].tolist()
+            session_summary = df_logs.groupby('session_id').agg(
+                latest_activity=('created_at', 'max'),
+                total_turns=('query', 'count')
+            ).reset_index().sort_values('latest_activity', ascending=False)
             
-            if unique_sessions:
-                selected_session = st.selectbox("Pilih Session ID:", unique_sessions)
+            st.markdown("Pilih baris di tabel ini untuk melihat riwayat percakapannya:")
+            event_session = st.dataframe(
+                session_summary,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            selected_rows = event_session.selection.rows
+            if selected_rows:
+                idx = selected_rows[0]
+                selected_session = session_summary.iloc[idx]['session_id']
                 
                 # Filter logs for selected session and sort chronologically (oldest first)
                 session_logs = df_logs[df_logs['session_id'] == selected_session].sort_values('created_at', ascending=True)
                 
+                st.markdown(f"### 💬 Riwayat Chat: `{selected_session}`")
                 st.markdown(f"**Total percakapan:** {len(session_logs)} giliran")
                 st.divider()
                 
@@ -154,4 +169,5 @@ with tab_explorer:
                     # Render Assistant Message
                     with st.chat_message("assistant"):
                         st.write(row['answer'])
-                        st.caption(f"⏱️ {row.get('latency_s', 0)}s | 🪙 {row.get('tokens', 0)} tokens | 📚 {row.get('retrieved', 0)} docs | 🧠 Intent: {row['intent']} | 📅 {row['created_at']}")
+                        st.caption(f"⏱️ {row.get('latency_s', 0)}s | 🪙 {row.get('tokens', 0)} tokens | 📚 {row.get('retrieved', 0)} chunks | 🧠 Intent: {row['intent']} | 📅 {row['created_at']}")
+                        st.caption(f"⚖️ Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
