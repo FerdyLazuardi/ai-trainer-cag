@@ -28,7 +28,7 @@ from app.llm.askfer_prompts import (
     ASKFER_SYSTEM_PROMPT,
     PRE_PROCESSOR_PROMPT,
 )
-from app.llm.client import get_llm
+from app.llm.client import get_llm, get_preprocessor_llm
 
 _settings = get_settings()
 
