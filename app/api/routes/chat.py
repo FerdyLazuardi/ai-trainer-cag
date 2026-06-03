@@ -343,12 +343,26 @@ async def _prepare_rag_context(
     cached = None
     if not skip_cache:
         _t_cache_start = _time.perf_counter()
-        cached = await get_cached_response(
-            resolved_query,
-            course_id=request.course_id,
-            query_embedding=query_embedding,
+        
+        private_ns = f"rag_user_{current_user.user_id}"
+        global_ns = "rag"
+        
+        private_cached, global_cached = await asyncio.gather(
+            get_cached_response(
+                resolved_query,
+                course_id=request.course_id,
+                query_embedding=query_embedding,
+                cache_namespace=private_ns,
+            ),
+            get_cached_response(
+                resolved_query,
+                course_id=request.course_id,
+                query_embedding=query_embedding,
+                cache_namespace=global_ns,
+            )
         )
-        logger.debug(f"[TIMING] get_cached_response: {_time.perf_counter()-_t_cache_start:.2f}s")
+        cached = private_cached or global_cached
+        logger.debug(f"[TIMING] get_cached_response (private+global): {_time.perf_counter()-_t_cache_start:.2f}s")
     if cached:
         return {"cached": cached, "query_embedding": query_embedding}
 
@@ -756,15 +770,13 @@ async def _run_chat(
     _dense_miss = max_chunk_score is None or max_chunk_score < settings.kb_min_dense_score
     _sparse_miss = max_chunk_sparse is None or max_chunk_sparse < settings.kb_min_sparse_score
     is_low_relevance = actual_chunks == 0 or (_dense_miss and _sparse_miss)
-    # FIX 1: never cache a personalized answer. The cache key is NOT scoped by
-    # user, so an answer woven with this user's LTM / stored prefs / running
-    # summary could be served verbatim to a different user. Only impersonal KB
-    # answers (was_personalized=False) are safe to cache.
+    # FIX 1: Personalized answers are now cached using a user-scoped namespace
+    # so they can't leak to another user but still provide cache hits for this user.
     if (
         intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
         and not is_low_relevance
-        and not was_personalized
     ):
+        ns = f"rag_user_{current_user.user_id}" if was_personalized else "rag"
         background_tasks.add_task(
             set_cached_response,
             query=resolved_query,
@@ -772,11 +784,7 @@ async def _run_chat(
             sources=sources, # we can pass dict directly since the schema validation handles it
             course_id=effective_course_id,
             query_embedding=query_embedding,
-        )
-    elif was_personalized:
-        logger.debug(
-            "Cache write skipped — answer was personalized (LTM/prefs/summary injected)",
-            conversation_id=conversation_id,
+            cache_namespace=ns,
         )
     background_tasks.add_task(
         append_to_history,
@@ -1257,23 +1265,15 @@ async def chat_stream(
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
-                and not was_personalized
             ):
+                ns = f"rag_user_{current_user.user_id}" if was_personalized else "rag"
                 await set_cached_response(
                     query=resolved_query,
                     answer=full_answer,
                     sources=sources,
                     course_id=effective_course_id,
                     query_embedding=query_embedding,
-                )
-            elif was_personalized:
-                # FIX 1: cache key is not user-scoped — skip caching answers
-                # generated with this user's LTM / prefs / running summary so
-                # they can't leak to another user.
-                logger.debug(
-                    "Stream cache write skipped — answer was personalized "
-                    "(LTM/prefs/summary injected)",
-                    conversation_id=conversation_id,
+                    cache_namespace=ns,
                 )
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
             await batch_logger.add_log({
