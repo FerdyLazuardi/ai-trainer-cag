@@ -90,6 +90,8 @@ with tab_overview:
         st.info("Belum ada data log.")
     else:
         df_logs = pd.DataFrame(logs)
+        if 'created_at' in df_logs.columns:
+            df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d/%m/%Y %H:%M:%S')
         
         # Defensive programming: ensure new columns exist in case the backend API is outdated
         for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved']:
@@ -127,6 +129,19 @@ with tab_overview:
                 st.write(selected_log['answer'])
                 st.caption(f"📚 Retrieved Chunks: {selected_log.get('retrieved', 0)}")
                 st.caption(f"⚖️ Faithfulness: {selected_log.get('faithfulness', 'N/A')} | Empathy: {selected_log.get('empathy', 'N/A')} | Reasoning: {selected_log.get('reasoning', 'N/A')} | Lookup: {selected_log.get('lookup', 'N/A')}")
+                
+                # Judgment Label
+                issues = []
+                if pd.notna(selected_log.get('faithfulness')) and selected_log.get('faithfulness') is not None:
+                    if float(selected_log['faithfulness']) < 0.8:
+                        issues.append("Faithfulness Rendah (Potensi Halusinasi)")
+                if selected_log.get('intent') == 'KNOWLEDGE' and selected_log.get('retrieved', 0) == 0:
+                    issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
+                
+                if issues:
+                    st.error(f"⚠️ **Problematic Chat:** {', '.join(issues)}")
+                elif pd.notna(selected_log.get('faithfulness')) and selected_log.get('faithfulness') is not None:
+                    st.success("✅ **Healthy Chat (Faithful)**")
 
 with tab_explorer:
     st.subheader("🕵️ Eksplorasi Riwayat Sesi")
@@ -136,6 +151,8 @@ with tab_explorer:
         st.info("Belum ada data log.")
     else:
         df_logs = pd.DataFrame(logs)
+        if 'created_at' in df_logs.columns:
+            df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d/%m/%Y %H:%M:%S')
         if 'latency_ms' in df_logs.columns:
             df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         
@@ -177,3 +194,16 @@ with tab_explorer:
                         st.write(row['answer'])
                         st.caption(f"⏱️ {row.get('latency_s', 0)}s | 🪙 {row.get('tokens', 0)} tokens | 📚 {row.get('retrieved', 0)} chunks | 🧠 Intent: {row['intent']} | 📅 {row['created_at']}")
                         st.caption(f"⚖️ Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
+                        
+                        # Judgment Label
+                        issues = []
+                        if pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
+                            if float(row['faithfulness']) < 0.8:
+                                issues.append("Faithfulness Rendah (Potensi Halusinasi)")
+                        if row.get('intent') == 'KNOWLEDGE' and row.get('retrieved', 0) == 0:
+                            issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
+                        
+                        if issues:
+                            st.error(f"⚠️ **Problematic Chat:** {', '.join(issues)}")
+                        elif pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
+                            st.success("✅ **Healthy Chat (Faithful)**")
