@@ -31,6 +31,38 @@ def fetch_dashboard_data(limit=500):
         st.error(f"Failed to fetch data from API: {e}")
         return None
 
+@st.dialog("Chat Details", width="large")
+def show_chat_details(row):
+    with st.chat_message("user"):
+        st.write(row['query'])
+        
+    with st.chat_message("assistant"):
+        st.write(row['answer'])
+        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Chunks: {row.get('retrieved', 0)} | Intent: {row['intent']} | Time: {row['created_at']}")
+        st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
+        
+        # Show retrieved context if available
+        retrieved_context = row.get('retrieved_context', [])
+        if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
+            with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
+                for idx, chunk in enumerate(retrieved_context):
+                    st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
+                    st.text(chunk.get('text', ''))
+                    st.divider()
+        
+        # Judgment Label
+        issues = []
+        if pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
+            if float(row['faithfulness']) < 0.8:
+                issues.append("Faithfulness Rendah (Potensi Halusinasi)")
+        if row.get('intent') == 'KNOWLEDGE' and row.get('retrieved', 0) == 0:
+            issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
+        
+        if issues:
+            st.error(f"Problematic Chat: {', '.join(issues)}")
+        elif pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
+            st.success("Healthy Chat (Faithful)")
+
 # --- UI Layout ---
 
 st.title("Agent Observability Dashboard")
@@ -117,39 +149,7 @@ with tab_overview:
         if selected_rows:
             idx = selected_rows[0]
             selected_log = df_logs.iloc[idx]
-            
-            st.markdown("### Chat Preview")
-            st.caption(f"Sesi: {selected_log.get('session_id', 'Unknown')} | Waktu: {selected_log['created_at']} | Intent: {selected_log['intent']} | Latency: {selected_log['latency_s']}s | Tokens: {selected_log.get('tokens', 0)}")
-            
-            with st.chat_message("user"):
-                st.write(selected_log['query'])
-                
-            with st.chat_message("assistant"):
-                st.write(selected_log['answer'])
-                st.caption(f"Retrieved Chunks: {selected_log.get('retrieved', 0)}")
-                st.caption(f"Faithfulness: {selected_log.get('faithfulness', 'N/A')} | Empathy: {selected_log.get('empathy', 'N/A')} | Reasoning: {selected_log.get('reasoning', 'N/A')} | Lookup: {selected_log.get('lookup', 'N/A')}")
-                
-                # Show retrieved context if available
-                retrieved_context = selected_log.get('retrieved_context', [])
-                if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
-                    with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
-                        for idx, chunk in enumerate(retrieved_context):
-                            st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
-                            st.text(chunk.get('text', ''))
-                            st.divider()
-                
-                # Judgment Label
-                issues = []
-                if pd.notna(selected_log.get('faithfulness')) and selected_log.get('faithfulness') is not None:
-                    if float(selected_log['faithfulness']) < 0.8:
-                        issues.append("Faithfulness Rendah (Potensi Halusinasi)")
-                if selected_log.get('intent') == 'KNOWLEDGE' and selected_log.get('retrieved', 0) == 0:
-                    issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
-                
-                if issues:
-                    st.error(f"Problematic Chat: {', '.join(issues)}")
-                elif pd.notna(selected_log.get('faithfulness')) and selected_log.get('faithfulness') is not None:
-                    st.success("Healthy Chat (Faithful)")
+            show_chat_details(selected_log)
 
 with tab_explorer:
     st.subheader("Eksplorasi Riwayat Sesi")
@@ -189,38 +189,24 @@ with tab_explorer:
                 session_logs = df_logs[df_logs['session_id'] == selected_session].sort_values('created_at', ascending=True)
                 
                 st.markdown(f"### Riwayat Chat: `{selected_session}`")
-                st.markdown(f"**Total percakapan:** {len(session_logs)} giliran")
-                st.divider()
+                st.markdown(f"**Total percakapan:** {len(session_logs)} giliran. Klik pada baris untuk melihat detailnya.")
                 
-                for _, row in session_logs.iterrows():
-                    # Render User Message
-                    with st.chat_message("user"):
-                        st.write(row['query'])
-                        
-                    # Render Assistant Message
-                    with st.chat_message("assistant"):
-                        st.write(row['answer'])
-                        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Chunks: {row.get('retrieved', 0)} | Intent: {row['intent']} | Time: {row['created_at']}")
-                        st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
-                        
-                        # Show retrieved context if available
-                        retrieved_context = row.get('retrieved_context', [])
-                        if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
-                            with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
-                                for idx, chunk in enumerate(retrieved_context):
-                                    st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
-                                    st.text(chunk.get('text', ''))
-                                    st.divider()
-                        
-                        # Judgment Label
-                        issues = []
-                        if pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
-                            if float(row['faithfulness']) < 0.8:
-                                issues.append("Faithfulness Rendah (Potensi Halusinasi)")
-                        if row.get('intent') == 'KNOWLEDGE' and row.get('retrieved', 0) == 0:
-                            issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
-                        
-                        if issues:
-                            st.error(f"Problematic Chat: {', '.join(issues)}")
-                        elif pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
-                            st.success("Healthy Chat (Faithful)")
+                # Format text for table view
+                session_logs['query_short'] = session_logs['query'].apply(lambda x: x[:50] + "..." if isinstance(x, str) and len(x) > 50 else x)
+                session_logs['answer_short'] = session_logs['answer'].apply(lambda x: x[:50] + "..." if isinstance(x, str) and len(x) > 50 else x)
+                
+                # Use dataframe selection
+                event_turn = st.dataframe(
+                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'retrieved', 'cache_hit', 'faithfulness', 'query_short', 'answer_short']],
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"session_turns_table_{selected_session}"
+                )
+                
+                selected_turn_rows = event_turn.selection.rows
+                if selected_turn_rows:
+                    idx_turn = selected_turn_rows[0]
+                    selected_turn = session_logs.iloc[idx_turn]
+                    show_chat_details(selected_turn)
