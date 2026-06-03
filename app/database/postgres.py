@@ -60,6 +60,7 @@ async def init_db() -> None:
             ("needs_empathy", "DOUBLE PRECISION"),
             ("max_dense_score", "DOUBLE PRECISION"),
             ("faithfulness_score", "DOUBLE PRECISION"),
+            ("retrieved_context", "JSONB"),
         ]
         for col, col_type in agent_log_columns:
             await conn.execute(

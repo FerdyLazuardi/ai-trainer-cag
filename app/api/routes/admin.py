@@ -51,7 +51,7 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
         # Recent Logs
         logs_result_exec = await conn.execute(text("""
             SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved,
-                   faithfulness_score, needs_empathy, needs_reasoning, needs_lookup
+                   faithfulness_score, needs_empathy, needs_reasoning, needs_lookup, retrieved_context
             FROM agent_logs
             ORDER BY created_at DESC
             LIMIT :limit
@@ -72,7 +72,8 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
                 "faithfulness": float(row[9]) if row[9] is not None else None,
                 "empathy": float(row[10]) if row[10] is not None else None,
                 "reasoning": float(row[11]) if row[11] is not None else None,
-                "lookup": float(row[12]) if row[12] is not None else None
+                "lookup": float(row[12]) if row[12] is not None else None,
+                "retrieved_context": row[13] if row[13] is not None else []
             }
             for row in logs_result
         ]

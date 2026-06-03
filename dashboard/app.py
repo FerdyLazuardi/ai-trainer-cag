@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 # Page config must be the first Streamlit command
 st.set_page_config(
     page_title="Agent Observability",
-    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -34,7 +33,7 @@ def fetch_dashboard_data(limit=500):
 
 # --- UI Layout ---
 
-st.title("🤖 Agent Observability Dashboard")
+st.title("Agent Observability Dashboard")
 st.markdown("Dashboard ini mengambil data via REST API FastAPI secara aman dan ringan.")
 
 data = fetch_dashboard_data(limit=500)
@@ -48,7 +47,7 @@ trends = data.get("trends", [])
 logs = data.get("logs", [])
 
 # Setup tabs
-tab_overview, tab_explorer = st.tabs(["📊 Overview & Recent Logs", "🕵️ Session Explorer"])
+tab_overview, tab_explorer = st.tabs(["Overview & Recent Logs", "Session Explorer"])
 
 with tab_overview:
     # KPI Row
@@ -83,7 +82,7 @@ with tab_overview:
     st.divider()
 
     # Log Viewer Section
-    st.subheader("📝 Recent Chat Logs Viewer")
+    st.subheader("Recent Chat Logs Viewer")
     st.markdown("Pilih salah satu baris di bawah ini untuk melihat percakapan singkat.")
 
     if not logs:
@@ -119,7 +118,7 @@ with tab_overview:
             idx = selected_rows[0]
             selected_log = df_logs.iloc[idx]
             
-            st.markdown("### 💬 Chat Preview")
+            st.markdown("### Chat Preview")
             st.caption(f"Sesi: {selected_log.get('session_id', 'Unknown')} | Waktu: {selected_log['created_at']} | Intent: {selected_log['intent']} | Latency: {selected_log['latency_s']}s | Tokens: {selected_log.get('tokens', 0)}")
             
             with st.chat_message("user"):
@@ -127,8 +126,17 @@ with tab_overview:
                 
             with st.chat_message("assistant"):
                 st.write(selected_log['answer'])
-                st.caption(f"📚 Retrieved Chunks: {selected_log.get('retrieved', 0)}")
-                st.caption(f"⚖️ Faithfulness: {selected_log.get('faithfulness', 'N/A')} | Empathy: {selected_log.get('empathy', 'N/A')} | Reasoning: {selected_log.get('reasoning', 'N/A')} | Lookup: {selected_log.get('lookup', 'N/A')}")
+                st.caption(f"Retrieved Chunks: {selected_log.get('retrieved', 0)}")
+                st.caption(f"Faithfulness: {selected_log.get('faithfulness', 'N/A')} | Empathy: {selected_log.get('empathy', 'N/A')} | Reasoning: {selected_log.get('reasoning', 'N/A')} | Lookup: {selected_log.get('lookup', 'N/A')}")
+                
+                # Show retrieved context if available
+                retrieved_context = selected_log.get('retrieved_context', [])
+                if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
+                    with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
+                        for idx, chunk in enumerate(retrieved_context):
+                            st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
+                            st.text(chunk.get('text', ''))
+                            st.divider()
                 
                 # Judgment Label
                 issues = []
@@ -139,12 +147,12 @@ with tab_overview:
                     issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
                 
                 if issues:
-                    st.error(f"⚠️ **Problematic Chat:** {', '.join(issues)}")
+                    st.error(f"Problematic Chat: {', '.join(issues)}")
                 elif pd.notna(selected_log.get('faithfulness')) and selected_log.get('faithfulness') is not None:
-                    st.success("✅ **Healthy Chat (Faithful)**")
+                    st.success("Healthy Chat (Faithful)")
 
 with tab_explorer:
-    st.subheader("🕵️ Eksplorasi Riwayat Sesi")
+    st.subheader("Eksplorasi Riwayat Sesi")
     st.markdown("Pilih **Session ID** untuk melihat urutan percakapan secara kronologis.")
     
     if not logs:
@@ -180,7 +188,7 @@ with tab_explorer:
                 # Filter logs for selected session and sort chronologically (oldest first)
                 session_logs = df_logs[df_logs['session_id'] == selected_session].sort_values('created_at', ascending=True)
                 
-                st.markdown(f"### 💬 Riwayat Chat: `{selected_session}`")
+                st.markdown(f"### Riwayat Chat: `{selected_session}`")
                 st.markdown(f"**Total percakapan:** {len(session_logs)} giliran")
                 st.divider()
                 
@@ -192,8 +200,17 @@ with tab_explorer:
                     # Render Assistant Message
                     with st.chat_message("assistant"):
                         st.write(row['answer'])
-                        st.caption(f"⏱️ {row.get('latency_s', 0)}s | 🪙 {row.get('tokens', 0)} tokens | 📚 {row.get('retrieved', 0)} chunks | 🧠 Intent: {row['intent']} | 📅 {row['created_at']}")
-                        st.caption(f"⚖️ Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
+                        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Chunks: {row.get('retrieved', 0)} | Intent: {row['intent']} | Time: {row['created_at']}")
+                        st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
+                        
+                        # Show retrieved context if available
+                        retrieved_context = row.get('retrieved_context', [])
+                        if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
+                            with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
+                                for idx, chunk in enumerate(retrieved_context):
+                                    st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
+                                    st.text(chunk.get('text', ''))
+                                    st.divider()
                         
                         # Judgment Label
                         issues = []
@@ -204,6 +221,6 @@ with tab_explorer:
                             issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
                         
                         if issues:
-                            st.error(f"⚠️ **Problematic Chat:** {', '.join(issues)}")
+                            st.error(f"Problematic Chat: {', '.join(issues)}")
                         elif pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
-                            st.success("✅ **Healthy Chat (Faithful)**")
+                            st.success("Healthy Chat (Faithful)")

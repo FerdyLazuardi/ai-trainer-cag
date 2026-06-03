@@ -109,6 +109,7 @@ class AgentLog(Base):
     max_dense_score: Mapped[float] = mapped_column(Float, nullable=True)
     # Filled asynchronously by the LLM-as-judge eval task (sampled).
     faithfulness_score: Mapped[float] = mapped_column(Float, nullable=True)
+    retrieved_context: Mapped[list[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True

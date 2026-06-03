@@ -805,6 +805,7 @@ async def _run_chat(
             "latency_ms": round(latency_ms, 2),
             "llm_tokens_used": llm_tokens_used,
             "cache_hit": False,
+            "retrieved_context": retrieved_context,
             **_quality_log_fields(intent, result.get("intent_scores"), max_chunk_score),
         }
     )
@@ -1287,6 +1288,7 @@ async def chat_stream(
                 "latency_ms": round(latency_ms, 2),
                 "llm_tokens_used": token_count,
                 "cache_hit": False,
+                "retrieved_context": retrieved_context,
                 **_quality_log_fields(intent, stream_intent_scores, stream_max_score),
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
