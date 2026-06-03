@@ -1,0 +1,5429 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "bcecdb2f58688b13fa631a7162a23af8f938e5d4",
+  "generatedAt": "2026-06-02T12:43:34.492Z",
+  "files": {
+    ".dockerignore": {
+      "filePath": ".dockerignore",
+      "contentHash": "0a5dcc36b18e08e0895116c0a402546bc275549645ca215816592753d076b351",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": false
+    },
+    ".env.example": {
+      "filePath": ".env.example",
+      "contentHash": "19861d93b8f35d3094d58312c70786c40e3ccdb304e4898560c45262b9fbe404",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 111,
+      "hasStructuralAnalysis": true
+    },
+    ".python-version": {
+      "filePath": ".python-version",
+      "contentHash": "7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 2,
+      "hasStructuralAnalysis": false
+    },
+    ".understand-anything/.understandignore": {
+      "filePath": ".understand-anything/.understandignore",
+      "contentHash": "6b2da1b906ecfba20574dcb1c7f2b14ab0753b919ffb102ffad092c48512bf82",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 43,
+      "hasStructuralAnalysis": false
+    },
+    "app/agents/__init__.py": {
+      "filePath": "app/agents/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/agents/long_term_memory_qdrant.py": {
+      "filePath": "app/agents/long_term_memory_qdrant.py",
+      "contentHash": "3f474123cbbf18f16ab7426d3a55db83f04ec8ca6a106d11f55ff61d3cbbb065",
+      "functions": [
+        {
+          "name": "_max_episodes_per_user",
+          "params": [],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 15
+        }
+      ],
+      "classes": [
+        {
+          "name": "QdrantLTMService",
+          "methods": [
+            "_embed",
+            "_build_user_filter",
+            "load",
+            "update",
+            "prune_user_episodes"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 272
+        }
+      ],
+      "imports": [
+        {
+          "source": "math",
+          "specifiers": [
+            "math"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "qdrant_client.models",
+          "specifiers": [
+            "Filter",
+            "FieldCondition",
+            "MatchValue",
+            "PointIdsList"
+          ]
+        },
+        {
+          "source": "app.api.user_utils",
+          "specifiers": [
+            "is_real_user"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        }
+      ],
+      "exports": [
+        "_max_episodes_per_user",
+        "QdrantLTMService"
+      ],
+      "totalLines": 343,
+      "hasStructuralAnalysis": true
+    },
+    "app/agents/memory.py": {
+      "filePath": "app/agents/memory.py",
+      "contentHash": "d073299df63009720b14b3c7a2a460ca0b455815452770bcbb28ea4f535b0a21",
+      "functions": [
+        {
+          "name": "_conv_key",
+          "params": [
+            "conversation_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "get_conversation_history",
+          "params": [
+            "conversation_id"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "clear_conversation_history",
+          "params": [
+            "conversation_id"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "append_to_history",
+          "params": [
+            "conversation_id",
+            "user_message",
+            "assistant_message",
+            "max_turns"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "extract_follow_up_questions",
+          "params": [
+            "assistant_message"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "resolve_numeric_query",
+          "params": [
+            "query",
+            "conversation_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 58
+        },
+        {
+          "name": "get_or_summarize_history",
+          "params": [
+            "conversation_id",
+            "llm",
+            "max_fresh_turns"
+          ],
+          "returnType": "tuple[str, list[dict]]",
+          "exported": true,
+          "lineCount": 64
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        }
+      ],
+      "exports": [
+        "_conv_key",
+        "get_conversation_history",
+        "clear_conversation_history",
+        "append_to_history",
+        "extract_follow_up_questions",
+        "resolve_numeric_query",
+        "get_or_summarize_history"
+      ],
+      "totalLines": 260,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/__init__.py": {
+      "filePath": "app/api/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/askfer_deps.py": {
+      "filePath": "app/api/askfer_deps.py",
+      "contentHash": "609f7ecf32f8949aaae6709a3c7d31565e76a6e6b44e4eb2e5bd68f123772b44",
+      "functions": [
+        {
+          "name": "_client_ip",
+          "params": [
+            "request"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "rate_limit_by_ip",
+          "params": [
+            "request"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 28
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "HTTPException",
+            "Request",
+            "status"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        }
+      ],
+      "exports": [
+        "_client_ip",
+        "rate_limit_by_ip"
+      ],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/auth.py": {
+      "filePath": "app/api/auth.py",
+      "contentHash": "6c5bc2ab35726004120874619aa9750a0b7ae9472ff7ade69003ea40cfa874f6",
+      "functions": [
+        {
+          "name": "get_current_user",
+          "params": [
+            "request",
+            "credentials"
+          ],
+          "returnType": "User",
+          "exported": true,
+          "lineCount": 82
+        }
+      ],
+      "classes": [
+        {
+          "name": "User",
+          "methods": [],
+          "properties": [
+            "user_id",
+            "role",
+            "username"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "jwt",
+          "specifiers": [
+            "jwt"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Optional"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "Depends",
+            "HTTPException",
+            "status",
+            "Request"
+          ]
+        },
+        {
+          "source": "fastapi.security",
+          "specifiers": [
+            "HTTPBearer",
+            "HTTPAuthorizationCredentials"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        }
+      ],
+      "exports": [
+        "User",
+        "get_current_user"
+      ],
+      "totalLines": 106,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/routes/__init__.py": {
+      "filePath": "app/api/routes/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/routes/askfer.py": {
+      "filePath": "app/api/routes/askfer.py",
+      "contentHash": "8e13c9981bfc7d1c72ef2b54d0ee2e6904cc7b8a62e52f2bcb88d24098cb4d7d",
+      "functions": [
+        {
+          "name": "_flush_traces",
+          "params": [],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_extract_askfer_sources",
+          "params": [
+            "retrieved_context"
+          ],
+          "returnType": "list",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "askfer_stream",
+          "params": [
+            "request",
+            "req",
+            "client_ip"
+          ],
+          "exported": true,
+          "lineCount": 204
+        },
+        {
+          "name": "askfer_sync",
+          "params": [
+            "request",
+            "x_admin_secret"
+          ],
+          "exported": true,
+          "lineCount": 15
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "secrets",
+          "specifiers": [
+            "secrets"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Optional"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "Depends",
+            "Header",
+            "HTTPException",
+            "Request"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "StreamingResponse"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "HumanMessage"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.api.askfer_deps",
+          "specifiers": [
+            "rate_limit_by_ip"
+          ]
+        },
+        {
+          "source": "app.api.routes.ingest",
+          "specifiers": [
+            "get_arq_redis"
+          ]
+        },
+        {
+          "source": "app.api.schemas",
+          "specifiers": [
+            "AskferRequest",
+            "AskferSyncRequest"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.graph.askfer_pipeline",
+          "specifiers": [
+            "get_askfer_graph"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "is_observability_enabled",
+            "root_span",
+            "annotate_span",
+            "flush_traces"
+          ]
+        },
+        {
+          "source": "app.utils.cache",
+          "specifiers": [
+            "get_cached_response",
+            "set_cached_response"
+          ]
+        },
+        {
+          "source": "app.utils.logger_batch",
+          "specifiers": [
+            "batch_logger"
+          ]
+        }
+      ],
+      "exports": [
+        "_flush_traces",
+        "_extract_askfer_sources",
+        "askfer_stream",
+        "askfer_sync"
+      ],
+      "totalLines": 291,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/routes/chat.py": {
+      "filePath": "app/api/routes/chat.py",
+      "contentHash": "dffe61201208cf28e9d0f5cc05820bdcf0136e449a72e9360bf74ebe451908d4",
+      "functions": [
+        {
+          "name": "_flush_traces",
+          "params": [],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_schedule_afk_ltm_sync",
+          "params": [
+            "conv_id",
+            "u_id"
+          ],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "_track_session_courses",
+          "params": [
+            "conv_id",
+            "retrieved_context"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_should_eval_turn",
+          "params": [
+            "intent",
+            "intent_scores",
+            "max_dense_score",
+            "answer"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 35
+        },
+        {
+          "name": "_enqueue_eval",
+          "params": [
+            "turn_id",
+            "span_id",
+            "query",
+            "answer",
+            "retrieved_context",
+            "intent",
+            "intent_scores"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "_quality_log_fields",
+          "params": [
+            "intent",
+            "intent_scores",
+            "max_dense_score"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "_verify_conversation_ownership",
+          "params": [
+            "conversation_id",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 43
+        },
+        {
+          "name": "_prepare_rag_context",
+          "params": [
+            "request",
+            "current_user",
+            "conversation_id",
+            "resolved_query"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 191
+        },
+        {
+          "name": "_extract_sources",
+          "params": [
+            "retrieved_context"
+          ],
+          "returnType": "list",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "_auto_detect_course_id",
+          "params": [
+            "retrieved_context",
+            "request_course_id"
+          ],
+          "returnType": "Optional[int]",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "chat",
+          "params": [
+            "request",
+            "background_tasks",
+            "current_user"
+          ],
+          "returnType": "ChatResponse",
+          "exported": true,
+          "lineCount": 282
+        },
+        {
+          "name": "get_history",
+          "params": [
+            "conversation_id",
+            "current_user"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "delete_history",
+          "params": [
+            "conversation_id",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "sync_memory",
+          "params": [
+            "conversation_id",
+            "background_tasks",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "chat_stream",
+          "params": [
+            "request",
+            "req",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 327
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "random",
+          "specifiers": [
+            "random"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Optional"
+          ]
+        },
+        {
+          "source": "collections",
+          "specifiers": [
+            "Counter"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "Depends",
+            "HTTPException",
+            "BackgroundTasks",
+            "Request"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "StreamingResponse"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "HumanMessage",
+            "AIMessage"
+          ]
+        },
+        {
+          "source": "app.agents.memory",
+          "specifiers": [
+            "append_to_history",
+            "get_conversation_history",
+            "resolve_numeric_query",
+            "get_or_summarize_history",
+            "clear_conversation_history"
+          ]
+        },
+        {
+          "source": "app.api.schemas",
+          "specifiers": [
+            "ChatRequest",
+            "ChatResponse",
+            "SourceReference"
+          ]
+        },
+        {
+          "source": "app.database.postgres",
+          "specifiers": [
+            "AsyncSessionLocal"
+          ]
+        },
+        {
+          "source": "app.database.models",
+          "specifiers": [
+            "UserProfile"
+          ]
+        },
+        {
+          "source": "app.graph.pipeline",
+          "specifiers": [
+            "get_rag_graph"
+          ]
+        },
+        {
+          "source": "app.utils.cache",
+          "specifiers": [
+            "get_cached_response",
+            "set_cached_response"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "is_observability_enabled",
+            "root_span",
+            "set_current_span_io",
+            "set_current_span_attributes",
+            "annotate_span",
+            "update_current_span_name",
+            "flush_traces"
+          ]
+        },
+        {
+          "source": "app.utils.logger_batch",
+          "specifiers": [
+            "batch_logger"
+          ]
+        },
+        {
+          "source": "app.api.auth",
+          "specifiers": [
+            "get_current_user",
+            "User"
+          ]
+        },
+        {
+          "source": "app.llm.client",
+          "specifiers": [
+            "get_cheap_llm"
+          ]
+        },
+        {
+          "source": "app.api.user_utils",
+          "specifiers": [
+            "is_real_user"
+          ]
+        },
+        {
+          "source": "app.agents.long_term_memory_qdrant",
+          "specifiers": [
+            "qdrant_ltm"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        },
+        {
+          "source": "app.api.routes.ingest",
+          "specifiers": [
+            "get_arq_redis"
+          ]
+        }
+      ],
+      "exports": [
+        "_flush_traces",
+        "_schedule_afk_ltm_sync",
+        "_track_session_courses",
+        "_should_eval_turn",
+        "_enqueue_eval",
+        "_quality_log_fields",
+        "_verify_conversation_ownership",
+        "_prepare_rag_context",
+        "_extract_sources",
+        "_auto_detect_course_id",
+        "chat",
+        "get_history",
+        "delete_history",
+        "sync_memory",
+        "chat_stream"
+      ],
+      "totalLines": 1136,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/routes/ingest.py": {
+      "filePath": "app/api/routes/ingest.py",
+      "contentHash": "c4814d88736e2113bee1e279889798ed35e82f0004651231e6d3be748c4586a1",
+      "functions": [
+        {
+          "name": "get_arq_redis",
+          "params": [],
+          "returnType": "ArqRedis",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "ingest",
+          "params": [
+            "request",
+            "db",
+            "current_user"
+          ],
+          "returnType": "IngestResponse",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "moodle_sync",
+          "params": [
+            "request",
+            "current_user"
+          ],
+          "returnType": "MoodleSyncResponse",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "enqueue_dummy_task",
+          "params": [
+            "name",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "get_moodle_sections",
+          "params": [
+            "course_id",
+            "current_user"
+          ],
+          "exported": true,
+          "lineCount": 52
+        }
+      ],
+      "classes": [
+        {
+          "name": "MoodleSyncRequest",
+          "methods": [],
+          "properties": [
+            "course_id",
+            "target_sections",
+            "force_reingest"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "MoodleSyncResponse",
+          "methods": [],
+          "properties": [
+            "message"
+          ],
+          "exported": true,
+          "lineCount": 2
+        }
+      ],
+      "imports": [
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "Depends",
+            "HTTPException",
+            "BackgroundTasks"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        },
+        {
+          "source": "sqlalchemy.ext.asyncio",
+          "specifiers": [
+            "AsyncSession"
+          ]
+        },
+        {
+          "source": "arq",
+          "specifiers": [
+            "create_pool"
+          ]
+        },
+        {
+          "source": "arq.connections",
+          "specifiers": [
+            "RedisSettings",
+            "ArqRedis"
+          ]
+        },
+        {
+          "source": "app.api.schemas",
+          "specifiers": [
+            "IngestRequest",
+            "IngestResponse"
+          ]
+        },
+        {
+          "source": "app.database.postgres",
+          "specifiers": [
+            "get_db",
+            "AsyncSessionLocal"
+          ]
+        },
+        {
+          "source": "app.ingestion.pipeline",
+          "specifiers": [
+            "ingest_document"
+          ]
+        },
+        {
+          "source": "app.ingestion.moodle_sync",
+          "specifiers": [
+            "sync_moodle_knowledge_base"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "app.api.auth",
+          "specifiers": [
+            "get_current_user",
+            "User"
+          ]
+        }
+      ],
+      "exports": [
+        "get_arq_redis",
+        "ingest",
+        "MoodleSyncRequest",
+        "MoodleSyncResponse",
+        "moodle_sync",
+        "enqueue_dummy_task",
+        "get_moodle_sections"
+      ],
+      "totalLines": 216,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/schemas.py": {
+      "filePath": "app/api/schemas.py",
+      "contentHash": "ea43baff6f16069e05bf4c3b858d129fbbb34086f0441d2f5884fab08e46c0d5",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ChatRequest",
+          "methods": [],
+          "properties": [
+            "query",
+            "conversation_id",
+            "course_id"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "SourceReference",
+          "methods": [],
+          "properties": [
+            "chunk_id",
+            "document_id",
+            "source",
+            "title",
+            "chunk_index",
+            "score"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "ChatResponse",
+          "methods": [],
+          "properties": [
+            "answer",
+            "sources",
+            "conversation_id",
+            "resolved_query",
+            "cached",
+            "latency_ms"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "IngestRequest",
+          "methods": [],
+          "properties": [
+            "text",
+            "title",
+            "source",
+            "metadata"
+          ],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "IngestResponse",
+          "methods": [],
+          "properties": [
+            "document_id",
+            "chunks_count",
+            "total_tokens",
+            "message"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "AskferRequest",
+          "methods": [],
+          "properties": [
+            "query"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "AskferSyncRequest",
+          "methods": [],
+          "properties": [
+            "force_reingest"
+          ],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "imports": [
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        }
+      ],
+      "exports": [
+        "ChatRequest",
+        "SourceReference",
+        "ChatResponse",
+        "IngestRequest",
+        "IngestResponse",
+        "AskferRequest",
+        "AskferSyncRequest"
+      ],
+      "totalLines": 85,
+      "hasStructuralAnalysis": true
+    },
+    "app/api/user_utils.py": {
+      "filePath": "app/api/user_utils.py",
+      "contentHash": "54fe9718433d9baa78d8332b3e7c2831b56ffcf41ff1398e3a57c2a3f5f3d33f",
+      "functions": [
+        {
+          "name": "is_real_user",
+          "params": [
+            "user_id",
+            "role"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "is_real_user"
+      ],
+      "totalLines": 26,
+      "hasStructuralAnalysis": true
+    },
+    "app/config/__init__.py": {
+      "filePath": "app/config/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/config/embedding_config.py": {
+      "filePath": "app/config/embedding_config.py",
+      "contentHash": "1c9d825a8632ef6dcb31c00fec8175cb404356fb5fc026508d82115b3fe8d532",
+      "functions": [
+        {
+          "name": "ensure_llamaindex_configured",
+          "params": [
+            "chunk_size",
+            "chunk_overlap"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 62
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "Settings"
+          ]
+        },
+        {
+          "source": "llama_index.core.node_parser",
+          "specifiers": [
+            "TokenTextSplitter"
+          ]
+        },
+        {
+          "source": "llama_index.embeddings.openai_like",
+          "specifiers": [
+            "OpenAILikeEmbedding"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "ensure_llamaindex_configured"
+      ],
+      "totalLines": 81,
+      "hasStructuralAnalysis": true
+    },
+    "app/config/logging.py": {
+      "filePath": "app/config/logging.py",
+      "contentHash": "dbafe382cc7449c820edd36c051d80bdeee24bf7a46bea24ae4131993716031d",
+      "functions": [
+        {
+          "name": "setup_logging",
+          "params": [
+            "debug"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 35
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        }
+      ],
+      "exports": [
+        "setup_logging"
+      ],
+      "totalLines": 49,
+      "hasStructuralAnalysis": true
+    },
+    "app/config/settings.py": {
+      "filePath": "app/config/settings.py",
+      "contentHash": "9a566adbc80fc4b8f2f0350e4acbb7d6386cb02f37fb88556139c08cc1c3d7ff",
+      "functions": [
+        {
+          "name": "get_settings",
+          "params": [],
+          "returnType": "Settings",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "Settings",
+          "methods": [
+            "postgres_dsn",
+            "redis_url"
+          ],
+          "properties": [
+            "app_env",
+            "app_debug",
+            "app_host",
+            "app_port",
+            "postgres_host",
+            "postgres_port",
+            "postgres_db",
+            "postgres_user",
+            "postgres_password",
+            "postgres_pool_size",
+            "postgres_max_overflow",
+            "postgres_pool_timeout",
+            "redis_host",
+            "redis_port",
+            "redis_db",
+            "redis_password",
+            "redis_max_connections",
+            "qdrant_host",
+            "qdrant_port",
+            "qdrant_collection",
+            "qdrant_kb_collection",
+            "embedding_model",
+            "embedding_dim",
+            "openrouter_api_key",
+            "openrouter_embedding_key",
+            "openrouter_base_url",
+            "openrouter_embedding_url",
+            "ollama_base_url",
+            "llm_model",
+            "llm_temperature",
+            "llm_max_tokens",
+            "phoenix_endpoint",
+            "phoenix_otlp_endpoint",
+            "phoenix_project_name",
+            "eval_enabled",
+            "eval_sample_rate",
+            "eval_always_if_dense_below",
+            "eval_always_if_empathy_above",
+            "max_context_tokens",
+            "retrieval_top_k",
+            "final_top_k",
+            "lms_chunk_text_max_chars",
+            "bm25_weight",
+            "vector_weight",
+            "kb_min_dense_score",
+            "kb_min_sparse_score",
+            "cache_query_ttl_seconds",
+            "conversation_ttl_seconds",
+            "user_pref_max_age_days",
+            "max_fresh_turns",
+            "max_history_ai_chars",
+            "ltm_afk_threshold_seconds",
+            "moodle_api_url",
+            "moodle_api_token",
+            "qdrant_personal_collection",
+            "portfolio_sitemap_url",
+            "portfolio_homepage_url",
+            "portfolio_project_url_pattern",
+            "portfolio_cv_url",
+            "askfer_admin_secret",
+            "askfer_rate_limit_per_minute",
+            "askfer_retrieval_top_k",
+            "askfer_final_top_k",
+            "askfer_chunk_text_max_chars",
+            "jwt_secret",
+            "jwt_algorithm",
+            "rate_limit_per_minute",
+            "max_concurrent_pipelines",
+            "pipeline_acquire_timeout_s"
+          ],
+          "exported": true,
+          "lineCount": 206
+        }
+      ],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Literal"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "Field",
+            "computed_field"
+          ]
+        },
+        {
+          "source": "pydantic_settings",
+          "specifiers": [
+            "BaseSettings",
+            "SettingsConfigDict"
+          ]
+        }
+      ],
+      "exports": [
+        "Settings",
+        "get_settings"
+      ],
+      "totalLines": 224,
+      "hasStructuralAnalysis": true
+    },
+    "app/database/__init__.py": {
+      "filePath": "app/database/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/database/models.py": {
+      "filePath": "app/database/models.py",
+      "contentHash": "10d00a5ba1804617e39ef3db305b8dc273b8e3193b88cbc3ca2805a18976172f",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Document",
+          "methods": [
+            "__repr__"
+          ],
+          "properties": [
+            "id",
+            "title",
+            "source",
+            "content_hash",
+            "metadata_",
+            "ingestion_state",
+            "total_chunks",
+            "created_at",
+            "updated_at",
+            "chunks"
+          ],
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "Chunk",
+          "methods": [
+            "__repr__"
+          ],
+          "properties": [
+            "id",
+            "document_id",
+            "chunk_index",
+            "text",
+            "token_count",
+            "qdrant_point_id",
+            "metadata_",
+            "created_at",
+            "document"
+          ],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "AgentLog",
+          "methods": [
+            "__repr__"
+          ],
+          "properties": [
+            "id",
+            "turn_id",
+            "endpoint",
+            "conversation_id",
+            "query",
+            "rewritten_query",
+            "answer",
+            "chunks_retrieved",
+            "latency_ms",
+            "llm_tokens_used",
+            "cache_hit",
+            "intent",
+            "needs_lookup",
+            "needs_reasoning",
+            "needs_empathy",
+            "max_dense_score",
+            "faithfulness_score",
+            "error",
+            "created_at"
+          ],
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "UserProfile",
+          "methods": [
+            "__repr__"
+          ],
+          "properties": [
+            "user_id",
+            "role",
+            "preferred_tone",
+            "formatting_pref",
+            "custom_instructions",
+            "updated_at"
+          ],
+          "exported": true,
+          "lineCount": 16
+        }
+      ],
+      "imports": [
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime"
+          ]
+        },
+        {
+          "source": "sqlalchemy",
+          "specifiers": [
+            "JSON",
+            "BigInteger",
+            "DateTime",
+            "Float",
+            "ForeignKey",
+            "Integer",
+            "String",
+            "Text",
+            "func"
+          ]
+        },
+        {
+          "source": "sqlalchemy.dialects.postgresql",
+          "specifiers": [
+            "UUID"
+          ]
+        },
+        {
+          "source": "sqlalchemy.orm",
+          "specifiers": [
+            "Mapped",
+            "mapped_column",
+            "relationship"
+          ]
+        },
+        {
+          "source": "app.database.postgres",
+          "specifiers": [
+            "Base"
+          ]
+        }
+      ],
+      "exports": [
+        "Document",
+        "Chunk",
+        "AgentLog",
+        "UserProfile"
+      ],
+      "totalLines": 141,
+      "hasStructuralAnalysis": true
+    },
+    "app/database/postgres.py": {
+      "filePath": "app/database/postgres.py",
+      "contentHash": "0c9a44351e3190cc6f4f03c8dfaf249aa449f922d1845b6b988abb7f00803c8c",
+      "functions": [
+        {
+          "name": "init_db",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "get_session",
+          "params": [],
+          "returnType": "AsyncGenerator[AsyncSession, None]",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "get_db",
+          "params": [],
+          "returnType": "AsyncGenerator[AsyncSession, None]",
+          "exported": true,
+          "lineCount": 9
+        }
+      ],
+      "classes": [
+        {
+          "name": "Base",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "imports": [
+        {
+          "source": "contextlib",
+          "specifiers": [
+            "asynccontextmanager"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "AsyncGenerator"
+          ]
+        },
+        {
+          "source": "sqlalchemy.ext.asyncio",
+          "specifiers": [
+            "AsyncSession",
+            "async_sessionmaker",
+            "create_async_engine"
+          ]
+        },
+        {
+          "source": "sqlalchemy.orm",
+          "specifiers": [
+            "DeclarativeBase"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "Base",
+        "init_db",
+        "get_session",
+        "get_db"
+      ],
+      "totalLines": 98,
+      "hasStructuralAnalysis": true
+    },
+    "app/database/qdrant_client.py": {
+      "filePath": "app/database/qdrant_client.py",
+      "contentHash": "3c9b4caea985c789684c58b0b530186e99c67fb5b7633516039ec074a6c40304",
+      "functions": [
+        {
+          "name": "get_qdrant_client",
+          "params": [],
+          "returnType": "QdrantManager",
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "QdrantManager",
+          "methods": [
+            "__init__",
+            "_create_collection",
+            "_validate_or_create_collection",
+            "ensure_collection",
+            "_create_kb_collection",
+            "ensure_kb_collection",
+            "_create_personal_collection",
+            "ensure_personal_collection",
+            "_create_ltm_collection",
+            "ensure_ltm_collection",
+            "get_vector_store"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 241
+        }
+      ],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "AsyncQdrantClient"
+          ]
+        },
+        {
+          "source": "qdrant_client.models",
+          "specifiers": [
+            "Distance",
+            "HnswConfigDiff",
+            "PayloadSchemaType",
+            "VectorParams"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "models"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "QdrantManager",
+        "get_qdrant_client"
+      ],
+      "totalLines": 277,
+      "hasStructuralAnalysis": true
+    },
+    "app/database/redis_client.py": {
+      "filePath": "app/database/redis_client.py",
+      "contentHash": "8a39c48a7a604d0b7ae1301fd47134e69aaa9210dcaf88ceda38de82b28be437",
+      "functions": [
+        {
+          "name": "_create_pool",
+          "params": [],
+          "returnType": "aioredis.ConnectionPool",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "get_redis_client",
+          "params": [],
+          "returnType": "aioredis.Redis",
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "redis.asyncio",
+          "specifiers": [
+            "aioredis"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "_create_pool",
+        "get_redis_client"
+      ],
+      "totalLines": 33,
+      "hasStructuralAnalysis": true
+    },
+    "app/eval/__init__.py": {
+      "filePath": "app/eval/__init__.py",
+      "contentHash": "6084eb9a1cb047da7b1fc3ac994919b7d1bd84619bbd4b21eaa0612e22820981",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": true
+    },
+    "app/eval/judge.py": {
+      "filePath": "app/eval/judge.py",
+      "contentHash": "37639f82860d9c68d452bce5677e782dfb78716a88f3568ed64fb2c1adb9b737",
+      "functions": [
+        {
+          "name": "_format_context",
+          "params": [
+            "retrieved"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "judge_faithfulness",
+          "params": [
+            "query",
+            "answer",
+            "retrieved_context"
+          ],
+          "returnType": "FaithfulnessResult | None",
+          "exported": true,
+          "lineCount": 33
+        }
+      ],
+      "classes": [
+        {
+          "name": "FaithfulnessResult",
+          "methods": [],
+          "properties": [
+            "score",
+            "unsupported_claims",
+            "reasoning"
+          ],
+          "exported": true,
+          "lineCount": 23
+        }
+      ],
+      "imports": [
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "HumanMessage"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        }
+      ],
+      "exports": [
+        "FaithfulnessResult",
+        "_format_context",
+        "judge_faithfulness"
+      ],
+      "totalLines": 152,
+      "hasStructuralAnalysis": true
+    },
+    "app/eval/runner.py": {
+      "filePath": "app/eval/runner.py",
+      "contentHash": "79ea60b191f7bbf0e73d9c2b405a127b3bd9665b8dadc32f2b8e30998717cca4",
+      "functions": [
+        {
+          "name": "run_one_query",
+          "params": [
+            "query",
+            "turns",
+            "conversation_id"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 82
+        },
+        {
+          "name": "load_golden_set",
+          "params": [
+            "path"
+          ],
+          "returnType": "list[dict[str, Any]]",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "evaluate_record",
+          "params": [
+            "record",
+            "sem"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 75
+        },
+        {
+          "name": "evaluate_dataset",
+          "params": [
+            "records",
+            "concurrency"
+          ],
+          "returnType": "list[dict[str, Any]]",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "aggregate",
+          "params": [
+            "results"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 40
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "AIMessage",
+            "HumanMessage"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.eval.judge",
+          "specifiers": [
+            "FaithfulnessResult",
+            "judge_faithfulness"
+          ]
+        },
+        {
+          "source": "app.graph.pipeline",
+          "specifiers": [
+            "get_rag_graph"
+          ]
+        }
+      ],
+      "exports": [
+        "run_one_query",
+        "load_golden_set",
+        "evaluate_record",
+        "evaluate_dataset",
+        "aggregate"
+      ],
+      "totalLines": 253,
+      "hasStructuralAnalysis": true
+    },
+    "app/eval/tasks.py": {
+      "filePath": "app/eval/tasks.py",
+      "contentHash": "86ee123f826a23f66fb349d612ed7cf497806dc8d7d54d1fc604dd6e6011704f",
+      "functions": [
+        {
+          "name": "eval_turn_task",
+          "params": [
+            "ctx",
+            "span_id",
+            "query",
+            "answer",
+            "retrieved_context",
+            "intent",
+            "intent_scores",
+            "turn_id"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 76
+        },
+        {
+          "name": "_persist_faithfulness",
+          "params": [
+            "turn_id",
+            "score"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 33
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.eval.judge",
+          "specifiers": [
+            "judge_faithfulness"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "annotate_span"
+          ]
+        }
+      ],
+      "exports": [
+        "eval_turn_task",
+        "_persist_faithfulness"
+      ],
+      "totalLines": 133,
+      "hasStructuralAnalysis": true
+    },
+    "app/graph/__init__.py": {
+      "filePath": "app/graph/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/graph/askfer_pipeline.py": {
+      "filePath": "app/graph/askfer_pipeline.py",
+      "contentHash": "651d20453cb7a718bf30306bbec3e6665d02542c622a561e74a5dd8788905cc5",
+      "functions": [
+        {
+          "name": "_detect_user_language",
+          "params": [
+            "text"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "_pre_processor",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "_handle_greeting",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "_handle_off_scope",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "_handle_malicious",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_rag_node",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 82
+        },
+        {
+          "name": "_generate_node",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 49
+        },
+        {
+          "name": "_route_by_intent",
+          "params": [
+            "state"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_build_askfer_graph",
+          "params": [],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "get_askfer_graph",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "AskferPreProcessorResult",
+          "methods": [],
+          "properties": [
+            "intent",
+            "rewritten_query"
+          ],
+          "exported": true,
+          "lineCount": 22
+        }
+      ],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Literal"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "AIMessage",
+            "HumanMessage",
+            "SystemMessage"
+          ]
+        },
+        {
+          "source": "langchain_core.runnables",
+          "specifiers": [
+            "RunnableConfig"
+          ]
+        },
+        {
+          "source": "langgraph.graph",
+          "specifiers": [
+            "END",
+            "START",
+            "StateGraph"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.graph.state",
+          "specifiers": [
+            "RAGState"
+          ]
+        },
+        {
+          "source": "app.llm.askfer_prompts",
+          "specifiers": [
+            "ASKFER_PERSONA",
+            "ASKFER_SYSTEM_PROMPT",
+            "PRE_PROCESSOR_PROMPT"
+          ]
+        },
+        {
+          "source": "app.llm.client",
+          "specifiers": [
+            "get_llm"
+          ]
+        }
+      ],
+      "exports": [
+        "_detect_user_language",
+        "AskferPreProcessorResult",
+        "_pre_processor",
+        "_handle_greeting",
+        "_handle_off_scope",
+        "_handle_malicious",
+        "_rag_node",
+        "_generate_node",
+        "_route_by_intent",
+        "_build_askfer_graph",
+        "get_askfer_graph"
+      ],
+      "totalLines": 381,
+      "hasStructuralAnalysis": true
+    },
+    "app/graph/intent_rules.py": {
+      "filePath": "app/graph/intent_rules.py",
+      "contentHash": "4b59009f5d4c795fd65954d4c4b61d56e0d721ecc4fe5286aab2c2eeccbef4b6",
+      "functions": [
+        {
+          "name": "_is_pure_filler",
+          "params": [
+            "low"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_is_math",
+          "params": [
+            "text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "_is_off_scope_keyword",
+          "params": [
+            "low"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_is_identity_question",
+          "params": [
+            "low"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_is_greeting",
+          "params": [
+            "low"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_is_topic_list",
+          "params": [
+            "low"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "classify",
+          "params": [
+            "text"
+          ],
+          "returnType": "Optional[Intent]",
+          "exported": true,
+          "lineCount": 25
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Literal",
+            "Optional"
+          ]
+        }
+      ],
+      "exports": [
+        "_is_pure_filler",
+        "_is_math",
+        "_is_off_scope_keyword",
+        "_is_identity_question",
+        "_is_greeting",
+        "_is_topic_list",
+        "classify"
+      ],
+      "totalLines": 254,
+      "hasStructuralAnalysis": true
+    },
+    "app/graph/pipeline.py": {
+      "filePath": "app/graph/pipeline.py",
+      "contentHash": "6b011072e46c851499199862b50c9d322eea8881c11b47d138f81d7ce82ddbb5",
+      "functions": [
+        {
+          "name": "_strip_md_headings_for_context",
+          "params": [
+            "text"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_apply_safety_overrides",
+          "params": [
+            "user_msg",
+            "intent",
+            "intent_scores",
+            "safety_preserved_query"
+          ],
+          "returnType": "tuple[str, dict[str, float], str | None]",
+          "exported": true,
+          "lineCount": 66
+        },
+        {
+          "name": "_load_course_names",
+          "params": [],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "_sanitize_answer",
+          "params": [
+            "text"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "_pre_processor",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 115
+        },
+        {
+          "name": "_handle_greeting",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 51
+        },
+        {
+          "name": "_handle_ambiguity",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 60
+        },
+        {
+          "name": "_handle_malicious",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_handle_off_scope",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_handle_topic_list",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 53
+        },
+        {
+          "name": "_rag_node",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 42
+        },
+        {
+          "name": "_handle_low_relevance",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "_window_generate_history",
+          "params": [
+            "messages",
+            "max_fresh_turns",
+            "max_ai_chars"
+          ],
+          "returnType": "list",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "_generate_node",
+          "params": [
+            "state",
+            "config"
+          ],
+          "exported": true,
+          "lineCount": 180
+        },
+        {
+          "name": "_route_by_intent",
+          "params": [
+            "state"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_route_after_rag",
+          "params": [
+            "state"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 39
+        },
+        {
+          "name": "_build_agent_graph",
+          "params": [],
+          "exported": true,
+          "lineCount": 46
+        },
+        {
+          "name": "get_rag_graph",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        }
+      ],
+      "classes": [
+        {
+          "name": "PreProcessorResult",
+          "methods": [],
+          "properties": [
+            "intent",
+            "rewritten_query",
+            "needs_lookup",
+            "needs_reasoning",
+            "needs_empathy",
+            "needs_safety_escalation",
+            "safety_preserved_query"
+          ],
+          "exported": true,
+          "lineCount": 51
+        },
+        {
+          "name": "StreamLeakGuard",
+          "methods": [
+            "__init__",
+            "feed",
+            "flush",
+            "leak_detected"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 57
+        }
+      ],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Literal"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "AIMessage",
+            "HumanMessage",
+            "SystemMessage"
+          ]
+        },
+        {
+          "source": "langchain_core.runnables",
+          "specifiers": [
+            "RunnableConfig"
+          ]
+        },
+        {
+          "source": "langgraph.graph",
+          "specifiers": [
+            "END",
+            "START",
+            "StateGraph"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel",
+            "Field"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.graph.state",
+          "specifiers": [
+            "RAGState"
+          ]
+        },
+        {
+          "source": "app.llm.client",
+          "specifiers": [
+            "get_llm",
+            "get_preprocessor_llm",
+            "get_generate_llm"
+          ]
+        },
+        {
+          "source": "app.llm.prompts",
+          "specifiers": [
+            "PERSONA",
+            "OUTPUT_CONTRACT"
+          ]
+        },
+        {
+          "source": "app.utils.token_counter",
+          "specifiers": [
+            "truncate_to_tokens"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        }
+      ],
+      "exports": [
+        "PreProcessorResult",
+        "_strip_md_headings_for_context",
+        "_apply_safety_overrides",
+        "_load_course_names",
+        "_sanitize_answer",
+        "StreamLeakGuard",
+        "_pre_processor",
+        "_handle_greeting",
+        "_handle_ambiguity",
+        "_handle_malicious",
+        "_handle_off_scope",
+        "_handle_topic_list",
+        "_rag_node",
+        "_handle_low_relevance",
+        "_window_generate_history",
+        "_generate_node",
+        "_route_by_intent",
+        "_route_after_rag",
+        "_build_agent_graph",
+        "get_rag_graph"
+      ],
+      "totalLines": 1285,
+      "hasStructuralAnalysis": true
+    },
+    "app/graph/state.py": {
+      "filePath": "app/graph/state.py",
+      "contentHash": "5f51dd8877179b581e3d47e6be0dcfd8aa3ca64f5c5e06aaa3b10cfb59636339",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RAGState",
+          "methods": [],
+          "properties": [
+            "messages",
+            "query",
+            "conversation_id",
+            "intent",
+            "intent_scores",
+            "error",
+            "retrieved_context",
+            "rewritten_query",
+            "retrieval_query",
+            "safety_preserved_query",
+            "conversation_summary",
+            "user_profile",
+            "user_preferences"
+          ],
+          "exported": true,
+          "lineCount": 28
+        }
+      ],
+      "imports": [
+        {
+          "source": "operator",
+          "specifiers": [
+            "operator"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Annotated",
+            "List",
+            "Optional",
+            "TypedDict"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "AnyMessage"
+          ]
+        }
+      ],
+      "exports": [
+        "RAGState"
+      ],
+      "totalLines": 40,
+      "hasStructuralAnalysis": true
+    },
+    "app/ingestion/__init__.py": {
+      "filePath": "app/ingestion/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/ingestion/moodle_sync.py": {
+      "filePath": "app/ingestion/moodle_sync.py",
+      "contentHash": "d8f8087df04af97eb2d34b3660e40098df30a83b35e54f537f7b80b67d9f6af6",
+      "functions": [
+        {
+          "name": "_parse_frontmatter",
+          "params": [
+            "raw"
+          ],
+          "returnType": "tuple[dict, str]",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "_find_kb_course_id",
+          "params": [
+            "client"
+          ],
+          "returnType": "int | None",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "_get_course_contents",
+          "params": [
+            "client",
+            "course_id"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_download_file",
+          "params": [
+            "client",
+            "url"
+          ],
+          "returnType": "bytes",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_delete_stale_documents",
+          "params": [
+            "session",
+            "course_id",
+            "current_filenames"
+          ],
+          "exported": true,
+          "lineCount": 58
+        },
+        {
+          "name": "_ingest_markdown",
+          "params": [
+            "raw_content",
+            "filename",
+            "session",
+            "moodle_course_id",
+            "force_reingest"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 208
+        },
+        {
+          "name": "sync_moodle_knowledge_base",
+          "params": [
+            "session",
+            "course_id",
+            "target_sections",
+            "force_reingest"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 92
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "yaml",
+          "specifiers": [
+            "yaml"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "sqlalchemy",
+          "specifiers": [
+            "delete"
+          ]
+        },
+        {
+          "source": "sqlalchemy.ext.asyncio",
+          "specifiers": [
+            "AsyncSession"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "qdrant_models"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.database.models",
+          "specifiers": [
+            "Chunk",
+            "Document"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        },
+        {
+          "source": "app.utils.token_counter",
+          "specifiers": [
+            "count_tokens"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "VectorStoreIndex",
+            "StorageContext",
+            "LlamaDocument"
+          ]
+        },
+        {
+          "source": "llama_index.core.node_parser",
+          "specifiers": [
+            "MarkdownNodeParser"
+          ]
+        },
+        {
+          "source": "llama_index.vector_stores.qdrant",
+          "specifiers": [
+            "QdrantVectorStore"
+          ]
+        }
+      ],
+      "exports": [
+        "_parse_frontmatter",
+        "_find_kb_course_id",
+        "_get_course_contents",
+        "_download_file",
+        "_delete_stale_documents",
+        "_ingest_markdown",
+        "sync_moodle_knowledge_base"
+      ],
+      "totalLines": 487,
+      "hasStructuralAnalysis": true
+    },
+    "app/ingestion/pipeline.py": {
+      "filePath": "app/ingestion/pipeline.py",
+      "contentHash": "a2a3f16961d732e41966ff838829718e4f6992b7be57682039ba75c28123c80b",
+      "functions": [
+        {
+          "name": "ingest_document",
+          "params": [
+            "text",
+            "session",
+            "metadata",
+            "title",
+            "source",
+            "chunk_size",
+            "chunk_overlap"
+          ],
+          "returnType": "IngestionResult",
+          "exported": true,
+          "lineCount": 139
+        }
+      ],
+      "classes": [
+        {
+          "name": "IngestionResult",
+          "methods": [],
+          "properties": [
+            "document_id",
+            "chunks_count",
+            "total_tokens"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "sqlalchemy.ext.asyncio",
+          "specifiers": [
+            "AsyncSession"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.database.models",
+          "specifiers": [
+            "Chunk",
+            "Document"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        },
+        {
+          "source": "app.utils.token_counter",
+          "specifiers": [
+            "count_tokens"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "LlamaDocument"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "VectorStoreIndex",
+            "StorageContext",
+            "Settings"
+          ]
+        },
+        {
+          "source": "llama_index.core.node_parser",
+          "specifiers": [
+            "MarkdownNodeParser"
+          ]
+        },
+        {
+          "source": "llama_index.vector_stores.qdrant",
+          "specifiers": [
+            "QdrantVectorStore"
+          ]
+        }
+      ],
+      "exports": [
+        "IngestionResult",
+        "ingest_document"
+      ],
+      "totalLines": 172,
+      "hasStructuralAnalysis": true
+    },
+    "app/ingestion/portfolio_sync.py": {
+      "filePath": "app/ingestion/portfolio_sync.py",
+      "contentHash": "78018992aef6b865f600be8b27a9a558501a501754cb59ef7cae4fe7c8123549",
+      "functions": [
+        {
+          "name": "_read_local_md",
+          "params": [
+            "path"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_write_local_md",
+          "params": [
+            "path",
+            "content"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_load_local_with_title",
+          "params": [
+            "path",
+            "default_title"
+          ],
+          "returnType": "tuple[str, str] | None",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_save_local_with_title",
+          "params": [
+            "path",
+            "md",
+            "title"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_clean_markdown",
+          "params": [
+            "md"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "_patch_homepage_counters",
+          "params": [
+            "markdown"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "_fetch_sitemap_urls",
+          "params": [
+            "client"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 43
+        },
+        {
+          "name": "_scrape_web_page",
+          "params": [
+            "client",
+            "url"
+          ],
+          "returnType": "tuple[str, str]",
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "_scrape_cv_pdf",
+          "params": [
+            "client",
+            "url"
+          ],
+          "returnType": "tuple[str, str]",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "_slugify_project_url",
+          "params": [
+            "url"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "_build_metadata",
+          "params": [
+            "doc_type",
+            "url",
+            "scraped_at",
+            "project_slug"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_load_profile_markdown",
+          "params": [],
+          "returnType": "tuple[str, str] | None",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_summarize_project_for_overview",
+          "params": [
+            "markdown",
+            "project_url",
+            "title"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "_build_overview_markdown",
+          "params": [
+            "summaries"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 42
+        },
+        {
+          "name": "_delete_stale_portfolio_docs",
+          "params": [
+            "session",
+            "current_sources"
+          ],
+          "exported": true,
+          "lineCount": 38
+        },
+        {
+          "name": "_ingest_portfolio_doc",
+          "params": [
+            "raw_markdown",
+            "source_id",
+            "title",
+            "metadata",
+            "session",
+            "force_reingest"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 165
+        },
+        {
+          "name": "refresh_profile_only",
+          "params": [
+            "session"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "sync_portfolio_knowledge_base",
+          "params": [
+            "session",
+            "force_reingest"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 293
+        },
+        {
+          "name": "_cli_main",
+          "params": [
+            "force_reingest"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 11
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime"
+          ]
+        },
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "sqlalchemy",
+          "specifiers": [
+            "delete",
+            "or_",
+            "select"
+          ]
+        },
+        {
+          "source": "sqlalchemy.sql",
+          "specifiers": [
+            "sql_text"
+          ]
+        },
+        {
+          "source": "sqlalchemy.ext.asyncio",
+          "specifiers": [
+            "AsyncSession"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "qdrant_models"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.database.models",
+          "specifiers": [
+            "Chunk",
+            "Document"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        },
+        {
+          "source": "app.utils.token_counter",
+          "specifiers": [
+            "count_tokens"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "VectorStoreIndex",
+            "StorageContext",
+            "LlamaDocument"
+          ]
+        },
+        {
+          "source": "llama_index.core.node_parser",
+          "specifiers": [
+            "MarkdownNodeParser"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "LISettings"
+          ]
+        }
+      ],
+      "exports": [
+        "_read_local_md",
+        "_write_local_md",
+        "_load_local_with_title",
+        "_save_local_with_title",
+        "_clean_markdown",
+        "_patch_homepage_counters",
+        "_fetch_sitemap_urls",
+        "_scrape_web_page",
+        "_scrape_cv_pdf",
+        "_slugify_project_url",
+        "_build_metadata",
+        "_load_profile_markdown",
+        "_summarize_project_for_overview",
+        "_build_overview_markdown",
+        "_delete_stale_portfolio_docs",
+        "_ingest_portfolio_doc",
+        "refresh_profile_only",
+        "sync_portfolio_knowledge_base",
+        "_cli_main"
+      ],
+      "totalLines": 1043,
+      "hasStructuralAnalysis": true
+    },
+    "app/llm/__init__.py": {
+      "filePath": "app/llm/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/llm/askfer_prompts.py": {
+      "filePath": "app/llm/askfer_prompts.py",
+      "contentHash": "805f3fdd8eb0b7fb3f5cd65246195a70684ac113d229e17997a6ff22e55843f5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 76,
+      "hasStructuralAnalysis": true
+    },
+    "app/llm/client.py": {
+      "filePath": "app/llm/client.py",
+      "contentHash": "11fe32556ee0931df958eec453e964f6fa0133cd6e3797524e539c6a0c5e20ef",
+      "functions": [
+        {
+          "name": "_strip_openai_ua",
+          "params": [
+            "request"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_make_http_client",
+          "params": [],
+          "returnType": "httpx.AsyncClient",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "get_llm",
+          "params": [],
+          "returnType": "ChatOpenAI",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "get_cheap_llm",
+          "params": [],
+          "returnType": "ChatOpenAI",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "get_preprocessor_llm",
+          "params": [],
+          "returnType": "ChatOpenAI",
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "get_generate_llm",
+          "params": [],
+          "returnType": "ChatOpenAI",
+          "exported": true,
+          "lineCount": 38
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "langchain_openai",
+          "specifiers": [
+            "ChatOpenAI"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "_strip_openai_ua",
+        "_make_http_client",
+        "get_llm",
+        "get_cheap_llm",
+        "get_preprocessor_llm",
+        "get_generate_llm"
+      ],
+      "totalLines": 161,
+      "hasStructuralAnalysis": true
+    },
+    "app/llm/prompts.py": {
+      "filePath": "app/llm/prompts.py",
+      "contentHash": "3e66bcb30bef1089110a9f024145826012d7c942b3a5590924a8775f80c216c4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
+    "app/main.py": {
+      "filePath": "app/main.py",
+      "contentHash": "f9458cc1bedf90420b5f64cc94ff0ba67a6478cca74991b988c79cc2396dd649",
+      "functions": [
+        {
+          "name": "lifespan",
+          "params": [
+            "app"
+          ],
+          "returnType": "AsyncGenerator[None, None]",
+          "exported": true,
+          "lineCount": 79
+        },
+        {
+          "name": "create_app",
+          "params": [],
+          "returnType": "FastAPI",
+          "exported": true,
+          "lineCount": 65
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "contextlib",
+          "specifiers": [
+            "asynccontextmanager"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "AsyncGenerator"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "FastAPI",
+            "Depends"
+          ]
+        },
+        {
+          "source": "fastapi.middleware.cors",
+          "specifiers": [
+            "CORSMiddleware"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "HTMLResponse"
+          ]
+        },
+        {
+          "source": "fastapi.staticfiles",
+          "specifiers": [
+            "StaticFiles"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.logging",
+          "specifiers": [
+            "setup_logging"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.api.routes",
+          "specifiers": [
+            "chat",
+            "ingest",
+            "askfer"
+          ]
+        },
+        {
+          "source": "app.api.auth",
+          "specifiers": [
+            "get_current_user"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "setup_phoenix",
+            "is_observability_enabled",
+            "flush_traces"
+          ]
+        }
+      ],
+      "exports": [
+        "lifespan",
+        "create_app"
+      ],
+      "totalLines": 172,
+      "hasStructuralAnalysis": true
+    },
+    "app/observability.py": {
+      "filePath": "app/observability.py",
+      "contentHash": "de588fdb9919be50d795ef6809c5ae67db702b242055e830a038cd119261dd61",
+      "functions": [
+        {
+          "name": "set_tracer_provider",
+          "params": [
+            "provider"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "get_tracer_provider",
+          "params": [],
+          "returnType": "Any | None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "get_tracer",
+          "params": [
+            "name"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "set_phoenix_client",
+          "params": [
+            "client"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "get_phoenix_client",
+          "params": [],
+          "returnType": "Any | None",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "is_observability_enabled",
+          "params": [],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "flush",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "setup_phoenix",
+          "params": [
+            "project_name",
+            "otlp_endpoint",
+            "phoenix_endpoint"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 35
+        },
+        {
+          "name": "trace_attributes",
+          "params": [
+            "session_id",
+            "user_id",
+            "metadata",
+            "tags"
+          ],
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "set_current_span_io",
+          "params": [
+            "input",
+            "output"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "set_current_span_attributes",
+          "params": [
+            "attrs"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "get_current_span_id",
+          "params": [],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "update_current_span_name",
+          "params": [
+            "name"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "annotate_span",
+          "params": [
+            "span_id",
+            "name",
+            "score"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "root_span",
+          "params": [
+            "name",
+            "session_id",
+            "user_id",
+            "metadata",
+            "tags"
+          ],
+          "exported": true,
+          "lineCount": 49
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Optional"
+          ]
+        },
+        {
+          "source": "contextlib",
+          "specifiers": [
+            "contextmanager"
+          ]
+        }
+      ],
+      "exports": [
+        "set_tracer_provider",
+        "get_tracer_provider",
+        "get_tracer",
+        "set_phoenix_client",
+        "get_phoenix_client",
+        "is_observability_enabled",
+        "flush",
+        "setup_phoenix",
+        "trace_attributes",
+        "set_current_span_io",
+        "set_current_span_attributes",
+        "get_current_span_id",
+        "update_current_span_name",
+        "annotate_span",
+        "root_span"
+      ],
+      "totalLines": 297,
+      "hasStructuralAnalysis": true
+    },
+    "app/retrieval/__init__.py": {
+      "filePath": "app/retrieval/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/retrieval/hybrid_retriever.py": {
+      "filePath": "app/retrieval/hybrid_retriever.py",
+      "contentHash": "c5ebb8dcd8148d1e6b35e4c4301ae434b8534930498f9aa48652b59527ee7c01",
+      "functions": [
+        {
+          "name": "_get_sparse_encoder",
+          "params": [],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_minmax_normalize",
+          "params": [
+            "scores"
+          ],
+          "returnType": "dict[str, float]",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "hybrid_search",
+          "params": [
+            "query",
+            "top_k",
+            "collection",
+            "fetch_k"
+          ],
+          "returnType": "list[RetrievedChunk]",
+          "exported": true,
+          "lineCount": 148
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "rest"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "Settings"
+          ]
+        },
+        {
+          "source": "llama_index.core.vector_stores.utils",
+          "specifiers": [
+            "metadata_dict_to_node"
+          ]
+        },
+        {
+          "source": "llama_index.vector_stores.qdrant.utils",
+          "specifiers": [
+            "fastembed_sparse_encoder"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        },
+        {
+          "source": "app.retrieval.schemas",
+          "specifiers": [
+            "RetrievedChunk"
+          ]
+        }
+      ],
+      "exports": [
+        "_get_sparse_encoder",
+        "_minmax_normalize",
+        "hybrid_search"
+      ],
+      "totalLines": 220,
+      "hasStructuralAnalysis": true
+    },
+    "app/retrieval/schemas.py": {
+      "filePath": "app/retrieval/schemas.py",
+      "contentHash": "a6dd778a64932f14a67c4e96c5b601d061100d8dafe67f9c724bde8334ee7057",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RetrievedChunk",
+          "methods": [
+            "to_source_dict"
+          ],
+          "properties": [
+            "chunk_id",
+            "text",
+            "score",
+            "hybrid_score",
+            "dense_score",
+            "sparse_score",
+            "document_id",
+            "source",
+            "title",
+            "chunk_index",
+            "token_count",
+            "metadata"
+          ],
+          "exported": true,
+          "lineCount": 28
+        }
+      ],
+      "imports": [
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        }
+      ],
+      "exports": [
+        "RetrievedChunk"
+      ],
+      "totalLines": 36,
+      "hasStructuralAnalysis": true
+    },
+    "app/static/askfer-chips.json": {
+      "filePath": "app/static/askfer-chips.json",
+      "contentHash": "84b6a6b26fea981b4671be8ee480cf10ab3571bb509437e7dabb1e81efdf9cf2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": true
+    },
+    "app/static/askfer.html": {
+      "filePath": "app/static/askfer.html",
+      "contentHash": "d268ec82a29bd7e0e61c397fb29301b182775577a6982fcbcc900bd4d3777998",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 246,
+      "hasStructuralAnalysis": false
+    },
+    "app/static/index.html": {
+      "filePath": "app/static/index.html",
+      "contentHash": "cfa4cbb470291ae6fad7404ac30e580cb974349b4d51d1e14db9264226699883",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": false
+    },
+    "app/static/moodle_ingest.html": {
+      "filePath": "app/static/moodle_ingest.html",
+      "contentHash": "2fbfb4d8dcfdca022280c6aa0f74bb6463d8916a9dbfb3375fc5bcf41ec8e686",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 618,
+      "hasStructuralAnalysis": false
+    },
+    "app/static/script.js": {
+      "filePath": "app/static/script.js",
+      "contentHash": "fc9485b876c02deef7713743a27bf8091273ad695614166d7e6ac0bea42aaf0c",
+      "functions": [
+        {
+          "name": "setSendButtonState",
+          "params": [
+            "streaming"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "handleSendClick",
+          "params": [],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "toggleChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 43
+        },
+        {
+          "name": "showIntro",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "loadHistory",
+          "params": [],
+          "exported": false,
+          "lineCount": 39
+        },
+        {
+          "name": "clearChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "getTime",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "addMessage",
+          "params": [
+            "text",
+            "type"
+          ],
+          "exported": false,
+          "lineCount": 27
+        },
+        {
+          "name": "showTyping",
+          "params": [],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "removeTyping",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "getSessionId",
+          "params": [],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "resetChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "createStreamBubble",
+          "params": [],
+          "exported": false,
+          "lineCount": 40
+        },
+        {
+          "name": "finalizeStreamBubble",
+          "params": [
+            "contentDiv",
+            "bubble",
+            "fullText"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "send",
+          "params": [],
+          "exported": false,
+          "lineCount": 239
+        },
+        {
+          "name": "streamMessageFallback",
+          "params": [
+            "fullText",
+            "type"
+          ],
+          "exported": false,
+          "lineCount": 48
+        },
+        {
+          "name": "addAIResponse",
+          "params": [
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "handleKey",
+          "params": [
+            "e"
+          ],
+          "exported": false,
+          "lineCount": 8
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 684,
+      "hasStructuralAnalysis": true
+    },
+    "app/static/style.css": {
+      "filePath": "app/static/style.css",
+      "contentHash": "02afe2ceae0ea086246c5442315e960fddc72220423bfd6309b0d22e4d323433",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 356,
+      "hasStructuralAnalysis": false
+    },
+    "app/utils/__init__.py": {
+      "filePath": "app/utils/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "app/utils/cache.py": {
+      "filePath": "app/utils/cache.py",
+      "contentHash": "12d3f5cb06d08f366d6634d6faa85eff57dcad2727da2e97d2699443c0dd0c7d",
+      "functions": [
+        {
+          "name": "_cache_key",
+          "params": [
+            "query",
+            "course_id",
+            "namespace"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_ensure_semantic_collection",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "_log_cache_event",
+          "params": [
+            "hit",
+            "course_id",
+            "score"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "get_cached_response",
+          "params": [
+            "query",
+            "course_id",
+            "query_embedding",
+            "cache_namespace"
+          ],
+          "returnType": "dict | None",
+          "exported": true,
+          "lineCount": 93
+        },
+        {
+          "name": "set_cached_response",
+          "params": [
+            "query",
+            "answer",
+            "sources",
+            "course_id",
+            "ttl",
+            "query_embedding",
+            "cache_namespace"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 80
+        },
+        {
+          "name": "_maybe_prune_semantic_cache",
+          "params": [
+            "qdrant"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "flush_cache_by_namespace",
+          "params": [
+            "namespace"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 46
+        },
+        {
+          "name": "flush_cache_by_course",
+          "params": [
+            "course_id"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "flush_cache",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 30
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "hashlib",
+          "specifiers": [
+            "hashlib"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "qdrant_client",
+          "specifiers": [
+            "qdrant_models"
+          ]
+        },
+        {
+          "source": "llama_index.core",
+          "specifiers": [
+            "Settings"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        },
+        {
+          "source": "app.database.qdrant_client",
+          "specifiers": [
+            "get_qdrant_client"
+          ]
+        },
+        {
+          "source": "app.config.embedding_config",
+          "specifiers": [
+            "ensure_llamaindex_configured"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "get_tracer",
+            "is_observability_enabled"
+          ]
+        }
+      ],
+      "exports": [
+        "_cache_key",
+        "_ensure_semantic_collection",
+        "_log_cache_event",
+        "get_cached_response",
+        "set_cached_response",
+        "_maybe_prune_semantic_cache",
+        "flush_cache_by_namespace",
+        "flush_cache_by_course",
+        "flush_cache"
+      ],
+      "totalLines": 448,
+      "hasStructuralAnalysis": true
+    },
+    "app/utils/lang.py": {
+      "filePath": "app/utils/lang.py",
+      "contentHash": "961cf8476c6c84374526dddab02fd8d1c2a32885c9d3db4654c73c116a390ad2",
+      "functions": [
+        {
+          "name": "is_indonesian",
+          "params": [
+            "text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "history_is_indonesian",
+          "params": [
+            "messages"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "typing",
+          "specifiers": [
+            "Iterable"
+          ]
+        }
+      ],
+      "exports": [
+        "is_indonesian",
+        "history_is_indonesian"
+      ],
+      "totalLines": 68,
+      "hasStructuralAnalysis": true
+    },
+    "app/utils/logger_batch.py": {
+      "filePath": "app/utils/logger_batch.py",
+      "contentHash": "d62c43dbb598552de4933e97268e5b558d8edf511c702903d1d53545ef8bc36d",
+      "functions": [],
+      "classes": [
+        {
+          "name": "BatchLogger",
+          "methods": [
+            "__init__",
+            "start",
+            "stop",
+            "add_log",
+            "_flush_worker",
+            "flush"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 136
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timezone"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any",
+            "Dict",
+            "List",
+            "Optional"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "sqlalchemy",
+          "specifiers": [
+            "insert"
+          ]
+        },
+        {
+          "source": "app.database.models",
+          "specifiers": [
+            "AgentLog"
+          ]
+        },
+        {
+          "source": "app.database.postgres",
+          "specifiers": [
+            "AsyncSessionLocal"
+          ]
+        },
+        {
+          "source": "app.database.redis_client",
+          "specifiers": [
+            "get_redis_client"
+          ]
+        }
+      ],
+      "exports": [
+        "BatchLogger"
+      ],
+      "totalLines": 153,
+      "hasStructuralAnalysis": true
+    },
+    "app/utils/token_counter.py": {
+      "filePath": "app/utils/token_counter.py",
+      "contentHash": "fe98019deafbc427a1175ff593773a1a88594120e7819ca9d386e442919aa11c",
+      "functions": [
+        {
+          "name": "_get_encoding",
+          "params": [],
+          "returnType": "tiktoken.Encoding",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "count_tokens",
+          "params": [
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "truncate_to_tokens",
+          "params": [
+            "text",
+            "max_tokens"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 7
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "functools",
+          "specifiers": [
+            "lru_cache"
+          ]
+        },
+        {
+          "source": "tiktoken",
+          "specifiers": [
+            "tiktoken"
+          ]
+        }
+      ],
+      "exports": [
+        "_get_encoding",
+        "count_tokens",
+        "truncate_to_tokens"
+      ],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
+    "app/worker.py": {
+      "filePath": "app/worker.py",
+      "contentHash": "35e36676fe335c6d2cdc42955679729afe0c000856c0da6c08af6380d0863a2a",
+      "functions": [
+        {
+          "name": "sync_moodle_task",
+          "params": [
+            "ctx",
+            "course_id",
+            "target_sections",
+            "force_reingest"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "dummy_task",
+          "params": [
+            "ctx",
+            "name"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "sync_portfolio_task",
+          "params": [
+            "ctx",
+            "force_reingest"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_profile_watcher_task",
+          "params": [],
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "startup",
+          "params": [
+            "ctx"
+          ],
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "shutdown",
+          "params": [
+            "ctx"
+          ],
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "sync_ltm_task",
+          "params": [
+            "ctx",
+            "conversation_id",
+            "user_id"
+          ],
+          "returnType": "dict[str, Any]",
+          "exported": true,
+          "lineCount": 242
+        }
+      ],
+      "classes": [
+        {
+          "name": "WorkerSettings",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 11
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
+          "source": "arq.connections",
+          "specifiers": [
+            "RedisSettings"
+          ]
+        },
+        {
+          "source": "loguru",
+          "specifiers": [
+            "logger"
+          ]
+        },
+        {
+          "source": "app.config.logging",
+          "specifiers": [
+            "setup_logging"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        },
+        {
+          "source": "app.database.postgres",
+          "specifiers": [
+            "AsyncSessionLocal"
+          ]
+        },
+        {
+          "source": "app.eval.tasks",
+          "specifiers": [
+            "eval_turn_task"
+          ]
+        },
+        {
+          "source": "app.ingestion.moodle_sync",
+          "specifiers": [
+            "sync_moodle_knowledge_base"
+          ]
+        },
+        {
+          "source": "app.ingestion.portfolio_sync",
+          "specifiers": [
+            "sync_portfolio_knowledge_base"
+          ]
+        },
+        {
+          "source": "app.observability",
+          "specifiers": [
+            "setup_phoenix",
+            "is_observability_enabled",
+            "flush_traces"
+          ]
+        }
+      ],
+      "exports": [
+        "sync_moodle_task",
+        "dummy_task",
+        "sync_portfolio_task",
+        "_profile_watcher_task",
+        "startup",
+        "shutdown",
+        "sync_ltm_task",
+        "WorkerSettings"
+      ],
+      "totalLines": 417,
+      "hasStructuralAnalysis": true
+    },
+    "data/eval/baseline.json": {
+      "filePath": "data/eval/baseline.json",
+      "contentHash": "ca9ad749a331f00e3ec7b18b5bb622cae6abccc6ecf33f730a08fc4801337256",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 56,
+      "hasStructuralAnalysis": true
+    },
+    "data/eval/golden_set.jsonl": {
+      "filePath": "data/eval/golden_set.jsonl",
+      "contentHash": "d189677e25f19ad2d6a496dae9785a98a9748ff89d4939053507e11e4fbcb8c0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 23,
+      "hasStructuralAnalysis": false
+    },
+    "data/eval/last_run_rerank_off.json": {
+      "filePath": "data/eval/last_run_rerank_off.json",
+      "contentHash": "594f92c5477e42bfa94c4dd9b50428020421bdc3da85a98a54b275e1232553b9",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 441,
+      "hasStructuralAnalysis": true
+    },
+    "data/eval/last_run_rerank_on.json": {
+      "filePath": "data/eval/last_run_rerank_on.json",
+      "contentHash": "b05a5959b448b6338145b3cb766ab20ce10c970eb4b65c8e04af4282cd24f44c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 437,
+      "hasStructuralAnalysis": true
+    },
+    "data/eval/last_run.json": {
+      "filePath": "data/eval/last_run.json",
+      "contentHash": "b05a5959b448b6338145b3cb766ab20ce10c970eb4b65c8e04af4282cd24f44c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 437,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/cv.md": {
+      "filePath": "data/personal/cv.md",
+      "contentHash": "169b61869c576f93dcd882084f33bc2f825eb309a14bdaac884197c7308eb1d6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/homepage.md": {
+      "filePath": "data/personal/homepage.md",
+      "contentHash": "657cde91a5eba1f998d5939f7488917c5f3f350e2b9fde94fc29c1136268ce7c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 164,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/addie.md": {
+      "filePath": "data/personal/knowledge/addie.md",
+      "contentHash": "224c739088113bbcdddb75b649dfd4b131b5a94c214a1f9531e9206391fe9a0e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 29,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/adult-learning-andragogy.md": {
+      "filePath": "data/personal/knowledge/adult-learning-andragogy.md",
+      "contentHash": "d7269a57c4c586413cc2116a849e049048c172ae824221b5bf41916e3f4545fa",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/blooms-taxonomy.md": {
+      "filePath": "data/personal/knowledge/blooms-taxonomy.md",
+      "contentHash": "50791f913d3615c7382b545db381d89e8bce9922dfbee8a0034f1ee8ca29c11b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 21,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/cognitive-load-multimedia.md": {
+      "filePath": "data/personal/knowledge/cognitive-load-multimedia.md",
+      "contentHash": "a800d9b438a61810a26968661ce37127878f8e0cee0ccea1e5848ee86ce401a4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 44,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/design-philosophy-process.md": {
+      "filePath": "data/personal/knowledge/design-philosophy-process.md",
+      "contentHash": "4d2f16a62673ad4ce8a3af3a97ccb98383f2a483f3ae36e9f11d392efbe3dacc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 55,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/elearning-impact-measurement.md": {
+      "filePath": "data/personal/knowledge/elearning-impact-measurement.md",
+      "contentHash": "5ec5fd8e566f792d9990ce7e99d7045abf5c0b8496b3c0cd6fd18478a3b1f87f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 82,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/engagement-and-completion.md": {
+      "filePath": "data/personal/knowledge/engagement-and-completion.md",
+      "contentHash": "4258107f7f298d6bf0fc21c1e72afab6c961ae7a425a5b27a8d93b1991e33ad4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 63,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/failure-and-lessons-learned.md": {
+      "filePath": "data/personal/knowledge/failure-and-lessons-learned.md",
+      "contentHash": "3399e87ad412de64efee8e5298d763f9b106c20e8e040c8f2f1685bf579deec3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 33,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/kirkpatrick-evaluation.md": {
+      "filePath": "data/personal/knowledge/kirkpatrick-evaluation.md",
+      "contentHash": "2f76aa8e72a4116bd071165542efbf88a8bc4ab09e45e3933d8f9d0def856870",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 23,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/other-id-frameworks.md": {
+      "filePath": "data/personal/knowledge/other-id-frameworks.md",
+      "contentHash": "fa9850a2fd5a222c99298930a4e0592b2b5eafd9a31afcd4794aa27cb2f9d313",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 73,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/portfolio-metrics.md": {
+      "filePath": "data/personal/knowledge/portfolio-metrics.md",
+      "contentHash": "aab929cb3726ac7e660c3d943f3a2390cbf3cbb94404b53e350a26e07e5ab751",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 41,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/project-impact-comparison.md": {
+      "filePath": "data/personal/knowledge/project-impact-comparison.md",
+      "contentHash": "f6d4b65c142e6959ca0e938ee153941c3d1ef45bb1c5ea8dcb503e1f13759b42",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/sam-vs-addie.md": {
+      "filePath": "data/personal/knowledge/sam-vs-addie.md",
+      "contentHash": "94deb850098399f8f5d9293c225b2ada11060943b5b9baab8c79d1695e9fc6ce",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 37,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/knowledge/tools.md": {
+      "filePath": "data/personal/knowledge/tools.md",
+      "contentHash": "5a21689787657d31575b7d105860cb7d2f302e02bb645e830ffd6b4b8db649bc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 53,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/profile.md": {
+      "filePath": "data/personal/profile.md",
+      "contentHash": "f054c5597db0739f5631e24d44e0c5d591b2ad04a8e173b4c31a79c5f7f3da68",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/agent-network.md": {
+      "filePath": "data/personal/projects/agent-network.md",
+      "contentHash": "ee5626202be4207410485a3363bfe3cbd0531d43650b8c3908b33aae2c76f01f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/amartha-lms-chatbot.md": {
+      "filePath": "data/personal/projects/amartha-lms-chatbot.md",
+      "contentHash": "6e471f7243d7dfae6c2d69ba10a800ca91ba985e391dc09b909b2249b4e21bea",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 31,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/amarthafin-mockup.md": {
+      "filePath": "data/personal/projects/amarthafin-mockup.md",
+      "contentHash": "9de806a9788eb4f3da71ed5ea346483b462dd3cbebedef25a039004dfeb99ba6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 36,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/anti-harassment.md": {
+      "filePath": "data/personal/projects/anti-harassment.md",
+      "contentHash": "0b376857b3226e5cdeebf28014e16b206aa01bb60edbcc404a38e6e79e125dae",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 27,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/asa.md": {
+      "filePath": "data/personal/projects/asa.md",
+      "contentHash": "18b5861fc209058b9a463aaad52dd627672bb4b72e9855626cf6b3f15f222d26",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 32,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/botani-quest.md": {
+      "filePath": "data/personal/projects/botani-quest.md",
+      "contentHash": "bd4071c0bdcadfd6df1b0c5ed8bdbe23048c64afb28c7a08b9a89ea007b62dea",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 38,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/bts.md": {
+      "filePath": "data/personal/projects/bts.md",
+      "contentHash": "23114325f7efe0d5c8239821fe9ffec0a90c6113e59bd39ca3dbdcea7bbcad3d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 37,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/dunia-geometri.md": {
+      "filePath": "data/personal/projects/dunia-geometri.md",
+      "contentHash": "6654da3cc4c084c58ca58d971ff8a370d1a8277c383c5f766adc731e88f8fe93",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 39,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/modal.md": {
+      "filePath": "data/personal/projects/modal.md",
+      "contentHash": "4e5153544a4a3ab938d7d827063292b7c91170121b0c236c4457dffbf529b106",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
+    "data/personal/projects/training-client-protection.md": {
+      "filePath": "data/personal/projects/training-client-protection.md",
+      "contentHash": "aca5d31b713fd70a19e61d1f38fb2cbb32febdb44b6646736a1291d3d017af2e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 29,
+      "hasStructuralAnalysis": true
+    },
+    "docker-compose.yml": {
+      "filePath": "docker-compose.yml",
+      "contentHash": "b85adf22b5d7d258e475392d3232c8cdcd8fff32d4004d49c5439d3a91f62fe2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 168,
+      "hasStructuralAnalysis": true
+    },
+    "Dockerfile": {
+      "filePath": "Dockerfile",
+      "contentHash": "c89f89d1c23ec365bcee2841386498bdb919a055e5e87a10657e59128a809af7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 29,
+      "hasStructuralAnalysis": true
+    },
+    "docs/superpowers/specs/2026-05-23-askfer-portfolio-chat-design.md": {
+      "filePath": "docs/superpowers/specs/2026-05-23-askfer-portfolio-chat-design.md",
+      "contentHash": "e243a98e831492fea91572d92d1512bd9864fe53e2f0aa9559fd4eed7fd91ad3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 693,
+      "hasStructuralAnalysis": true
+    },
+    "pyproject.toml": {
+      "filePath": "pyproject.toml",
+      "contentHash": "3ac11bfb7272c02022c3858559a5ab698c80ab5e1bf9dd28efad7fbf54556a62",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/measure_tokens.py": {
+      "filePath": "scripts/measure_tokens.py",
+      "contentHash": "477db210241bb5f2c66dbc7f437a3fef1831d88d7fd37ae556b2e9929f693226",
+      "functions": [
+        {
+          "name": "measure_preproc",
+          "params": [
+            "query",
+            "history"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 42
+        },
+        {
+          "name": "measure_generate",
+          "params": [
+            "query",
+            "intent",
+            "chunks",
+            "history"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 51
+        },
+        {
+          "name": "main",
+          "params": [],
+          "exported": true,
+          "lineCount": 60
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "HumanMessage",
+            "SystemMessage",
+            "AIMessage"
+          ]
+        },
+        {
+          "source": "app.graph.pipeline",
+          "specifiers": [
+            "PRE_PROCESSOR_PROMPT",
+            "SYSTEM_PROMPT",
+            "BRAINSTORM_SYSTEM_PROMPT",
+            "RESPONSE_SHAPE_SAFETY",
+            "RESPONSE_SHAPE_EMPATHY",
+            "RESPONSE_SHAPE_LOOKUP",
+            "RESPONSE_SHAPE_REASONING_WITH_LOOKUP"
+          ]
+        },
+        {
+          "source": "app.graph.intent_rules",
+          "specifiers": [
+            "rule_classify"
+          ]
+        },
+        {
+          "source": "app.llm.client",
+          "specifiers": [
+            "get_llm",
+            "get_preprocessor_llm",
+            "get_generate_llm"
+          ]
+        },
+        {
+          "source": "app.config.settings",
+          "specifiers": [
+            "get_settings"
+          ]
+        }
+      ],
+      "exports": [
+        "measure_preproc",
+        "measure_generate",
+        "main"
+      ],
+      "totalLines": 201,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/smoke_llm_only.py": {
+      "filePath": "scripts/smoke_llm_only.py",
+      "contentHash": "6a05337acca93f1b7995cdb407507dd14e394c2816b297a4d1ab8aa8167be32e",
+      "functions": [
+        {
+          "name": "main",
+          "params": [],
+          "exported": true,
+          "lineCount": 67
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "app.graph.pipeline",
+          "specifiers": [
+            "_apply_safety_overrides",
+            "_pre_processor",
+            "PreProcessorResult"
+          ]
+        },
+        {
+          "source": "app.graph.state",
+          "specifiers": [
+            "RAGState"
+          ]
+        },
+        {
+          "source": "langchain_core.messages",
+          "specifiers": [
+            "HumanMessage"
+          ]
+        }
+      ],
+      "exports": [
+        "main"
+      ],
+      "totalLines": 133,
+      "hasStructuralAnalysis": true
+    },
+    "tests/test_harassment_rewrite_guard.py": {
+      "filePath": "tests/test_harassment_rewrite_guard.py",
+      "contentHash": "ff098c851007dccb336337d34e58e238a6e46ae309815a5a2bba0f276bfb104b",
+      "functions": [
+        {
+          "name": "test_high_safety_escalation_forces_empathy_floor_and_brainstorm_intent",
+          "params": [],
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "test_safety_preserved_query_overrides_rewritten_for_retrieval",
+          "params": [],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_low_safety_keeps_default_retrieval_path",
+          "params": [],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_safety_detected_but_llm_omitted_preserved_query_falls_back_to_user_msg",
+          "params": [],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_safety_high_with_malicious_intent_overrides_to_brainstorm",
+          "params": [],
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_safety_high_with_off_scope_intent_overrides_to_brainstorm",
+          "params": [],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "test_safety_low_keeps_malicious_intent_no_override",
+          "params": [],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "test_safety_threshold_for_intent_reroute",
+          "params": [],
+          "exported": true,
+          "lineCount": 35
+        },
+        {
+          "name": "test_end_to_end_safety_path_mimics_user_failure_case",
+          "params": [],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "test_third_party_safety_does_not_force_max_empathy",
+          "params": [],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "test_prompt_does_not_hardcode_indonesian_safety_keywords",
+          "params": [],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "test_prompt_does_not_hardcode_safety_anchor_keyword_list",
+          "params": [],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "test_field_descriptions_do_not_hardcode_indonesian_safety_keywords",
+          "params": [],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_end_to_end_safety_path_mimics_user_failure_case",
+          "params": [],
+          "exported": true,
+          "lineCount": 24
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "app.graph.pipeline",
+          "specifiers": [
+            "_apply_safety_overrides",
+            "PRE_PROCESSOR_PROMPT",
+            "PreProcessorResult"
+          ]
+        }
+      ],
+      "exports": [
+        "test_high_safety_escalation_forces_empathy_floor_and_brainstorm_intent",
+        "test_safety_preserved_query_overrides_rewritten_for_retrieval",
+        "test_low_safety_keeps_default_retrieval_path",
+        "test_safety_detected_but_llm_omitted_preserved_query_falls_back_to_user_msg",
+        "test_safety_high_with_malicious_intent_overrides_to_brainstorm",
+        "test_safety_high_with_off_scope_intent_overrides_to_brainstorm",
+        "test_safety_low_keeps_malicious_intent_no_override",
+        "test_safety_threshold_for_intent_reroute",
+        "test_end_to_end_safety_path_mimics_user_failure_case",
+        "test_third_party_safety_does_not_force_max_empathy",
+        "test_prompt_does_not_hardcode_indonesian_safety_keywords",
+        "test_prompt_does_not_hardcode_safety_anchor_keyword_list",
+        "test_field_descriptions_do_not_hardcode_indonesian_safety_keywords",
+        "test_end_to_end_safety_path_mimics_user_failure_case"
+      ],
+      "totalLines": 376,
+      "hasStructuralAnalysis": true
+    }
+  }
+}

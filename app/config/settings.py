@@ -233,6 +233,7 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(..., min_length=32)
     jwt_algorithm: str = "HS256"
     rate_limit_per_minute: int = 20
+    admin_api_key: str = Field(..., alias="ADMIN_API_KEY", min_length=16)
 
     # ─── Concurrency / Backpressure ─────────────────────────────────────────
     # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn
