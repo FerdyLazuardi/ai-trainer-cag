@@ -478,13 +478,14 @@ async def _prepare_rag_context(
 
     # ── Cross-user cache-leak guard (FIX 1) ───────────────────────────────────
     # The query cache is keyed by {namespace}:{course_id|global}:{sha256(query)}
-    # — NOT by user_id. If this turn's answer was generated with anything
-    # user-specific woven into the prompt (LTM episodes, stored UserProfile
-    # prefs, or this conversation's running summary), caching it would let a
-    # DIFFERENT user receive a personalized answer ("seperti yang kamu tanya
-    # soal gaji…"). We therefore flag the turn as personalized so the caller
-    # SKIPS the cache write. Impersonal KB answers (was_personalized=False)
-    # still cache normally, preserving hit rate.
+    # — NOT by user_id. Skip cache write only when user-specific content was
+    # actually injected into the LLM prompt:
+    #   - LTM episodes: contain user's past queries/preferences → personal
+    #   - UserProfile prefs: custom tone/formatting → personal
+    # Conversation summary is NOT personal — it's a history of topics, not
+    # injected into the KB answer. Caching KB answers even when summary exists
+    # is safe because the answer content is the same for all users asking the
+    # same question. This dramatically improves cache hit rate.
     _ltm = ltm_profile or {}
     has_ltm = (
         bool((_ltm.get("summary") or "").strip())
@@ -495,8 +496,7 @@ async def _prepare_rag_context(
         bool((v or "").strip()) if isinstance(v, str) else bool(v)
         for v in user_pref_dict.values()
     )
-    has_summary = bool((summary or "").strip())
-    was_personalized = has_ltm or has_prefs or has_summary
+    was_personalized = has_ltm or has_prefs
 
     return {
         "cached": None,
