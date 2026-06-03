@@ -220,6 +220,7 @@ with tab_ltm:
         st.info("Belum ada data User LTM.")
     else:
         df_users = pd.DataFrame(users)
+        df_users = df_users.rename(columns={"user_id": "session_id"})
         st.dataframe(
             df_users,
             use_container_width=True,

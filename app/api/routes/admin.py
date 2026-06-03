@@ -21,20 +21,20 @@ def verify_api_key(api_key: str = Security(api_key_header)):
 async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dict[str, Any]:
     async with engine.connect() as conn:
         # Total Interactions
-        total_q_res = await conn.execute(text("SELECT COUNT(*) FROM agent_logs"))
+        total_q_res = await conn.execute(text("SELECT COUNT(*) FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL"))
         total_q = total_q_res.scalar() or 0
         
         # Average Latency
-        avg_lat_res = await conn.execute(text("SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL"))
+        avg_lat_res = await conn.execute(text("SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND (endpoint != 'askfer' OR endpoint IS NULL)"))
         avg_lat = avg_lat_res.scalar() or 0.0
         
         # Cache Hit Rate
-        cache_hits_res = await conn.execute(text("SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs"))
+        cache_hits_res = await conn.execute(text("SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL"))
         cache_hits = cache_hits_res.scalar() or 0
         hit_rate = (float(cache_hits) / float(total_q) * 100) if total_q > 0 else 0.0
 
         # Intents
-        intents_result_exec = await conn.execute(text("SELECT intent, COUNT(*) as count FROM agent_logs GROUP BY intent"))
+        intents_result_exec = await conn.execute(text("SELECT intent, COUNT(*) as count FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL GROUP BY intent"))
         intents_result = intents_result_exec.fetchall()
         intents = [{"intent": str(row[0]), "count": int(row[1])} for row in intents_result]
 
@@ -42,6 +42,7 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
         trends_result_exec = await conn.execute(text("""
             SELECT DATE(created_at) as date, COUNT(*) as queries
             FROM agent_logs
+            WHERE endpoint != 'askfer' OR endpoint IS NULL
             GROUP BY DATE(created_at)
             ORDER BY date ASC
         """))
@@ -53,6 +54,7 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
             SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup, retrieved_context
             FROM agent_logs
+            WHERE endpoint != 'askfer' OR endpoint IS NULL
             ORDER BY created_at DESC
             LIMIT :limit
         """), {"limit": limit})
