@@ -77,6 +77,26 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
             }
             for row in logs_result
         ]
+        
+        # Users (LTM)
+        users_result_exec = await conn.execute(text("""
+            SELECT user_id, role, preferred_tone, formatting_pref, custom_instructions, updated_at
+            FROM user_profiles
+            ORDER BY updated_at DESC
+        """))
+        users_result = users_result_exec.fetchall()
+        
+        users = [
+            {
+                "user_id": str(row[0]),
+                "role": str(row[1]) if row[1] else "",
+                "preferred_tone": str(row[2]) if row[2] else "",
+                "formatting_pref": str(row[3]) if row[3] else "",
+                "custom_instructions": str(row[4]) if row[4] else "",
+                "updated_at": str(row[5])
+            }
+            for row in users_result
+        ]
 
     return {
         "kpis": {
@@ -86,5 +106,6 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
         },
         "intents": intents,
         "trends": trends,
-        "logs": logs
+        "logs": logs,
+        "users": users
     }

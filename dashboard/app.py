@@ -77,9 +77,10 @@ kpis = data.get("kpis", {})
 intents = data.get("intents", [])
 trends = data.get("trends", [])
 logs = data.get("logs", [])
+users = data.get("users", [])
 
 # Setup tabs
-tab_overview, tab_explorer = st.tabs(["Overview & Recent Logs", "Session Explorer"])
+tab_overview, tab_explorer, tab_ltm = st.tabs(["Overview & Recent Logs", "Session Explorer", "User LTM Profiles"])
 
 with tab_overview:
     # KPI Row
@@ -210,3 +211,17 @@ with tab_explorer:
                     idx_turn = selected_turn_rows[0]
                     selected_turn = session_logs.iloc[idx_turn]
                     show_chat_details(selected_turn)
+
+with tab_ltm:
+    st.subheader("User LTM Profiles")
+    st.markdown("Preferensi dan informasi profil jangka panjang (Long-Term Memory) dari masing-masing pengguna.")
+    
+    if not users:
+        st.info("Belum ada data User LTM.")
+    else:
+        df_users = pd.DataFrame(users)
+        st.dataframe(
+            df_users,
+            use_container_width=True,
+            hide_index=True
+        )
