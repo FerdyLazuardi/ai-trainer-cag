@@ -306,9 +306,19 @@ class Settings(BaseSettings):
     # to set JWT_SECRET booted with a publicly known signing key. Pydantic
     # now refuses to construct Settings() if this is missing.
     jwt_secret: str = Field(..., min_length=32)
-    jwt_algorithm: str = "HS256"
+    # Literal allowlist so Pydantic rejects `JWT_ALGORITHM=none` (or any
+    # other weak/unknown alg) at startup. Previously jwt_algorithm: str
+    # silently accepted any value, which let a mis-config set
+    # JWT_ALGORITHM=none — pyjwt then validates unsigned tokens.
+    jwt_algorithm: Literal["HS256", "HS384", "HS512", "RS256", "RS384", "RS512"] = "HS256"
     rate_limit_per_minute: int = 20
     admin_api_key: str = Field(..., alias="ADMIN_API_KEY", min_length=16)
+    # Off by default. Must be explicitly enabled (DEV_BYPASS_ENABLED=true)
+    # for the local-dev token-less auth bypass in app/api/auth.py to fire.
+    # Closes the prod mis-config class where APP_ENV=development (or a
+    # copied-from-dev .env) silently disables auth across all 13k users.
+    # main.py:production-guard refuses to boot if this is True in prod.
+    dev_bypass_enabled: bool = Field(default=False, alias="DEV_BYPASS_ENABLED")
 
     # ─── Concurrency / Backpressure ─────────────────────────────────────────
     # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn

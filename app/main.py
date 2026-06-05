@@ -38,6 +38,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise RuntimeError(
             "JWT_SECRET contains 'dev' — refusing to start. Set a real secret in production."
         )
+    # Production-only guard: refuse to boot if the dev-bypass flag is
+    # enabled in prod. DEV_BYPASS_ENABLED off-by-default in settings
+    # closes the "APP_ENV=development in a prod .env" mis-config class
+    # where the auth dep at app/api/auth.py:40 returns a synthetic
+    # user with no token. Setting the flag in a prod .env would be
+    # an explicit (loud, fatal) operator action — this check makes
+    # that loud and fatal at boot, not silent at request time.
+    if settings.app_env == "production" and settings.dev_bypass_enabled:
+        raise RuntimeError(
+            "DEV_BYPASS_ENABLED=true under APP_ENV=production — refusing to start. "
+            "This would silently disable JWT auth across the entire app. "
+            "Unset DEV_BYPASS_ENABLED (or set APP_ENV to a non-production value) and restart."
+        )
 
     # Start BatchLogger background task
     await batch_logger.start()
@@ -135,9 +148,18 @@ def create_app() -> FastAPI:
     # ─── CORS ───────────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        # Allow all origins by reflecting any origin back to the client.
-        # This bypasses the allow_origins=["*"] restriction with allow_credentials=True.
-        allow_origin_regex=".*",
+        # Reflect the explicit allowlist (settings.cors_allow_origins,
+        # defaults to localhost dev URLs in settings.py). The previous
+        # allow_origin_regex=".*" reflected ANY origin and combined with
+        # allow_credentials=True was a CSRF-style exfil vector: any
+        # malicious site could make credentialed cross-origin requests
+        # against the API. With the explicit allowlist, only the
+        # configured origins get Access-Control-Allow-Origin echoed back.
+        # In production, ALLOWED_ORIGINS env var must be set to the
+        # real frontend origins (dashboard, askfer, etc.) — the localhost
+        # dev defaults will not match a real prod origin and CORS will
+        # correctly block.
+        allow_origins=settings.cors_allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

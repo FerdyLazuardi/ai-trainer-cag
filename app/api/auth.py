@@ -33,8 +33,11 @@ async def get_current_user(
     
     # ── 1. Attempt JWT Authentication ─────────────────────────────────────
     if not credentials or not credentials.credentials:
-        # Development Bypass
-        if settings.app_env == "development":
+        # Development Bypass — requires BOTH APP_ENV=development AND
+        # DEV_BYPASS_ENABLED=true (off by default, see settings.py). Closes
+        # the prod mis-config class where APP_ENV=development silently
+        # disables auth across 13k users.
+        if settings.app_env == "development" and settings.dev_bypass_enabled:
             logger.info("Development bypass active: Authenticating as Dev User")
             user = User(user_id="dev_user_123", role="moodle_user", username="Dev User")
         else:
@@ -60,7 +63,14 @@ async def get_current_user(
             payload = jwt.decode(
                 token,
                 settings.jwt_secret,
-                algorithms=[settings.jwt_algorithm]
+                algorithms=[settings.jwt_algorithm],
+                # Force every token to carry exp / iat / user_id. Without
+                # this, pyjwt only validates claims that are present, so a
+                # Moodle mis-config that omits `exp` mints tokens that
+                # never expire. Combined with the Literal type on
+                # settings.jwt_algorithm (rejects alg=none at startup),
+                # this closes the alg-confusion / never-expire class.
+                options={"require": ["exp", "iat", "user_id"]},
             )
             raw_user_id = payload.get("user_id")
             user_id: str = str(raw_user_id) if raw_user_id is not None else ""
@@ -92,7 +102,7 @@ async def get_current_user(
     # want unfettered ability to load-test, replay golden eval queries, and
     # iterate on prompts without hitting 429s. Real Moodle users still rate-
     # limited normally.
-    if settings.app_env == "development":
+    if settings.app_env == "development" and settings.dev_bypass_enabled:
         return user
 
     redis = get_redis_client()
