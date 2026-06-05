@@ -739,7 +739,13 @@ async def sync_portfolio_knowledge_base(
         "errors": [],
     }
     scraped_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    current_sources: list[str] = []
+    # expected_sources is built PROGRESSIVELY as sources are DISCOVERED
+    # (not as ingestions succeed — that was the previous `current_sources`
+    # bug: a mid-sync failure left the list incomplete and the stale
+    # cleanup at the end destroyed live KB data). Sources are added the
+    # moment we know we're going to ingest them, regardless of whether
+    # the ingest itself succeeds.
+    expected_sources: list[str] = []
     project_payloads: list[dict] = []  # Collected for overview doc generation
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -755,6 +761,14 @@ async def sync_portfolio_knowledge_base(
                 "projects": [],
                 "cv": settings.portfolio_cv_url,
             }
+
+        # After URL discovery: the three sources we always expect (homepage,
+        # CV, profile). Profile is always "portfolio://profile" — see step 4.
+        expected_sources.extend([
+            urls["homepage"],
+            urls["cv"],
+            "portfolio://profile",
+        ])
 
         # 1. Homepage — local-first
         try:
@@ -777,7 +791,6 @@ async def sync_portfolio_knowledge_base(
                 session=session,
                 force_reingest=force_reingest,
             )
-            current_sources.append(urls["homepage"])
             if chunks == 0:
                 summary["docs_skipped"] += 1
             else:
@@ -802,6 +815,14 @@ async def sync_portfolio_knowledge_base(
                 "Project pages sourced from local files",
                 dir=LOCAL_PROJECTS_DIR, count=len(local_project_files),
             )
+            # Add all local project sources to expected_sources up front,
+            # BEFORE any ingest call. If a project ingest fails mid-sync,
+            # the old project data is still in the expected set and the
+            # stale cleanup preserves it (not deletes it).
+            expected_sources.extend(
+                settings.portfolio_homepage_url.rstrip("/") + f"/projects/{fname[:-3]}/"
+                for fname in local_project_files
+            )
             for fname in local_project_files:
                 slug = fname[:-3]  # strip .md
                 project_url = settings.portfolio_homepage_url.rstrip("/") + f"/projects/{slug}/"
@@ -820,7 +841,6 @@ async def sync_portfolio_knowledge_base(
                         session=session,
                         force_reingest=force_reingest,
                     )
-                    current_sources.append(project_url)
                     if chunks == 0:
                         summary["docs_skipped"] += 1
                     else:
@@ -831,6 +851,9 @@ async def sync_portfolio_knowledge_base(
                     logger.error("Local project ingest failed", file=fname, error=str(exc))
                     summary["errors"].append(f"projects/{fname}: {exc}")
         else:
+            # Sitemap path: extend expected_sources with the full list
+            # before iterating. Same reasoning as local path above.
+            expected_sources.extend(urls["projects"])
             for project_url in urls["projects"]:
                 try:
                     md_text, title = await _scrape_web_page(client, project_url)
@@ -849,7 +872,6 @@ async def sync_portfolio_knowledge_base(
                         session=session,
                         force_reingest=force_reingest,
                     )
-                    current_sources.append(project_url)
                     if chunks == 0:
                         summary["docs_skipped"] += 1
                     else:
@@ -880,7 +902,6 @@ async def sync_portfolio_knowledge_base(
                 session=session,
                 force_reingest=force_reingest,
             )
-            current_sources.append(urls["cv"])
             if chunks == 0:
                 summary["docs_skipped"] += 1
             else:
@@ -911,7 +932,6 @@ async def sync_portfolio_knowledge_base(
                     session=session,
                     force_reingest=True,  # always rebuild to reflect latest edits
                 )
-                current_sources.append(profile_source)
                 if profile_chunks > 0:
                     summary["docs_processed"] += 1
                     summary["chunks_ingested"] += profile_chunks
@@ -927,6 +947,12 @@ async def sync_portfolio_knowledge_base(
             if os.path.isdir(LOCAL_KNOWLEDGE_DIR):
                 knowledge_files = sorted(
                     f for f in os.listdir(LOCAL_KNOWLEDGE_DIR) if f.endswith(".md")
+                )
+                # Add all knowledge sources to expected_sources up front,
+                # BEFORE any ingest call. Same reasoning as projects.
+                expected_sources.extend(
+                    f"portfolio://knowledge/{fname[:-3]}"
+                    for fname in knowledge_files
                 )
                 for fname in knowledge_files:
                     slug = fname[:-3]
@@ -951,7 +977,6 @@ async def sync_portfolio_knowledge_base(
                             session=session,
                             force_reingest=True,  # rebuild on every sync
                         )
-                        current_sources.append(knowledge_source)
                         if k_chunks > 0:
                             summary["docs_processed"] += 1
                             summary["chunks_ingested"] += k_chunks
@@ -984,6 +1009,10 @@ async def sync_portfolio_knowledge_base(
                 overview_md = _build_overview_markdown(summaries)
                 if overview_md:
                     overview_source = "portfolio://overview"
+                    # Add to expected_sources BEFORE ingest: if the overview
+                    # ingest fails, the previous overview doc is preserved
+                    # rather than deleted by the stale cleanup.
+                    expected_sources.append(overview_source)
                     overview_meta = {
                         "doc_type": "overview",
                         "scraped_at": scraped_at,
@@ -997,7 +1026,6 @@ async def sync_portfolio_knowledge_base(
                         session=session,
                         force_reingest=True,  # always rebuild to reflect latest scrape
                     )
-                    current_sources.append(overview_source)
                     if overview_chunks > 0:
                         summary["docs_processed"] += 1
                         summary["chunks_ingested"] += overview_chunks
@@ -1006,10 +1034,13 @@ async def sync_portfolio_knowledge_base(
                 summary["errors"].append(f"overview: {exc}")
 
         # 6. Stale cleanup (only if we got at least one source — avoids wiping
-        # everything during a total network outage)
-        if current_sources:
+        # everything during a total network outage). Uses expected_sources
+        # (the complete discovery-time set) rather than an incrementally-
+        # built list of "sources that successfully ingested" — see the
+        # comment on the variable declaration above.
+        if expected_sources:
             try:
-                await _delete_stale_portfolio_docs(session, current_sources)
+                await _delete_stale_portfolio_docs(session, expected_sources)
             except Exception as exc:
                 logger.warning("Stale cleanup failed", error=str(exc))
                 summary["errors"].append(f"cleanup: {exc}")
