@@ -17,7 +17,7 @@ from app.config.settings import get_settings
 from app.database.redis_client import get_redis_client
 from app.database.qdrant_client import get_qdrant_client
 from app.config.embedding_config import ensure_llamaindex_configured
-from app.observability import get_tracer, is_observability_enabled
+from app.utils.logger_batch import batch_logger
 
 settings = get_settings()
 
@@ -125,28 +125,46 @@ async def _ensure_semantic_collection() -> None:
         _semantic_collection_ready = True
 
 
-def _log_cache_event(hit: bool, course_id: int | None, score: float | None = None):
-    """Emit a cache_lookup span to Phoenix with hit/miss + similarity attributes."""
-    if not is_observability_enabled():
-        return
-    try:
-        from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+async def _log_cache_event(
+    *,
+    hit: bool,
+    course_id: int | None,
+    query: str,
+    namespace: str,
+    score: float | None = None,
+) -> None:
+    """Persist a cache_lookup event to agent_logs via BatchLogger.
 
-        tracer = get_tracer("cache")
+    Phoenix is gone — cache observability now flows through the same
+    agent_logs chokepoint as turn-level logs. PII in `query` is auto-redacted
+    by BatchLogger._redact_entry (query is in _PII_COLUMNS). Failures here
+    are swallowed at debug level so a Postgres/Redis blip never blocks the
+    cache hot path.
+
+    Args:
+        hit: True for Redis exact or Qdrant semantic match, False for miss.
+        course_id: LMS course id, or None/0 for non-course-scoped queries.
+        query: The user query text (PII-redacted by BatchLogger).
+        namespace: Cache namespace ('rag', 'rag:user:<id>', 'portfolio', etc).
+        score: Cosine similarity (Qdrant semantic hit) or 1.0 (Redis exact),
+            or None (miss).
+    """
+    try:
         cid = course_id if course_id and course_id > 0 else None
-        with tracer.start_as_current_span("cache_lookup") as span:
-            span.set_attribute(
-                SpanAttributes.OPENINFERENCE_SPAN_KIND,
-                OpenInferenceSpanKindValues.RETRIEVER.value,
-            )
-            span.set_attribute("cache.hit", 1 if hit else 0)
-            span.set_attribute("cache.tag", "cache_hit" if hit else "cache_miss")
-            if cid is not None:
-                span.set_attribute("course_id", cid)
-            if score is not None:
-                span.set_attribute("similarity_score", round(float(score), 4))
+        # Same scheme as _cache_key (sha256 of query, [:16]) so admin can
+        # join agent_logs rows to live cache state without re-hashing.
+        query_hash = hashlib.sha256((query or "").encode("utf-8")).hexdigest()[:16]
+        await batch_logger.add_log({
+            "endpoint": "cache_lookup",
+            "query": query or "",
+            "course_id": cid,
+            "cache_hit": bool(hit),
+            "cache_score": round(float(score), 4) if score is not None else None,
+            "cache_namespace": namespace,
+            "query_hash": query_hash,
+        })
     except Exception as e:
-        logger.warning("Failed to emit cache_lookup span", error=str(e))
+        logger.debug("Failed to log cache event to agent_logs", error=str(e))
 
 
 async def get_cached_response(
@@ -182,7 +200,10 @@ async def get_cached_response(
         if raw:
             data = json.loads(raw)
             logger.info("Redis Exact Cache HIT", query=query[:60], course_id=course_id, namespace=cache_namespace)
-            _log_cache_event(hit=True, course_id=course_id, score=1.0)
+            await _log_cache_event(
+                hit=True, course_id=course_id, score=1.0,
+                query=query, namespace=cache_namespace,
+            )
             return data
     except Exception as exc:
         logger.warning("Redis cache GET failed", error=str(exc))
@@ -242,14 +263,20 @@ async def get_cached_response(
         if search_result is not None and search_result.points:
             best_hit = search_result.points[0]
             logger.info("Qdrant Semantic Cache HIT", query=query[:60], score=round(best_hit.score, 4), course_id=course_id, namespace=cache_namespace)
-            _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
+            await _log_cache_event(
+                hit=True, course_id=course_id, score=best_hit.score,
+                query=query, namespace=cache_namespace,
+            )
             return best_hit.payload
 
     except Exception as exc:
         logger.warning(f"Semantic cache GET failed: {type(exc).__name__}: {exc}")
 
     logger.debug("Cache MISS", query=query[:60], course_id=course_id, namespace=cache_namespace)
-    _log_cache_event(hit=False, course_id=course_id)
+    await _log_cache_event(
+        hit=False, course_id=course_id,
+        query=query, namespace=cache_namespace,
+    )
     return None
 
 
@@ -288,7 +315,10 @@ async def get_cached_response_multi_ns(
                     course_id=course_id,
                     namespace=namespaces[i],
                 )
-                _log_cache_event(hit=True, course_id=course_id, score=1.0)
+                await _log_cache_event(
+                    hit=True, course_id=course_id, score=1.0,
+                    query=query, namespace=namespaces[i],
+                )
                 return data
     except Exception as exc:
         logger.warning("Redis multi-ns cache MGET failed", error=str(exc))
@@ -361,14 +391,23 @@ async def get_cached_response_multi_ns(
                 course_id=course_id,
                 namespace=hit_ns,
             )
-            _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
+            await _log_cache_event(
+                hit=True, course_id=course_id, score=best_hit.score,
+                query=query, namespace=hit_ns,
+            )
             return best_hit.payload
 
     except Exception as exc:
         logger.warning(f"Semantic cache multi-ns GET failed: {type(exc).__name__}: {exc}")
 
     logger.debug("Cache MISS (multi-ns)", query=query[:60], course_id=course_id, namespaces=namespaces)
-    _log_cache_event(hit=False, course_id=course_id)
+    # For multi-ns miss, log under the first namespace as a representative
+    # bucket (the full set is in the log message above). cache_namespace
+    # column is single-valued for indexing/grouping convenience.
+    await _log_cache_event(
+        hit=False, course_id=course_id,
+        query=query, namespace=namespaces[0] if namespaces else "multi",
+    )
     return None
 
 
