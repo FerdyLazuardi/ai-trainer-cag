@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
-    openrouter_base_url: str = "https://9router.ferdy-fadhil-lazuardi.my.id/v1"
+    openrouter_base_url: str = "http://localhost:20128/v1"  # dev default; override in .env for prod (any OpenRouter-compatible URL)
     openrouter_embedding_url: str | None = None
     ollama_base_url: str = "http://172.16.10.2:11434/v1"
     # Main model: Gemini 2.5 Flash Lite (Google) — 4-8x cheaper than
@@ -311,16 +311,17 @@ class Settings(BaseSettings):
     # ─── Concurrency / Backpressure ─────────────────────────────────────────
     # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn
     # worker. Beyond this, requests fast-fail with 503 instead of piling up on
-    # the event loop and overwhelming the upstream LLM gateway (OpenRouter /
-    # 9Router). Cache hits are NOT counted — they make no LLM call and return
-    # before the guard.
+    # the event loop and overwhelming the upstream LLM gateway (any
+    # OpenRouter-compatible endpoint). Cache hits are NOT counted — they make
+    # no LLM call and return before the guard.
     #
     # 12 (was 24): 24 concurrent LLM calls on 1 uvicorn worker / 2 vCPU over-
-    # subscribed the 9Router side. The WAF in front of 9Router has been seen
-    # to return 429s under sustained >15 concurrent calls. 12 keeps us safely
-    # under that ceiling at peak (~5 req/s × ~3s/turn = 15 in-flight, but cache
-    # hits skip this guard so the real ceiling is 12 LLMs-in-flight). Raise
-    # to 18-24 once 9Router's per-account rate limit is confirmed.
+    # subscribed the gateway side. The WAF in front of the local self-hosted
+    # gateway has been seen to return 429s under sustained >15 concurrent
+    # calls. 12 keeps us safely under that ceiling at peak (~5 req/s × ~3s/turn
+    # = 15 in-flight, but cache hits skip this guard so the real ceiling is 12
+    # LLMs-in-flight). Raise to 18-24 once the gateway's per-account rate limit
+    # is confirmed.
     max_concurrent_pipelines: int = 12
     # Seconds a request waits for a free pipeline slot before returning 503.
     # Small enough to fast-fail a sustained burst, large enough to absorb a

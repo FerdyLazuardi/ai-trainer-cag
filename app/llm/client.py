@@ -23,11 +23,13 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 
-# 9Router (the self-hosted gateway) sits behind a WAF that blocks any
-# request whose User-Agent contains "OpenAI" — the default UA emitted by
-# the openai-python SDK. The OpenAI SDK rewrites the UA per-request, so
-# httpx default_headers gets overridden. We use an event hook that fires
-# AFTER the SDK builds the request to forcefully replace the UA.
+# The self-hosted OpenRouter-compatible gateway (configured via
+# settings.openrouter_base_url / OPENROUTER_BASE_URL) sits behind a WAF
+# that blocks any request whose User-Agent contains "OpenAI" — the
+# default UA emitted by the openai-python SDK. The OpenAI SDK rewrites
+# the UA per-request, so httpx default_headers gets overridden. We use
+# an event hook that fires AFTER the SDK builds the request to forcefully
+# replace the UA.
 _LLM_USER_AGENT = "ai-lms-agent/1.0"
 
 
@@ -130,7 +132,7 @@ def _wrap_with_retry(llm: ChatOpenAI) -> None:
 
 @lru_cache(maxsize=1)
 def get_llm() -> ChatOpenAI:
-    """Return the singleton LLM client configured for 9Router/OpenRouter."""
+    """Return the singleton LLM client configured for the local OpenRouter-compatible gateway."""
     llm = ChatOpenAI(
         model=settings.llm_model,
 

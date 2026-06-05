@@ -614,7 +614,8 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
 
     llm = get_preprocessor_llm()
     # Note: with_structured_output uses OpenAI function calling which some
-    # providers (9Router) don't support. Use manual JSON parsing instead.
+    # providers behind the local OpenRouter-compatible gateway don't
+    # support. Use manual JSON parsing instead.
     # Append JSON schema instruction to prompt so model returns raw JSON.
     _JSON_SUFFIX = (
         "\n\nRespond ONLY with a valid JSON object matching this schema (no markdown, no explanation):\n"
