@@ -22,12 +22,18 @@ from app.observability import get_tracer, is_observability_enabled
 settings = get_settings()
 
 _PREFIX = "rag:cache:"
-# Cosine threshold for paraphrase match. bge-m3 puts close Bahasa Indonesia
-# paraphrases in a different range than text-embedding-3-small did — measure
-# against a 50-query test set in Phoenix and tune. 0.82 is the legacy
-# text-embedding-3-small stopgap; lower to ~0.55 if the new model has a
-# flatter cosine distribution.
-_SEMANTIC_THRESHOLD = 0.82
+# Cosine threshold for paraphrase match on the Qdrant semantic cache.
+# History: 0.82 was the text-embedding-3-small stopgap. After the
+# bge-m3 migration the same threshold gave a near-zero hit rate because
+# bge-m3 puts close Bahasa Indonesia paraphrases in a 0.55-0.75 cosine
+# band (flatter distribution than text-embedding-3-small's 0.80-0.90).
+# 0.60 is a conservative compromise: catches paraphrases the legacy
+# threshold missed, low enough to be useful, high enough to keep the
+# false-positive rate acceptable (precision > recall is the right trade
+# for a cache — wrong answer is user-visible, missed cache just costs an
+# extra LLM call). Calibrate further with a 50-query paraphrase test
+# set; expect the true sweet spot to land in 0.55-0.65.
+_SEMANTIC_THRESHOLD = 0.60
 _semantic_collection_ready = False
 _semantic_collection_lock: asyncio.Lock | None = None
 
