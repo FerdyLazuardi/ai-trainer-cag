@@ -1,15 +1,22 @@
 """Faithfulness judge for A-Pedi answers.
 
-Uses the cheap LLM (`get_cheap_llm`) with structured output to score whether
-the answer is grounded in the retrieved context. Output is in [0, 1]:
+Uses the MAIN LLM (`get_llm`) — NOT the cheap LLM the generator uses — to
+score whether the answer is grounded in the retrieved context. Output is
+in [0, 1]:
 
     1.0  every claim in the answer is supported by the context
     0.5  partially grounded (some claims unsupported but plausible)
     0.0  hallucination — claims contradict or invent beyond the context
 
-The judge is intentionally separate from the generator LLM. Generator can
-swap (Sonnet → Flash → Flash-lite) without changing eval baseline. Same
-judge model = comparable scores week-over-week.
+Why a different model than the generator? When judge and generator share
+a model they share fabrication patterns, and the eval systematically
+undercounts the ungrounded rate. (Was `get_cheap_llm` previously — that
+was the bug: same Gemini 2.5 Flash Lite family on both sides meant the
+judge was effectively the generator grading itself.) Trade-off: when the
+main LLM is swapped (Sonnet → Flash → Flash-Lite) the judge baseline
+shifts too, so week-over-week scores need a calibration note. Generator
+can still swap freely; the judge baseline only shifts on the main LLM
+side, not the cheap side.
 """
 from __future__ import annotations
 
@@ -24,7 +31,12 @@ from pydantic import BaseModel, Field
 # without improving faithfulness signal (judge only needs enough to verify
 # claim support, not full documents).
 _MAX_CONTEXT_CHARS = 4000
-_MAX_CHUNKS = 6
+# 12 chunks covers the production final_top_k (8-10) + 2-4 buffer. The
+# previous 6 was below the chunk count the generator saw, so the judge
+# literally could not verify any claim grounded in chunk 7+ — directly
+# masking the ungrounded rate. Per-chunk budget is still capped at
+# _MAX_CONTEXT_CHARS / 12 (~333 chars) by _format_context.
+_MAX_CHUNKS = 12
 
 
 class FaithfulnessResult(BaseModel):
@@ -127,7 +139,7 @@ async def judge_faithfulness(
     Returns None on judge failure — caller should treat as "no signal" rather
     than infer a default score. Phoenix annotation simply gets skipped.
     """
-    from app.llm.client import get_cheap_llm
+    from app.llm.client import get_llm
 
     if not answer or not answer.strip():
         return None
@@ -139,7 +151,7 @@ async def judge_faithfulness(
     )
 
     try:
-        judge_llm = get_cheap_llm()
+        judge_llm = get_llm()
         structured = judge_llm.with_structured_output(FaithfulnessResult)
         result = await structured.ainvoke(
             [HumanMessage(content=prompt)],
