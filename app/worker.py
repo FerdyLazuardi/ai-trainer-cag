@@ -45,7 +45,7 @@ worker = Worker(
 )
 
 
-@worker.task
+@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
 async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
     """streaq task: ingest a single document off the API request path.
 
@@ -81,7 +81,7 @@ async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -
         raise
 
 
-@worker.task
+@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
 async def sync_moodle_task(course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
     """streaq task to run the moodle sync."""
     logger.info(f"Starting background Moodle sync task via streaq for course_id={course_id}", force_reingest=force_reingest)
@@ -110,7 +110,7 @@ async def dummy_task(name: str) -> str:
     return f"Hello, {name}! Task completed."
 
 
-@worker.task
+@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
 async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
     """streaq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
     logger.info("Starting Askfer portfolio sync via streaq", force_reingest=force_reingest)
@@ -512,12 +512,17 @@ async def prune_agent_logs_cron_task() -> dict[str, Any]:
 # to avoid two separate cold-starts. agent_logs hits Postgres; LTM hits
 # Qdrant; both are idempotent and small enough to run sequentially.
 # timeout=600 preserves arq's global job_timeout=600.
-@worker.cron("0 2 * * *", timeout=600)
+# tz="Asia/Jakarta" (WIB, UTC+7) keeps the crons at 02:00 / 02:30 LOCAL
+# (was previously the streaq default of UTC = 09:00 / 09:30 local — peak
+# traffic on the same concurrency=2 budget that user-facing
+# ingest_text_task and admin sync_*_task jobs share). streaq uses
+# zoneinfo; "Asia/Jakarta" is a built-in zone.
+@worker.cron("0 2 * * *", tz="Asia/Jakarta", timeout=600)
 async def _run_ltm_prune():
     await prune_ltm_cron_task()
 
 
-@worker.cron("30 2 * * *", timeout=600)
+@worker.cron("30 2 * * *", tz="Asia/Jakarta", timeout=600)
 async def _run_agent_logs_prune():
     await prune_agent_logs_cron_task()
 
