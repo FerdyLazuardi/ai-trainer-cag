@@ -64,6 +64,18 @@ _SEMANTIC_CACHE_MAX_POINTS = 50_000
 _SEMANTIC_CACHE_PRUNE_BATCH = 5_000
 
 
+def _query_hash(query: str) -> str:
+    """sha256[:16] of the canonicalized query.
+
+    Canonical form = `strip().lower()` — same scheme used by the Redis cache
+    key. Shared by `_cache_key` and `_log_cache_event` so admin can join
+    agent_logs `query_hash` rows to live cache state without re-hashing user
+    text. Keep this canonicalization stable: changing it invalidates the
+    live join between agent_logs and the cache.
+    """
+    return hashlib.sha256(query.strip().lower().encode()).hexdigest()[:16]
+
+
 def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
     """Generate a deterministic Redis key from the query string and course_id.
 
@@ -71,9 +83,8 @@ def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag")
     without polluting each other. Default 'rag' preserves existing A-Pedi keys
     byte-identically.
     """
-    query_hash = hashlib.sha256(query.strip().lower().encode()).hexdigest()[:16]
     cid_str = str(course_id) if course_id and course_id > 0 else 'global'
-    return f"{namespace}:cache:{cid_str}:{query_hash}"
+    return f"{namespace}:cache:{cid_str}:{_query_hash(query)}"
 
 
 async def _ensure_semantic_collection() -> None:
@@ -151,9 +162,13 @@ async def _log_cache_event(
     """
     try:
         cid = course_id if course_id and course_id > 0 else None
-        # Same scheme as _cache_key (sha256 of query, [:16]) so admin can
-        # join agent_logs rows to live cache state without re-hashing.
-        query_hash = hashlib.sha256((query or "").encode("utf-8")).hexdigest()[:16]
+        # Same scheme as _cache_key via the shared _query_hash() helper, so
+        # admin can join agent_logs rows to live cache state without
+        # re-hashing user text. (Earlier the two sites diverged — log path
+        # hashed (query or "").encode("utf-8") with no strip/lower, which
+        # made every case-mismatched query un-joinable. Fixed in f59fe3d
+        # follow-up: both call _query_hash.)
+        query_hash = _query_hash(query or "")
         await batch_logger.add_log({
             "endpoint": "cache_lookup",
             "query": query or "",
@@ -555,6 +570,27 @@ async def get_or_compute_cached_response(
     if got_lock:
         try:
             result = await compute_fn()
+            # Populate the cache so concurrent pollers (and the next
+            # non-stampede caller) find it. Without this write-back the
+            # single-flight lock is a no-op: 1 holder + 99 pollers all
+            # fall through to their own compute_fn, defeating the
+            # stampede mitigation and thundering-herd-ing the LLM.
+            # set_cached_response has its own error guards — failures
+            # are logged inside, not raised — so a Qdrant/Redis blip on
+            # the write path can never take down a successful LLM call.
+            try:
+                await set_cached_response(
+                    query=query,
+                    answer=result["answer"],
+                    sources=result["sources"],
+                    course_id=course_id,
+                    cache_namespace=cache_namespace,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "singleflight holder: cache write failed (non-fatal)",
+                    error=str(exc),
+                )
             return result, False
         finally:
             # Release only if WE still own the lock (Lua: get+del
