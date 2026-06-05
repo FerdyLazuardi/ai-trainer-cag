@@ -101,6 +101,18 @@ class AgentLog(Base):
     latency_ms: Mapped[float] = mapped_column(Float, nullable=True)
     llm_tokens_used: Mapped[int] = mapped_column(Integer, nullable=True)
     cache_hit: Mapped[bool] = mapped_column(nullable=False, default=False)
+    # Cache observability columns (Jun 2026 — wired by _log_cache_event in
+    # app/utils/cache.py). Populated for `endpoint='cache_lookup'` rows only.
+    # cache_score: 1.0 for Redis exact hit, Qdrant cosine for semantic hit,
+    #   None for miss. The Streamlit dashboard bins p50/p95 across this.
+    # cache_namespace: 'rag' (A-Pedi), 'rag:user:<id>' (user-scoped),
+    #   'portfolio' (Askfer). Lets ops see which persona drives hit-rate.
+    # query_hash: sha256(query.strip().lower())[:16] — same scheme as the
+    #   Redis cache key (cache.py:_cache_key), so rows can be joined to
+    #   the live cache state without re-hashing the user text.
+    cache_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cache_namespace: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    query_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # ── Quality signals (durable; previously Phoenix-only) ──
     intent: Mapped[str] = mapped_column(String(32), nullable=True, index=True)
     needs_lookup: Mapped[float] = mapped_column(Float, nullable=True)

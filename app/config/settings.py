@@ -119,9 +119,11 @@ class Settings(BaseSettings):
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
-    openrouter_base_url: str = "http://localhost:20128/v1"  # dev default; override in .env for prod (any OpenRouter-compatible URL)
+    # OpenRouter is the SOLE LLM provider (no 9Router, no localhost, no Ollama).
+    # Default is the real OpenRouter cloud; override in .env only when routing
+    # through a different OpenRouter-compatible gateway.
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_embedding_url: str | None = None
-    ollama_base_url: str = "http://172.16.10.2:11434/v1"
     # Main model: Gemini 2.5 Flash Lite (Google) — 4-8x cheaper than
     # gemini-2.5-flash with comparable quality on structured-output tasks.
     # Supports OpenRouter prompt caching via cache_control content blocks.

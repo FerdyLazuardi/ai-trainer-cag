@@ -61,17 +61,33 @@ async def init_db() -> None:
             ("max_dense_score", "DOUBLE PRECISION"),
             ("faithfulness_score", "DOUBLE PRECISION"),
             ("retrieved_context", "JSONB"),
+            # Cache observability columns (Jun 2026 — written by
+            # _log_cache_event in app/utils/cache.py). Populated for
+            # `endpoint='cache_lookup'` rows only; NULL for chat turns.
+            # cache_score: 1.0 exact, qdrant cosine for semantic, NULL miss.
+            # cache_namespace: 'rag' (A-Pedi) / 'rag:user:<id>' / 'portfolio'.
+            # query_hash: sha256(query.strip().lower())[:16], same scheme as
+            #   the Redis cache key (cache.py:_cache_key) so dashboard
+            #   joins to live cache state don't re-hash user text.
+            ("cache_score", "DOUBLE PRECISION"),
+            ("cache_namespace", "VARCHAR(64)"),
+            ("query_hash", "VARCHAR(64)"),
         ]
         for col, col_type in agent_log_columns:
             await conn.execute(
                 text(f"ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS {col} {col_type}")
             )
-        # Index turn_id for the async eval UPDATE lookup, and intent for analytics.
+        # Index turn_id for the async eval UPDATE lookup, intent for analytics,
+        # and query_hash so the Streamlit cache-event drilldown can look up
+        # "all cache events for query X" without a full table scan.
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_turn_id ON agent_logs (turn_id)")
         )
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_intent ON agent_logs (intent)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_agent_logs_query_hash ON agent_logs (query_hash)")
         )
 
 

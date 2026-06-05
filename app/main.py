@@ -15,7 +15,6 @@ from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.api.routes import chat, ingest, askfer
 from app.api.auth import get_current_user
-from app.observability import setup_phoenix, flush as flush_traces, is_observability_enabled
 
 settings = get_settings()
 
@@ -42,21 +41,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Start BatchLogger background task
     await batch_logger.start()
-
-    # ── Phoenix Observability (init first, before any LLM calls) ──
-    try:
-        setup_phoenix(
-            project_name=settings.phoenix_project_name,
-            otlp_endpoint=settings.phoenix_otlp_endpoint,
-            phoenix_endpoint=settings.phoenix_endpoint,
-        )
-        logger.info(
-            "Phoenix initialized (LangChain auto-instrumentation active)",
-            project=settings.phoenix_project_name,
-            otlp=settings.phoenix_otlp_endpoint,
-        )
-    except Exception as e:
-        logger.warning(f"Phoenix init failed (tracing disabled): {e}")
 
     # Initialize PostgreSQL tables
     await init_db()
@@ -111,8 +95,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.utils.logger_batch import batch_logger
     await batch_logger.stop()
 
-    if is_observability_enabled():
-        flush_traces()
     await redis.aclose()
 
 

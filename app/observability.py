@@ -1,354 +1,104 @@
 """
-Phoenix (Arize) self-hosted observability singleton.
+Observability no-op shim.
 
-Initialize once at app startup via `setup_phoenix()`. All LangChain/LangGraph
-calls are traced through OpenInference + OpenTelemetry auto-instrumentation.
-
-Usage:
-    from app.observability import get_tracer, get_phoenix_client
-    tracer = get_tracer()
-    client = get_phoenix_client()  # for span annotations / custom scores
+Phoenix / OpenInference were removed (Jun 2026). Monitoring now reads
+from Postgres (agent_logs) via Streamlit. This module is preserved as
+a thin no-op so the 20+ existing call sites in graph/, api/, and
+pipeline code keep importing the same names and get back deterministic
+no-ops. No openinference / opentelemetry / phoenix libraries are
+imported at module load — the only external symbol exposed is
+`get_tracer`, which returns the OpenTelemetry SDK's no-op tracer
+(`opentelemetry.trace.get_tracer` always returns a working tracer
+even when no provider is set, so callers that invoke
+`tracer.start_as_current_span` on it stay safe).
 """
-from __future__ import annotations
-
-from typing import Any, Optional
-
-_tracer_provider: Any | None = None
-_phoenix_client: Any | None = None
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 
 def set_tracer_provider(provider: Any) -> None:
-    global _tracer_provider
-    _tracer_provider = provider
+    """No-op. Kept so legacy call sites that import this still work."""
 
 
-def get_tracer_provider() -> Any | None:
-    return _tracer_provider
+def get_tracer_provider() -> Any:
+    """Always returns the OpenTelemetry proxy tracer — never a real provider."""
+    from opentelemetry import trace as _otel_trace
+    return _otel_trace.get_tracer_provider()
 
 
 def get_tracer(name: str = "app"):
-    """Return an OTel tracer bound to the app's provider, or a no-op fallback."""
-    from opentelemetry import trace
-    if _tracer_provider is not None:
-        return _tracer_provider.get_tracer(name)
-    return trace.get_tracer(name)
+    """Return a tracer. With no provider set, opentelemetry's SDK gives
+    back its built-in NoOp tracer, so any `start_as_current_span` call
+    against the returned object is safe and cheap."""
+    from opentelemetry import trace as _otel_trace
+    return _otel_trace.get_tracer(name)
 
 
 def set_phoenix_client(client: Any) -> None:
-    global _phoenix_client
-    _phoenix_client = client
+    """No-op. Phoenix is gone; we keep the name so old imports succeed."""
 
 
-def get_phoenix_client() -> Any | None:
-    """Phoenix REST client used for span annotations (custom scores).
-    Returns None if Phoenix wasn't initialized — callers must guard.
-    """
-    return _phoenix_client
+def get_phoenix_client() -> Optional[Any]:
+    """Always None. Phoenix is gone — callers that depended on submitting
+    span annotations should be rewritten to persist the score to
+    agent_logs directly (see app/eval/tasks.py for the pattern)."""
+    return None
 
 
 def is_observability_enabled() -> bool:
-    return _tracer_provider is not None
+    """Always False. Tracing is off; rely on agent_logs (Postgres) for
+    observability."""
+    return False
 
 
 def flush() -> None:
-    """Force-flush pending spans on shutdown. Safe to call when disabled."""
-    if _tracer_provider is None:
-        return
-    try:
-        _tracer_provider.force_flush()
-    except Exception:
-        pass
-
-
-def setup_phoenix(
-    *,
-    project_name: str,
-    otlp_endpoint: str,
-    phoenix_endpoint: Optional[str] = None,
-) -> bool:
-    """Initialize Phoenix tracer + LangChain auto-instrumentation.
-
-    Returns True on success, False on failure (caller logs).
-    Idempotent — second call is a no-op.
-    Skips setup if Phoenix OTLP endpoint is unreachable to avoid
-    background retry spam in the logs.
-    """
-    global _tracer_provider, _phoenix_client
-    if _tracer_provider is not None:
-        return True
-
-    # Quick reachability check — if Phoenix is not running, skip setup
-    # entirely so the OTLP exporter doesn't flood logs with retry errors.
-    import socket
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(otlp_endpoint)
-        host = parsed.hostname or "localhost"
-        port = parsed.port or 4317
-        sock = socket.create_connection((host, port), timeout=1)
-        sock.close()
-    except (OSError, Exception):
-        import logging
-        logging.getLogger(__name__).info(
-            f"Phoenix not reachable at {otlp_endpoint} — tracing disabled"
-        )
-        return False
-
-    from phoenix.otel import register
-    from openinference.instrumentation.langchain import LangChainInstrumentor
-
-    provider = register(
-        project_name=project_name,
-        endpoint=otlp_endpoint,
-        auto_instrument=False,
-        set_global_tracer_provider=True,
-    )
-    LangChainInstrumentor().instrument(tracer_provider=provider)
-    _tracer_provider = provider
-
-    if phoenix_endpoint:
-        try:
-            from phoenix.client import Client
-            _phoenix_client = Client(base_url=phoenix_endpoint)
-        except Exception:
-            _phoenix_client = None
-
-    return True
-
-
-from contextlib import contextmanager
+    """No-op. Kept so legacy shutdown hooks can call this safely."""
 
 
 @contextmanager
-def trace_attributes(
-    *,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    metadata: dict | None = None,
-    tags: list[str] | None = None,
-):
-    """Stack OpenInference context managers for session/user/metadata/tags.
+def trace_attributes(**_kwargs: Any) -> Iterator[None]:
+    """No-op context manager. Yields immediately.
 
-    Replaces Langfuse's `propagate_attributes(...)`. Safe no-op when
-    observability is disabled.
+    Previously stacked OpenInference `using_session` / `using_user` /
+    `using_metadata` / `using_tags` context managers. All are no-ops
+    now (the underlying provider is never set).
     """
-    if _tracer_provider is None:
-        yield
-        return
-
-    from contextlib import ExitStack
-    from openinference.instrumentation import (
-        using_session,
-        using_user,
-        using_metadata,
-        using_tags,
-    )
-
-    with ExitStack() as stack:
-        if session_id:
-            stack.enter_context(using_session(session_id))
-        if user_id:
-            stack.enter_context(using_user(user_id))
-        if metadata:
-            stack.enter_context(using_metadata(metadata))
-        if tags:
-            stack.enter_context(using_tags(list(tags)))
-        yield
+    yield
 
 
-def set_current_span_io(*, input: Any | None = None, output: Any | None = None) -> None:
-    """Set INPUT_VALUE / OUTPUT_VALUE on the active span (OpenInference convention).
-
-    The `input` and `output` payloads are run through redact_io() before
-    serialization, so PII (emails, phone numbers, NIK, NPWP, credit
-    card numbers) is masked before it lands in Phoenix. Other fields
-    (intent, scores, conversation_id) pass through unchanged.
-    """
-    if _tracer_provider is None:
-        return
-    try:
-        import json as _json
-        from opentelemetry import trace as _trace
-        from openinference.semconv.trace import SpanAttributes
-
-        from app.utils.pii import redact_io
-
-        span = _trace.get_current_span()
-        if span is None or not span.is_recording():
-            return
-        if input is not None:
-            # Only redact dict-shaped I/O (the common case from chat.py);
-            # a raw string is still passed through the redact_pii path
-            # so ad-hoc string callers also get coverage.
-            if isinstance(input, dict):
-                payload = redact_io(input)
-            elif isinstance(input, str):
-                from app.utils.pii import redact_pii
-                payload = redact_pii(input)
-            else:
-                payload = input
-            span.set_attribute(
-                SpanAttributes.INPUT_VALUE,
-                payload if isinstance(payload, str) else _json.dumps(payload, default=str),
-            )
-        if output is not None:
-            if isinstance(output, dict):
-                payload = redact_io(output)
-            elif isinstance(output, str):
-                from app.utils.pii import redact_pii
-                payload = redact_pii(output)
-            else:
-                payload = output
-            span.set_attribute(
-                SpanAttributes.OUTPUT_VALUE,
-                payload if isinstance(payload, str) else _json.dumps(payload, default=str),
-            )
-    except Exception:
-        pass
+def set_current_span_io(*, input: Any = None, output: Any = None) -> None:
+    """No-op. The INPUT_VALUE / OUTPUT_VALUE span attributes that
+    OpenInference used to consume are not used anywhere — for durable
+    persistence, callers should write to agent_logs via batch_logger."""
 
 
 def set_current_span_attributes(attrs: dict[str, Any]) -> None:
-    """Set arbitrary attributes on the active span.
-
-    Use this for values you want visible directly in Phoenix's main span view
-    (no click needed). Span annotations are good for evaluator scores (judge
-    faithfulness, retrieval quality), but UI surface attributes belong on the
-    span itself — intent classification, scoring axes, latency breakdowns.
-
-    Numbers and strings pass through; nested dicts/lists are JSON-encoded.
-    String values are run through `redact_pii()` first so emails /
-    phone numbers / NIK / NPWP / credit cards in `rewritten_query`,
-    `intent_scores`, or any other free-form field don't end up in
-    Phoenix traces. (Commit 85b1507 added the same protection to
-    set_current_span_io; this commit extends it to the per-attribute
-    path which has the same leak surface.)
-    """
-    if _tracer_provider is None or not attrs:
-        return
-    try:
-        import json as _json
-        from opentelemetry import trace as _trace
-
-        from app.utils.pii import redact_pii
-
-        span = _trace.get_current_span()
-        if span is None or not span.is_recording():
-            return
-        for key, value in attrs.items():
-            if value is None:
-                continue
-            if isinstance(value, str):
-                span.set_attribute(key, redact_pii(value))
-            elif isinstance(value, (bool, int, float)):
-                span.set_attribute(key, value)
-            else:
-                # Dicts/lists: JSON-encode first, then redact the
-                # resulting string. This catches nested PII (a dict
-                # like {'rewritten_query': 'ferdy@x.com'}) without
-                # requiring a recursive walker.
-                span.set_attribute(key, redact_pii(_json.dumps(value, default=str)))
-    except Exception:
-        pass
+    """No-op. Same rationale as set_current_span_io — durability lives
+    in agent_logs, not in OTel span attributes."""
 
 
-def get_current_span_id() -> str | None:
-    """Return the active span's hex ID, or None when no recording span exists."""
-    if _tracer_provider is None:
-        return None
-    try:
-        from opentelemetry import trace as _trace
-        span = _trace.get_current_span()
-        ctx = span.get_span_context() if span is not None else None
-        if ctx is None or not ctx.is_valid:
-            return None
-        return format(ctx.span_id, "016x")
-    except Exception:
-        return None
+def get_current_span_id() -> Optional[str]:
+    """Always None. No active span can exist (no provider)."""
+    return None
 
 
 def update_current_span_name(name: str) -> None:
-    """Rename the active span. Use to surface routing decisions (e.g. intent)
-    in Phoenix's span list view without expanding row details.
-
-    Phoenix UI uses span name as the primary list column — appending the
-    classified intent (`a-pedi-chat:KNOWLEDGE`) makes distribution + filtering
-    by intent trivial. No-op when observability is disabled or no active span.
-    """
-    if _tracer_provider is None or not name:
-        return
-    try:
-        from opentelemetry import trace as _trace
-
-        span = _trace.get_current_span()
-        if span is None or not span.is_recording():
-            return
-        span.update_name(name)
-    except Exception:
-        pass
+    """No-op. Phoenix span names are not consumed anywhere."""
 
 
 def annotate_span(span_id: str, name: str, score: float) -> None:
-    """Submit a numeric score to Phoenix as a span annotation. No-op on failure."""
-    if _phoenix_client is None or not span_id:
-        return
-    try:
-        _phoenix_client.spans.add_span_annotation(
-            span_id=span_id,
-            annotation_name=name,
-            annotator_kind="CODE",
-            score=float(score),
-        )
-    except Exception:
-        pass
+    """No-op. Phoenix span annotations (the LLM-judge / quality scores)
+    have been replaced by direct UPDATEs to agent_logs.faithfulness_score
+    (see app/eval/tasks.py)."""
 
 
 @contextmanager
-def root_span(
-    name: str,
-    *,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    metadata: dict | None = None,
-    tags: list[str] | None = None,
-):
-    """Open a parent span with trace attributes attached. Yields the hex span_id
-    (or None when observability is disabled). Auto-instrumented spans created
-    inside the block become children of this span. Tags the span with
-    OpenInference span_kind=AGENT so Phoenix UI groups these as agents instead
-    of "Unknown".
-    """
-    if _tracer_provider is None:
-        yield None
-        return
-    from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
-    from opentelemetry.trace import Status, StatusCode
+def root_span(name: str, **_kwargs: Any) -> Iterator[Optional[str]]:
+    """No-op root span context manager. Yields None.
 
-    tracer = get_tracer(name)
-    with trace_attributes(
-        session_id=session_id,
-        user_id=user_id,
-        metadata=metadata,
-        tags=tags,
-    ):
-        with tracer.start_as_current_span(name) as span:
-            try:
-                span.set_attribute(
-                    SpanAttributes.OPENINFERENCE_SPAN_KIND,
-                    OpenInferenceSpanKindValues.AGENT.value,
-                )
-            except Exception:
-                pass
-            ctx = span.get_span_context() if span is not None else None
-            span_id = format(ctx.span_id, "016x") if ctx and ctx.is_valid else None
-            try:
-                yield span_id
-                # No exception bubbled out → mark span OK so Phoenix UI shows
-                # a green checkmark instead of an "unset" strip. Errors raised
-                # inside the with-block bypass this and OTel records the
-                # exception status automatically.
-                try:
-                    span.set_status(Status(StatusCode.OK))
-                except Exception:
-                    pass
-            except BaseException:
-                raise
+    Previously opened a parent span with OpenInference span_kind=AGENT
+    so Phoenix UI grouped these correctly. With Phoenix gone, callers
+    can drop `with root_span(...)` blocks entirely in a follow-up
+    cleanup; for now this keeps the 20+ call sites working.
+    """
+    yield None

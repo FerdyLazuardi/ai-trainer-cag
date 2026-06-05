@@ -12,9 +12,6 @@ from app.eval.tasks import eval_turn_task as _eval_turn_task_fn
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
 from app.ingestion.pipeline import ingest_document
 from app.ingestion.portfolio_sync import sync_portfolio_knowledge_base
-# Phoenix removed Jun 2026 — observability is a no-op shim now. The previous
-# `from app.observability import setup_phoenix, flush as flush_traces,
-#  is_observability_enabled` import is gone since setup_phoenix is gone too.
 
 settings = get_settings()
 

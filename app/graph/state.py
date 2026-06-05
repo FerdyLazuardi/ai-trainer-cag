@@ -30,8 +30,8 @@ class RAGState(TypedDict):
     retrieval_query: Optional[str]
     # LLM-supplied safety-anchored version of the user message; used for
     # retrieval when needs_safety_escalation >= 0.5. Empty otherwise.
-    # Persisted for observability (Phoenix span, agent_logs) so we can audit
-    # what the KB actually saw.
+    # Persisted for observability (agent_logs) so we can audit what the KB
+    # actually saw.
     safety_preserved_query: Optional[str]
     conversation_summary: Optional[str]  # Sprint 2 — short-term session summary
     user_profile: Optional[dict]         # Sprint 3 — long-term user memory
