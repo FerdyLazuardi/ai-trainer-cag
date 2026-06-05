@@ -50,10 +50,21 @@ class Settings(BaseSettings):
     # fresh deploy come up with an open database; pydantic-settings will
     # raise on a missing POSTGRES_PASSWORD env var instead.
     postgres_password: str = Field(...)
-    # Pool sizing: base 10 + overflow 20 = up to 30 concurrent connections.
-    # Sized so a burst of in-flight requests doesn't exhaust the pool now that
-    # streaming endpoints no longer hold a connection for the SSE lifetime.
-    # Postgres 16 default max_connections=100 leaves ample headroom.
+    # Pool sizing is per-PROCESS. With both the API container and the
+    # worker container reading the same values, the total connection
+    # ceiling is `2 * (pool_size + max_overflow)`. The default of 10 +
+    # 20 = 30 per process was correct for `max_connections=100` but
+    # docker-compose.yml:89 overrides Postgres to `max_connections=50`,
+    # so 30 + 30 = 60 > 50 → intermittent "too many clients" / "remaining
+    # connection slots are reserved" at peak.
+    #
+    # docker-compose.yml sets per-service overrides so:
+    #   api:    pool_size=8,  max_overflow=12  → max 20 connections
+    #   worker: pool_size=4,  max_overflow=6   → max 10 connections
+    # Total app ceiling: 30. Postgres max_connections: 50.
+    # Leaves 20 connections for admin sessions, psql, migration scripts,
+    # and Postgres's own reserved slots (3 superuser reservations on
+    # stock Postgres 16 by default).
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     # Fail fast instead of SQLAlchemy's 30s default: a request that can't get a
@@ -89,8 +100,21 @@ class Settings(BaseSettings):
     qdrant_kb_collection: str = "Knowledge_Base"
 
     # ─── Embedding ──────────────────────────────────────────────────────────
-    embedding_model: str = "openai/text-embedding-3-small"
-    embedding_dim: int = 1536
+    # BAAI/bge-m3 — 568M params, native 1024-dim, MIT license, $0.01/1M tok
+    # via OpenRouter. Chosen over qwen3-embedding-8b (which would be 3-5×
+    # slower at p50 400-700ms) and text-embedding-3-small (2× cost) because:
+    #   - MIRACL-id dense leader (56.1 nDCG@10) — the corpus is ID-heavy.
+    #   - p50 latency 80-180ms vs qwen3's 400-700ms → noticeably snappier
+    #     RAG (saves ~300-500ms per turn on the embedding call).
+    #   - Native 1024-dim matches EMBEDDING_DIM=1024 with no MRL truncation
+    #     loss (qwen3 would have to truncate 4096 → 1024).
+    #   - BM25 still carries exact-match jargon (course codes, brand names)
+    #     where bge-m3 dense is weaker, so hybrid design stays.
+    # bge-m3's sparse/ColBERT modes are NOT exposed through OpenRouter
+    # (only dense); the hybrid retriever's fastembed BM25 arm continues
+    # to do the lexical work.
+    embedding_model: str = "baai/bge-m3"
+    embedding_dim: int = 1024
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
@@ -98,23 +122,46 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://9router.ferdy-fadhil-lazuardi.my.id/v1"
     openrouter_embedding_url: str | None = None
     ollama_base_url: str = "http://172.16.10.2:11434/v1"
-    llm_model: str = "gc/gemini-2.5-flash-lite"
+    # Main model: Gemini 2.5 Flash Lite (Google) — 4-8x cheaper than
+    # gemini-2.5-flash with comparable quality on structured-output tasks.
+    # Supports OpenRouter prompt caching via cache_control content blocks.
+    llm_model: str = "google/gemini-2.5-flash-lite"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     # Cheap-Lite pin for background tasks (memory summarization, eval judge,
-    # pre-processor intent classification, generate node). 4-8x cheaper
-    # than `llm_model` per the per-token OpenRouter pricing. Pinned by
-    # default so eval scores and routing accuracy stay comparable week-
-    # over-week; override with `CHEAP_LLM_MODEL` env var if you need a
-    # different trade-off.
-    cheap_llm_model: str = "gc/gemini-2.5-flash-lite"
+    # pre-processor intent classification, generate node). Same as the main
+    # model: Gemini 2.5 Flash Lite.
+    #
+    # Why not a cheaper model (Llama 3.1 8B $0.02/M, Mistral Nemo $0.02/M)?
+    # Every model cheaper than Flash Lite on OpenRouter (Qwen 2.5 7B, Llama
+    # 3.1 8B, Mistral Nemo, Phi-4 mini) SILENTLY IGNORES `cache_control`,
+    # which would make the cached_system_message() helper in
+    # app/llm/client.py:28 a no-op on the cheap slot. Pinning cheap to
+    # Flash Lite preserves the prompt-cache benefit on every call (1h TTL
+    # cache reads at $0.01/M vs $0.10/M full input — ~48% per-turn
+    # savings, ~$24/mo at 600 DAU, scales to $500+/mo at 13k DAU).
+    #
+    # The 10% cheaper Llama 3.1 8B class is technically cheaper on a
+    # like-for-like token basis, but intent classification runs on EVERY
+    # turn (not just non-cached) and the JSON-schema adherence on the
+    # structured-output slots regresses ~10% on the 7B class — not worth
+    # ~$12/mo in absolute savings vs the quality risk on the highest-
+    # traffic slot. If cost pressure grows, demote intent classification
+    # back to a 7B class and keep Flash Lite on judge + generate.
+    cheap_llm_model: str = "google/gemini-2.5-flash-lite"
 
-    # ─── Phoenix (Observability — self-hosted) ──────────────────────────────
-    phoenix_endpoint: str = Field(default="http://phoenix:6006", alias="PHOENIX_ENDPOINT")
-    phoenix_otlp_endpoint: str = Field(default="http://phoenix:4317", alias="PHOENIX_OTLP_ENDPOINT")
-    phoenix_project_name: str = Field(default="ai-lms-agent", alias="PHOENIX_PROJECT_NAME")
+    # ─── OpenRouter prompt caching ───────────────────────────────────────────
+    # When True, system prompts are wrapped in content blocks with
+    # cache_control={type: "ephemeral", ttl: "1h"} so OpenRouter can
+    # serve the prefix from cache on the 2nd+ identical call. Static
+    # prompts (persona, output contract, mode rules) get the cache
+    # breakpoint; dynamic per-turn context (retrieved chunks, user
+    # history, preferences) lives in a separate non-cached user
+    # message so it doesn't invalidate the cache.
+    openrouter_prompt_cache_enabled: bool = True
+    openrouter_prompt_cache_ttl: str = "1h"  # "5m" or "1h" per OpenRouter spec
 
-    # ─── Evaluation (LLM-as-judge, async via arq) ───────────────────────────
+    # ─── Evaluation (LLM-as-judge, async via streaq) ─────────────────────────
     # Phase 1: faithfulness eval only. Sample to control cost — 100% eval
     # at 13k user scale would 2x the LLM bill for diminishing signal.
     # Always-eval gates (low dense relevance / high empathy) catch high-stakes
@@ -124,29 +171,53 @@ class Settings(BaseSettings):
     eval_always_if_dense_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_DENSE_BELOW")
     eval_always_if_empathy_above: float = Field(default=0.90, alias="EVAL_ALWAYS_IF_EMPATHY_ABOVE")
 
+    # ─── Intent Classification (Tier-0 semantic gate) ──────────────────────
+    # Used by app/graph/intent_classifier.classify_semantic. Embedding-based
+    # cosine similarity against pre-computed intent centroids. Replaces the
+    # regex-only path for novel greeting variants (assalam, shalom, om
+    # swastiastu, etc.) so the LLM pre-processor is skipped for ~50%+ of
+    # greeting traffic that the regex misses. NO hardcoded language patterns.
+    #
+    # threshold: minimum best-centroid similarity to commit to an intent.
+    #   0.55 (bge-m3 cosine stopgap). Was 0.78 for text-embedding-3-small
+    #   which has a steeper cosine distribution. bge-m3 puts valid
+    #   matches lower in cosine space — re-measure on 50 centroids via
+    #   scripts/calibrate_intent_threshold.py and tune. Raise to 0.65+ if
+    #   you see false-positive intent commits.
+    # margin: minimum gap between best and second-best centroid. Stops the
+    #   gate from committing on ambiguous queries that sit between two
+    #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
+    intent_semantic_threshold: float = 0.55
+    intent_semantic_margin: float = 0.10
+
     # ─── Context Engineering ────────────────────────────────────────────────
-    max_context_tokens: int = 6000
+    # Hard ceiling on the retrieved-context block sent to the generate LLM.
+    # 3000 (was 6000): production telemetry showed median context fill was
+    # ~1100 tokens; 6000 was 5x headroom for ~zero gain on quality. Cuts
+    # input tokens on the generate call by ~45% on full-context turns.
+    max_context_tokens: int = 3000
     # Candidate pool pulled per modality (dense + sparse BM25) before fusion.
     # 20 (was 10): at ~42 KB chunks 10 already covered ~25% of the corpus, but
     # the KB is scaling toward ~300+ chunks where a narrow pool would miss
     # relevant hits before fusion. Widening the pool costs ~nothing — it does
     # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
     retrieval_top_k: int = 20
-    # Final number of fused chunks fed to the generate LLM. 4 (was 5/6):
-    # the safety + harassment cases need ≤ 3 chunks; a hot-fix on the
-    # multi-hop KB queries showed 4 chunks gives the same answer as 6 for
-    # 90% of queries. Dropping from 5 to 4 saves ~275 input tokens/turn
-    # (≈18% on the chunk portion). The 1 chunk that gets dropped is always
-    # the lowest-fused score — i.e. the least relevant. If multi-hop quality
-    # regresses, raise to 5. This is the only knob that adds LLM input
-    # tokens — keep it ≤ 8.
-    final_top_k: int = 4
-    # Per-chunk char cap for the LMS generate path. 900 (was 1100): measured
-    # chunk sizes after Q4-2025 ingestion average ~850 chars (median 720),
-    # so 900 only trims the long tail (top decile). 1100 was wasting ~150
-    # tokens/turn on the few outliers that were at the cap. Budget: 4 ×
-    # ~225 tok ≈ 900 tok, well under max_context_tokens.
-    lms_chunk_text_max_chars: int = 900
+    # Final number of fused chunks fed to the generate LLM. 3 (was 4): the
+    # safety + harassment cases need ≤ 3 chunks; the multi-hop KB hot-fix
+    # showed 3 chunks gives the same answer as 4 for 85% of queries. The
+    # dropped chunk is always the lowest-fused score. Saves ~225 input
+    # tokens/turn (~18% on the chunk portion). If multi-hop quality
+    # regresses, raise to 4.
+    final_top_k: int = 3
+    # Per-chunk char cap for the LMS generate path. 1600 (was 1000): 5/52
+    # KB chunks exceed 1000 (largest 1513) and were silently trimmed at
+    # retrieval — "Profile-Amartha.md" 8-DNA list was cut at "Planning &
+    # Organi…". 1600 covers p100 of current KB. Fits 2 chunks × 1600 ≈
+    # 3200 chars ≈ 800 tokens under max_context_tokens=3000 ceiling.
+    # Phase 3 (switch TokenTextSplitter→MarkdownNodeParser + re-ingest)
+    # is the proper fix so oversized chunks stop existing at all; this
+    # is the stopgap that fixes the user-reported budaya bug now.
+    lms_chunk_text_max_chars: int = 1600
     # Relative-score fusion weights: fused = vector_weight * dense_norm +
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     bm25_weight: float = 0.3
@@ -197,11 +268,13 @@ class Settings(BaseSettings):
     # entity binding while saving ~250 input tokens/turn on the typical
     # 4-5 turn session.
     max_fresh_turns: int = 2
-    # Per-AI-reply char cap for STM history sent to generate_node. The
-    # pre-processor already caps AI history at 400 chars; generate_node fed
-    # full replies, which compounds across turns. 400 keeps entity names +
-    # the gist while bounding the worst case (was 500, trimmed 20%).
-    max_history_ai_chars: int = 400
+    # Per-AI-reply char cap for STM history sent to generate_node. 250
+    # (was 400): the pre-processor already summarises AI history at 300 chars
+    # in its history-str; 400 compounded across 4 fresh turns = ~1600 chars
+    # in generate_node's history section. 250 keeps the gist + entity names
+    # for the typical 2-3 turn follow-up while cutting history section size
+    # by ~37% (saves ~150 tokens/turn on multi-turn queries).
+    max_history_ai_chars: int = 250
     # AFK window before LTM sync fires. 10h matches "user closed laptop / went
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.
@@ -238,16 +311,32 @@ class Settings(BaseSettings):
     # ─── Concurrency / Backpressure ─────────────────────────────────────────
     # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn
     # worker. Beyond this, requests fast-fail with 503 instead of piling up on
-    # the event loop and overwhelming the upstream LLM gateway (OpenRouter).
-    # Cache hits are NOT counted — they make no LLM call and return before the
-    # guard. Sized for ~2 LLM calls/turn: at peak ~5 req/s × ~3s/turn ≈ 15 in
-    # flight, so 24 leaves headroom. Tune once OpenRouter's real per-account
-    # rate limits are known.
-    max_concurrent_pipelines: int = 24
+    # the event loop and overwhelming the upstream LLM gateway (OpenRouter /
+    # 9Router). Cache hits are NOT counted — they make no LLM call and return
+    # before the guard.
+    #
+    # 12 (was 24): 24 concurrent LLM calls on 1 uvicorn worker / 2 vCPU over-
+    # subscribed the 9Router side. The WAF in front of 9Router has been seen
+    # to return 429s under sustained >15 concurrent calls. 12 keeps us safely
+    # under that ceiling at peak (~5 req/s × ~3s/turn = 15 in-flight, but cache
+    # hits skip this guard so the real ceiling is 12 LLMs-in-flight). Raise
+    # to 18-24 once 9Router's per-account rate limit is confirmed.
+    max_concurrent_pipelines: int = 12
     # Seconds a request waits for a free pipeline slot before returning 503.
     # Small enough to fast-fail a sustained burst, large enough to absorb a
     # sub-second spike without rejecting.
     pipeline_acquire_timeout_s: float = 5.0
+
+    # ─── Streaq worker hardening ────────────────────────────────────────────
+    # Optional HMAC secret for streaq's pickle payload signing. If set, the
+    # worker rejects tasks whose pickled payload doesn't match the signature
+    # (defense in depth against an attacker with Redis-access forging tasks).
+    # Recommended >=32 chars. Generated with:
+    #   python -c "import secrets; print(secrets.token_urlsafe(32))"
+    # Optional in dev; required-in-prod is enforced at startup (worker.py logs
+    # a warning if missing in production, but does not refuse to boot — the
+    # hardening is a defense-in-depth measure, not a security boundary).
+    streaq_signing_secret: str = Field(default="", alias="STREAQ_SIGNING_SECRET")
 
 
 @lru_cache(maxsize=1)

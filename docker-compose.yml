@@ -30,6 +30,13 @@ services:
       # fastembed BM25 sparse encoder doesn't oversubscribe cores and thrash P95.
       OMP_NUM_THREADS: '2'
       MKL_NUM_THREADS: '2'
+      # API pool: 8 base + 12 overflow = 20 connections max. Sized to
+      # cover 24 in-flight pipelines × ~1 connection each (gather'd in
+      # _prepare_rag_context fans out but most queries return in <10ms
+      # so the steady-state checkout is well under the cap). Combined
+      # with the worker's 10, total = 30 vs Postgres max_connections=50.
+      POSTGRES_POOL_SIZE: '8'
+      POSTGRES_MAX_OVERFLOW: '12'
     restart: unless-stopped
     volumes:
       - .:/app
@@ -47,9 +54,13 @@ services:
     build: .
     container_name: peped-worker
     # Idle RSS ~370MB; background jobs (LTM sync, eval, moodle/portfolio sync)
-    # are bursty but short. 1G is a safe ceiling.
-    mem_limit: 1g
-    mem_reservation: 512m
+    # are bursty but at streaq concurrency=2 two simultaneous heavy jobs (LLM
+    # call + Qdrant upsert + Postgres + bge-m3 BM25 encoder) can hit ~1.1GB
+    # transient — the previous 1G ceiling caused OOM-kills when 2 jobs ran
+    # concurrently. 1.5G keeps two-burst headroom without overcommitting the
+    # 8GB host (api+worker+postgres+redis+qdrant = ~6.1G cgroup ceiling).
+    mem_limit: 1.5g
+    mem_reservation: 768m
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,13 +81,20 @@ services:
       # guard against transitive oversubscription in sync/eval/ltm jobs.
       OMP_NUM_THREADS: '2'
       MKL_NUM_THREADS: '2'
+      # Worker pool: 4 base + 6 overflow = 10 connections max. Cron
+      # jobs (moodle sync, LTM sync, portfolio sync, eval) run
+      # sequentially inside a single streaq worker (`concurrency=2`), so
+      # 10 is plenty. Combined with the API's 20 = 30 vs
+      # Postgres max_connections=50.
+      POSTGRES_POOL_SIZE: '4'
+      POSTGRES_MAX_OVERFLOW: '6'
     restart: unless-stopped
     volumes:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
       - peped_hf_cache:/app/.cache/huggingface
-    command: [ "arq", "app.worker.WorkerSettings" ]
+    command: [ "streaq", "run", "app.worker:worker" ]
 
   postgres:
     image: postgres:16
@@ -106,20 +124,29 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.6.3-alpine
     container_name: peped-redis
-    # maxmemory 512m (set in command) + process overhead. Ceiling slightly above
+    # maxmemory 768m (set in command) + process overhead. Ceiling slightly above
     # so the cgroup limit never fires before redis's own LRU eviction does.
-    mem_limit: 768m
-    mem_reservation: 128m
+    # io-threads is left at the server default (1) — the 2-vCPU box this runs
+    # on would gain nothing from threading I/O, and the default avoids the
+    # extra threads eating into the cgroup's CPU share.
+    # 768mb (was 512mb): at 600 DAU the 50k cap semantic_cache + per-conv
+    # HASHes + LTM locks + streaq stream + agent_log buffer head toward
+    # 400-450MB under burst, leaving only ~60MB headroom at 512mb. 768mb
+    # gives ~300MB headroom for the same load at 13k DAU.
+    mem_limit: 1g
+    mem_reservation: 256m
     # volatile-lru (NOT allkeys-lru): this single Redis is shared by the query
-    # cache, conversation history, the arq job QUEUE, rate-limit counters, and
+    # cache, conversation history, the streaq job QUEUE, rate-limit counters, and
     # the agent_log buffer. allkeys-lru would evict ANY key under memory
     # pressure — including queued LTM/eval jobs and the log buffer, which carry
     # NO TTL — silently dropping scheduled work. volatile-lru only evicts keys
     # that have an explicit TTL (cache/history/rate-limit), so the untled queue
     # + buffer are never sacrificed to make room for cache growth.
-    command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    # --maxmemory-samples 10: Redis 8.0+ raised the LRU sample size default to
+    # 10 for better eviction fidelity; cost is negligible vs. default 5.
+    command: ["redis-server", "--maxmemory", "768mb", "--maxmemory-policy", "volatile-lru", "--maxmemory-samples", "10"]
     ports:
       - "6381:6379"
     restart: unless-stopped
@@ -149,27 +176,7 @@ services:
       - peped_qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
-  phoenix:
-    image: arizephoenix/phoenix:latest
-    container_name: peped-phoenix
-    # Debug-only (opt-in profile). Idle ~445MB; ceiling keeps it bounded when run.
-    mem_limit: 768m
-    mem_reservation: 256m
-    # Opt-in only: `docker compose --profile debug up`. The app tolerates
-    # Phoenix being down (setup_phoenix is wrapped in try/except); api/worker
-    # only set PHOENIX_* env vars, so they start fine without this service.
-    profiles: ["debug"]
-    ports:
-      - "6006:6006"  # Phoenix UI + REST
-      - "4317:4317"  # OTLP gRPC
-    environment:
-      PHOENIX_WORKING_DIR: /mnt/data
-    volumes:
-      - peped_phoenix_data:/mnt/data
-    restart: unless-stopped
-
 volumes:
   peped_postgres_data:
   peped_qdrant_storage:
-  peped_phoenix_data:
   peped_hf_cache:

@@ -1,29 +1,63 @@
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
-from arq.connections import RedisSettings
-from arq.cron import cron
+
 from loguru import logger
+from streaq import StreaqRetry, Worker
 
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
-from app.database.postgres import AsyncSessionLocal
-from app.eval.tasks import eval_turn_task
+from app.database.postgres import AsyncSessionLocal, prune_agent_logs
+from app.eval.tasks import eval_turn_task as _eval_turn_task_fn
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
 from app.ingestion.pipeline import ingest_document
 from app.ingestion.portfolio_sync import sync_portfolio_knowledge_base
-from app.observability import setup_phoenix, flush as flush_traces, is_observability_enabled
+# Phoenix removed Jun 2026 — observability is a no-op shim now. The previous
+# `from app.observability import setup_phoenix, flush as flush_traces,
+#  is_observability_enabled` import is gone since setup_phoenix is gone too.
 
 settings = get_settings()
 
-async def ingest_text_task(ctx: dict, text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
-    """arq task: ingest a single document off the API request path.
+# Streaq worker configuration.
+# arq → streaq migration (Jun 2026): streaq uses coredis (separate from
+# redis-py used by the app's 50+ direct Redis call sites), so this
+# doesn't constrain our redis-py 8 upgrade path.
+
+
+@asynccontextmanager
+async def _worker_lifespan():
+    """Bridge the arq-style startup/shutdown hooks to streaq's lifespan.
+
+    streaq's Worker takes a single async context manager (lifespan)
+    instead of arq's separate on_startup/on_shutdown callbacks. The
+    original startup(ctx) / shutdown(ctx) bodies don't use ctx, so we
+    pass an empty dict to preserve the existing function signatures
+    unchanged.
+    """
+    await startup({})
+    try:
+        yield
+    finally:
+        await shutdown({})
+
+
+worker = Worker(
+    redis_url=settings.redis_url,
+    concurrency=2,  # was arq's max_jobs=2
+    lifespan=_worker_lifespan,
+)
+
+
+@worker.task
+async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
+    """streaq task: ingest a single document off the API request path.
 
     The text payload is bounded at 200,000 chars by IngestRequest validation,
     so the worker's embedding + Qdrant upsert runs without OOM risk. The
     task opens its own AsyncSession (the API process no longer holds one
     for the duration of the embedding pipeline).
     """
-    logger.info("arq ingest_text_task starting", title=title, source=source, text_len=len(text))
+    logger.info("streaq ingest_text_task starting", title=title, source=source, text_len=len(text))
     try:
         async with AsyncSessionLocal() as session:
             result = await ingest_document(
@@ -35,7 +69,7 @@ async def ingest_text_task(ctx: dict, text: str, title: str, source: str, metada
             )
             await session.commit()
         logger.info(
-            "arq ingest_text_task complete",
+            "streaq ingest_text_task complete",
             document_id=result.document_id,
             chunks=result.chunks_count,
             tokens=result.total_tokens,
@@ -46,13 +80,14 @@ async def ingest_text_task(ctx: dict, text: str, title: str, source: str, metada
             "total_tokens": result.total_tokens,
         }
     except Exception as exc:
-        logger.error("arq ingest_text_task failed", error=str(exc))
+        logger.error("streaq ingest_text_task failed", error=str(exc))
         raise
 
 
-async def sync_moodle_task(ctx: dict, course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
-    """arq task to run the moodle sync."""
-    logger.info(f"Starting background Moodle sync task via arq for course_id={course_id}", force_reingest=force_reingest)
+@worker.task
+async def sync_moodle_task(course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
+    """streaq task to run the moodle sync."""
+    logger.info(f"Starting background Moodle sync task via streaq for course_id={course_id}", force_reingest=force_reingest)
     try:
         async with AsyncSessionLocal() as session:
             summary = await sync_moodle_knowledge_base(
@@ -64,22 +99,24 @@ async def sync_moodle_task(ctx: dict, course_id: int | None, target_sections: li
             # Commit any changes made by the sync
             await session.commit()
             
-            logger.info(f"arq Moodle sync completed: {summary}")
+            logger.info(f"streaq Moodle sync completed: {summary}")
             return summary
     except Exception as exc:
-        logger.error(f"arq Moodle sync failed: {exc}")
+        logger.error(f"streaq Moodle sync failed: {exc}")
         raise
 
-async def dummy_task(ctx: dict, name: str) -> str:
+@worker.task
+async def dummy_task(name: str) -> str:
     """A dummy task to verify the worker is running."""
     logger.info(f"Running dummy task for {name}")
     await asyncio.sleep(1)
     return f"Hello, {name}! Task completed."
 
 
-async def sync_portfolio_task(ctx: dict, force_reingest: bool = False) -> dict[str, Any]:
-    """arq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
-    logger.info(f"Starting Askfer portfolio sync via arq", force_reingest=force_reingest)
+@worker.task
+async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
+    """streaq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
+    logger.info("Starting Askfer portfolio sync via streaq", force_reingest=force_reingest)
     try:
         async with AsyncSessionLocal() as session:
             summary = await sync_portfolio_knowledge_base(
@@ -87,14 +124,23 @@ async def sync_portfolio_task(ctx: dict, force_reingest: bool = False) -> dict[s
                 force_reingest=force_reingest,
             )
             await session.commit()
-            logger.info(f"arq portfolio sync completed: {summary}")
+            logger.info(f"streaq portfolio sync completed: {summary}")
             return summary
     except Exception as exc:
-        logger.error(f"arq portfolio sync failed: {exc}")
+        logger.error(f"streaq portfolio sync failed: {exc}")
         raise
 
 async def _profile_watcher_task():
     """Watch `data/personal/profile.md` and auto-refresh on save.
+
+    NOT auto-spawned since v3.1 (see `startup` docstring). Kept here
+    as a manual helper if the operator wants to wire it back: spawn
+    it from a one-off script or re-add the asyncio.create_task call
+    in `startup` after flipping INGEST_AUTO_ENABLED-style env.
+
+    The function body is dead code at runtime (no caller). Keep it
+    as reference for the watchfiles pattern + debounce + filter
+    logic; do NOT call it from production startup.
 
     Spawned once at worker startup. Cancelled at shutdown. Debounced 1s so
     rapid editor saves collapse into a single refresh.
@@ -152,23 +198,26 @@ async def _profile_watcher_task():
 
 
 async def startup(ctx: dict):
-    """Initialize resources for the worker."""
+    """Initialize resources for the worker.
+
+    NOTE on ingestion: as of v3.1 all chunk ingestion is MANUAL only.
+    The previous `_profile_watcher_task` file-watcher (which auto-
+    refreshed Personal_Portfolio when `data/personal/profile.md`
+    changed) has been removed. Ingestion paths now:
+
+      - Moodle KB     → POST /api/v1/admin/moodle-sync    (force_reingest flag)
+      - Askfer port.  → POST /api/v1/askfer/sync           (force_reingest flag)
+      - One-off text  → POST /api/v1/ingest/text
+      - CLI (portfolio) → `uv run python -m app.ingestion.portfolio_sync --force`
+
+    Rationale: auto-ingest on every worker boot (or every profile.md
+    save) caused the 2× duplicate chunks seen in the b14 KB audit
+    (lifespan + cron both fired). With manual-only, the operator
+    decides exactly when a re-ingest runs and the hash-based dedup
+    in `moodle_sync._ingest_markdown` is the only path.
+    """
     setup_logging(debug=settings.app_debug)
     logger.info("Worker starting up...")
-
-    try:
-        setup_phoenix(
-            project_name=settings.phoenix_project_name,
-            otlp_endpoint=settings.phoenix_otlp_endpoint,
-            phoenix_endpoint=settings.phoenix_endpoint,
-        )
-        logger.info(
-            "Worker Phoenix initialized",
-            project=settings.phoenix_project_name,
-            otlp=settings.phoenix_otlp_endpoint,
-        )
-    except Exception as e:
-        logger.warning(f"Worker Phoenix init failed: {e}")
 
     try:
         from app.config.embedding_config import ensure_llamaindex_configured
@@ -177,35 +226,15 @@ async def startup(ctx: dict):
     except Exception as e:
         logger.warning(f"Worker embedding pre-warm failed: {e}")
 
-    # Spawn profile.md auto-refresh watcher (fire-and-forget).
-    ctx["profile_watcher"] = asyncio.create_task(_profile_watcher_task())
-
 
 async def shutdown(ctx: dict):
     """Cleanup resources for the worker."""
     logger.info("Worker shutting down...")
 
-    # Cancel profile watcher first so its async generator unwinds cleanly
-    # before we tear down tracing / event loop.
-    task = ctx.get("profile_watcher")
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning(f"Profile watcher shutdown error: {e}")
-
-    if is_observability_enabled():
-        try:
-            flush_traces()
-        except Exception as e:
-            logger.warning(f"Worker Phoenix flush failed: {e}")
-
-async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[str, Any]:
+@worker.task
+async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     """
-    arq background task: persist a new LTM episode to Qdrant after 10-second AFK.
+    streaq background task: persist a new LTM episode to Qdrant after 10-second AFK.
 
     Flow:
         1. Guard: check Redis dedup key — skip if another task already ran.
@@ -216,15 +245,21 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         6. Clean up Redis keys.
     """
     from app.database.redis_client import get_redis_client
+    from app.agents.conversation_state import (
+        acquire_ltm_lock, release_ltm_lock, get_last_active,
+        clear_conversation, get_courses,
+    )
     import time
 
     redis = get_redis_client()
 
     # ── Guard 1: Deduplication ────────────────────────────────────────────────
-    # Only the FIRST task to acquire this key proceeds; subsequent ones abort.
-    dedup_key = f"rag:ltm:syncing:{conversation_id}"
-    acquired = await redis.set(dedup_key, "1", nx=True, ex=300)   # 5-min TTL — task completes in <30s; shorter TTL means a crashed task unblocks within 5min instead of 1h
-    if not acquired:
+    # Only the FIRST task to acquire this lock proceeds; subsequent ones abort.
+    # The lock lives at `rag:ltm:syncing:{id}` (STRING, kept separate from the
+    # conversation HASH so it can outlive a HASH expiry while a slow worker
+    # is still finishing). 5-min TTL — task completes in <30s; shorter TTL
+    # means a crashed task unblocks within 5min instead of 1h.
+    if not await acquire_ltm_lock(redis, conversation_id):
         logger.info("LTM sync: skipped (another task already running)", conversation_id=conversation_id)
         return {"status": "skipped", "reason": "dedup_lock"}
 
@@ -233,12 +268,12 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     # not really AFK yet — defer the job until the full quiet window has
     # elapsed since their last activity. We schedule the next attempt for
     # exactly the remaining gap so we don't poll multiple times.
-    last_active = await redis.get(f"rag:last_active:{conversation_id}")
-    if last_active:
-        time_since_active = time.time() - float(last_active)
+    last_active = await get_last_active(redis, conversation_id)
+    if last_active is not None:
+        time_since_active = time.time() - last_active
         afk_threshold = settings.ltm_afk_threshold_seconds
         if time_since_active < afk_threshold:
-            await redis.delete(dedup_key)          # release lock so retry can happen
+            await release_ltm_lock(redis, conversation_id)  # release lock so retry can happen
             remaining = max(60, int(afk_threshold - time_since_active))
             logger.info(
                 "LTM sync: user still active, deferring task",
@@ -246,8 +281,7 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
                 seconds_since_active=round(time_since_active),
                 retry_in_s=remaining,
             )
-            from arq import Retry
-            raise Retry(defer=remaining)
+            raise StreaqRetry(delay=remaining)
 
     # ── Step 3: Get session summary ───────────────────────────────────────────
     from app.agents.memory import get_or_summarize_history
@@ -262,8 +296,8 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     )
 
     if not summary and not recent_history:
-        await redis.delete(dedup_key)
-        await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
+        await release_ltm_lock(redis, conversation_id)
+        await clear_conversation(redis, conversation_id)
         return {"status": "skipped", "reason": "no_history"}
 
     # Generate a definitive session summary for LTM and extract preferences via structured output
@@ -380,26 +414,19 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
         logger.warning(f"LTM sync: structured summarization failed, falling back to raw concat: {exc}")
         session_summary = summary if summary else raw_tail[:1000]
 
-    # Course names: read directly from Redis set populated by the chat handler
-    # from `chunk.metadata.course_name` (KB ground truth). NEVER ask the LLM —
-    # it hallucinates names like "Amartha products" that aren't in the KB.
-    courses_key = f"rag:courses:{conversation_id}"
-    course_names: list[str] = []
+    # Course names: read directly from the `courses` field of the conversation
+    # HASH, populated by the chat handler from `chunk.metadata.course_name` (KB
+    # ground truth). NEVER ask the LLM — it hallucinates names like "Amartha
+    # products" that aren't in the KB.
     try:
-        raw = await redis.smembers(courses_key)
-        # Redis returns bytes for set members — decode to str.
-        course_names = sorted({
-            (m.decode() if isinstance(m, (bytes, bytearray)) else str(m)).strip()
-            for m in (raw or [])
-            if m
-        })[:3]
+        course_names = (await get_courses(redis, conversation_id))[:3]
     except Exception as exc:
-        logger.warning(f"LTM sync: failed to read course_names from Redis set: {exc}")
+        logger.warning(f"LTM sync: failed to read course_names from HASH: {exc}")
+        course_names = []
 
     # Save preferences to PostgreSQL if any were detected
     if prefs_data and any(prefs_data.values()):
         try:
-            from app.database.postgres import AsyncSessionLocal
             from app.database.models import UserProfile
             from datetime import datetime, timezone
 
@@ -442,15 +469,18 @@ async def sync_ltm_task(ctx: dict, conversation_id: str, user_id: str) -> dict[s
     )
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    await redis.delete(f"rag:last_active:{conversation_id}")
-    await redis.delete(dedup_key)
-    await redis.delete(f"rag:ltm:scheduled:{conversation_id}")
-    await redis.delete(courses_key)
+    # One DEL on the HASH drops all 5 ephemeral fields (history, summary,
+    # last_active, scheduled, courses) atomically. The owner field is left
+    # intact — it has its own 7d TTL and a real user reclaiming the same
+    # conversation_id should not have their ownership erased by a worker
+    # that just synced their LTM.
+    await clear_conversation(redis, conversation_id)
+    await release_ltm_lock(redis, conversation_id)
 
     logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
     return {"status": "synced"}
 
-async def prune_ltm_cron_task(ctx: dict) -> dict[str, Any]:
+async def prune_ltm_cron_task() -> dict[str, Any]:
     """Cron task: run daily to prune LTM vectors older than 60 days across all users."""
     logger.info("Starting global LTM pruning cron job")
     try:
@@ -461,24 +491,42 @@ async def prune_ltm_cron_task(ctx: dict) -> dict[str, Any]:
         logger.error(f"Global LTM pruning failed: {exc}")
         raise
 
-class WorkerSettings:
-    """arq worker configuration."""
-    redis_settings = RedisSettings(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        database=settings.redis_db,
-        password=settings.redis_password if settings.redis_password else None,
-    )
-    functions = [sync_moodle_task, dummy_task, sync_ltm_task, sync_portfolio_task, eval_turn_task, ingest_text_task, prune_ltm_cron_task]
-    cron_jobs = [
-        # Run daily at 2:00 AM UTC
-        cron(prune_ltm_cron_task, hour=2, minute=0)
-    ]
-    on_startup = startup
-    on_shutdown = shutdown
-    # Default 2 in-flight jobs: the worker container ships with 1 vCPU / 1 GB
-    # and each ingest job embeds + upserts in series. 1 was undersized (a single
-    # Moodle course of 100+ chunks backed up the queue), and going higher than
-    # 2 risks OOM under concurrent Qdrant/Postgres roundtrips.
-    max_jobs = 2
-    job_timeout = 600
+
+async def prune_agent_logs_cron_task() -> dict[str, Any]:
+    """Cron task: daily sweep that deletes agent_logs rows older than 30 days.
+
+    Prevents unbounded growth — at 600 DAU × 8 q/day × ~5KB JSONB rows = ~24MB/day,
+    which would OOM the 768MB Postgres cgroup in 60-90 days. Retention is set to
+    30 days (1.5x the longest eval feedback cycle) which keeps the Streamlit
+    admin dashboard's "last 100" view (admin.py:21) comfortable while bounding RAM.
+    """
+    logger.info("Starting agent_logs retention sweep")
+    try:
+        deleted = await prune_agent_logs(retention_days=30)
+        return {"status": "pruned", "deleted_rows": deleted}
+    except Exception as exc:
+        logger.error(f"agent_logs retention sweep failed: {exc}")
+        raise
+
+
+# ── Cron registration ───────────────────────────────────────────────────────
+# arq used cron(fn, hour=2, minute=0). streaq's cron takes a crontab string
+# and decorates a no-arg async function. Both daily jobs share the 2 AM slot
+# to avoid two separate cold-starts. agent_logs hits Postgres; LTM hits
+# Qdrant; both are idempotent and small enough to run sequentially.
+# timeout=600 preserves arq's global job_timeout=600.
+@worker.cron("0 2 * * *", timeout=600)
+async def _run_ltm_prune():
+    await prune_ltm_cron_task()
+
+
+@worker.cron("30 2 * * *", timeout=600)
+async def _run_agent_logs_prune():
+    await prune_agent_logs_cron_task()
+
+
+# ── Task registration for the eval task (defined in app/eval/tasks.py) ─────
+# worker.task(fn) returns an AsyncRegisteredTask that is both callable
+# (runs the function directly) and exposes .enqueue() for the queueing
+# path. chat.py uses the .enqueue() form.
+eval_turn_task = worker.task(_eval_turn_task_fn)

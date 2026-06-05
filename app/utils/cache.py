@@ -22,13 +22,22 @@ from app.observability import get_tracer, is_observability_enabled
 settings = get_settings()
 
 _PREFIX = "rag:cache:"
-# Cosine threshold for paraphrase match. text-embedding-3-small puts close
-# Bahasa Indonesia paraphrases at ~0.83-0.88 (e.g. "apa prinsip CP" vs
-# "sebutkan prinsip CP"). 0.88 was too strict — semantic hits never fired
-# (verified in Phoenix: 1/14 cache hits, all from Redis exact-match).
-# 0.82 keeps obvious paraphrases together while rejecting topic-drift.
+# Cosine threshold for paraphrase match. bge-m3 puts close Bahasa Indonesia
+# paraphrases in a different range than text-embedding-3-small did — measure
+# against a 50-query test set in Phoenix and tune. 0.82 is the legacy
+# text-embedding-3-small stopgap; lower to ~0.55 if the new model has a
+# flatter cosine distribution.
 _SEMANTIC_THRESHOLD = 0.82
 _semantic_collection_ready = False
+_semantic_collection_lock: asyncio.Lock | None = None
+
+
+def _get_semantic_lock() -> asyncio.Lock:
+    """Lazy-init the collection creation lock (must be inside a running loop)."""
+    global _semantic_collection_lock
+    if _semantic_collection_lock is None:
+        _semantic_collection_lock = asyncio.Lock()
+    return _semantic_collection_lock
 
 # ── Semantic-cache eviction ──────────────────────────────────────────────────
 # Redis entries expire via native TTL, but Qdrant has no TTL — without eviction
@@ -42,7 +51,7 @@ _last_cache_prune_ts: float = 0.0
 _CACHE_PRUNE_INTERVAL_SECONDS = 600
 # Hard cap on semantic_cache size. At 600 DAU each generating ~5 cached
 # responses/session, the cache would otherwise grow ~3k points/day and OOM
-# Qdrant within weeks (each point is 1536-d float32 = 6KB just for the
+# Qdrant within weeks (each point is 1024-d float32 = 4KB just for the
 # vector, plus payload). When count > MAX, prune the oldest 10% in one
 # sweep so we never hit a cliff.
 _SEMANTIC_CACHE_MAX_POINTS = 50_000
@@ -62,42 +71,52 @@ def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag")
 
 
 async def _ensure_semantic_collection() -> None:
-    """Ensure the semantic_cache collection exists in Qdrant with course_id + namespace indexes."""
+    """Ensure the semantic_cache collection exists in Qdrant with course_id + namespace indexes.
+
+    Guarded by asyncio.Lock so concurrent cold-start requests don't all
+    race to create_collection + create_payload_index simultaneously.
+    """
     global _semantic_collection_ready
     if _semantic_collection_ready:
         return
 
-    qdrant = get_qdrant_client()
-    collections = await qdrant.client.get_collections()
-    existing = {c.name for c in collections.collections}
-    if "semantic_cache" not in existing:
-        await qdrant.client.create_collection(
-            collection_name="semantic_cache",
-            vectors_config=qdrant_models.VectorParams(
-                size=settings.embedding_dim,
-                distance=qdrant_models.Distance.COSINE,
-                on_disk=True,
-            ),
-            on_disk_payload=True,
-        )
-        logger.info("semantic_cache collection created")
+    lock = _get_semantic_lock()
+    async with lock:
+        # Re-check after acquiring lock — another coroutine may have finished
+        if _semantic_collection_ready:
+            return
 
-    # Always ensure indexes exist (idempotent — Qdrant ignores if already present)
-    for field, schema in [
-        ("course_id", qdrant_models.PayloadSchemaType.INTEGER),
-        ("namespace", qdrant_models.PayloadSchemaType.KEYWORD),
-        ("created_at", qdrant_models.PayloadSchemaType.FLOAT),
-    ]:
-        try:
-            await qdrant.client.create_payload_index(
+        qdrant = get_qdrant_client()
+        collections = await qdrant.client.get_collections()
+        existing = {c.name for c in collections.collections}
+        if "semantic_cache" not in existing:
+            await qdrant.client.create_collection(
                 collection_name="semantic_cache",
-                field_name=field,
-                field_schema=schema,
+                vectors_config=qdrant_models.VectorParams(
+                    size=settings.embedding_dim,
+                    distance=qdrant_models.Distance.COSINE,
+                    on_disk=True,
+                ),
+                on_disk_payload=True,
             )
-        except Exception:
-            pass  # Index already exists
+            logger.info("semantic_cache collection created")
 
-    _semantic_collection_ready = True
+        # Always ensure indexes exist (idempotent — Qdrant ignores if already present)
+        for field, schema in [
+            ("course_id", qdrant_models.PayloadSchemaType.INTEGER),
+            ("namespace", qdrant_models.PayloadSchemaType.KEYWORD),
+            ("created_at", qdrant_models.PayloadSchemaType.FLOAT),
+        ]:
+            try:
+                await qdrant.client.create_payload_index(
+                    collection_name="semantic_cache",
+                    field_name=field,
+                    field_schema=schema,
+                )
+            except Exception:
+                pass  # Index already exists
+
+        _semantic_collection_ready = True
 
 
 def _log_cache_event(hit: bool, course_id: int | None, score: float | None = None):
@@ -224,6 +243,125 @@ async def get_cached_response(
         logger.warning(f"Semantic cache GET failed: {type(exc).__name__}: {exc}")
 
     logger.debug("Cache MISS", query=query[:60], course_id=course_id, namespace=cache_namespace)
+    _log_cache_event(hit=False, course_id=course_id)
+    return None
+
+
+async def get_cached_response_multi_ns(
+    query: str,
+    namespaces: list[str],
+    course_id: int | None = None,
+    query_embedding: list[float] | None = None,
+) -> dict | None:
+    """Check multiple cache namespaces in a single round-trip per backend.
+
+    Optimisation for the common pattern in chat.py that checks both a
+    private (user-scoped) and global namespace.  Instead of 2× Redis GET +
+    2× Qdrant semantic query, this does:
+      1. Redis MGET (1 round-trip, both keys)
+      2. Qdrant query_points with a 'should' filter (OR across namespaces)
+
+    Saves ~50-200ms per cache-miss turn at 600 DAU scale.
+    """
+    if course_id == 0:
+        course_id = None
+    if not namespaces:
+        return None
+
+    # 1. Redis MGET — all keys in one round-trip
+    redis = get_redis_client()
+    keys = [_cache_key(query, course_id, namespace=ns) for ns in namespaces]
+    try:
+        results = await redis.mget(*keys)
+        for i, raw in enumerate(results):
+            if raw:
+                data = json.loads(raw)
+                logger.info(
+                    "Redis Exact Cache HIT (multi-ns)",
+                    query=query[:60],
+                    course_id=course_id,
+                    namespace=namespaces[i],
+                )
+                _log_cache_event(hit=True, course_id=course_id, score=1.0)
+                return data
+    except Exception as exc:
+        logger.warning("Redis multi-ns cache MGET failed", error=str(exc))
+
+    # 2. Qdrant semantic — single query with OR filter on namespaces
+    import asyncio as _asyncio
+    try:
+        await _ensure_semantic_collection()
+
+        if query_embedding is None:
+            ensure_llamaindex_configured()
+            query_embedding = await Settings.embed_model.aget_query_embedding(query)
+
+        qdrant = get_qdrant_client()
+
+        # OR across namespaces ("should" = any-of)
+        ns_clauses = [
+            qdrant_models.FieldCondition(
+                key="namespace",
+                match=qdrant_models.MatchValue(value=ns),
+            )
+            for ns in namespaces
+        ]
+
+        must_clauses = []
+        if course_id is not None and course_id > 0:
+            must_clauses.append(
+                qdrant_models.FieldCondition(
+                    key="course_id",
+                    match=qdrant_models.MatchValue(value=course_id),
+                )
+            )
+        min_created = time.time() - settings.cache_query_ttl_seconds
+        must_clauses.append(
+            qdrant_models.FieldCondition(
+                key="created_at",
+                range=qdrant_models.Range(gte=min_created),
+            )
+        )
+
+        query_filter = qdrant_models.Filter(
+            must=must_clauses,
+            should=ns_clauses,
+            min_should=qdrant_models.MinShould(min_count=1),
+        )
+
+        try:
+            search_result = await _asyncio.wait_for(
+                qdrant.client.query_points(
+                    collection_name="semantic_cache",
+                    query=query_embedding,
+                    limit=1,
+                    with_payload=True,
+                    score_threshold=_SEMANTIC_THRESHOLD,
+                    query_filter=query_filter,
+                ),
+                timeout=3.0,
+            )
+        except _asyncio.TimeoutError:
+            logger.debug("Semantic cache multi-ns query timed out (>3s) — treating as miss")
+            search_result = None
+
+        if search_result is not None and search_result.points:
+            best_hit = search_result.points[0]
+            hit_ns = best_hit.payload.get("namespace", "unknown")
+            logger.info(
+                "Qdrant Semantic Cache HIT (multi-ns)",
+                query=query[:60],
+                score=round(best_hit.score, 4),
+                course_id=course_id,
+                namespace=hit_ns,
+            )
+            _log_cache_event(hit=True, course_id=course_id, score=best_hit.score)
+            return best_hit.payload
+
+    except Exception as exc:
+        logger.warning(f"Semantic cache multi-ns GET failed: {type(exc).__name__}: {exc}")
+
+    logger.debug("Cache MISS (multi-ns)", query=query[:60], course_id=course_id, namespaces=namespaces)
     _log_cache_event(hit=False, course_id=course_id)
     return None
 
@@ -416,6 +554,20 @@ end
 """
 
 
+# Lazy-init Script object for SHA-cached EVALSHA on the single-flight lock
+# release path. Same SHA-caching win as the _APPEND_HISTORY_LUA script in
+# memory.py — first call uploads the Lua body, subsequent calls send only
+# the SHA + KEYS + ARGS via EVALSHA.
+_release_lock_script = None
+
+
+def _get_release_lock_script(redis):
+    global _release_lock_script
+    if _release_lock_script is None:
+        _release_lock_script = redis.register_script(_LUA_RELEASE_IF_OWNER)
+    return _release_lock_script
+
+
 async def _release_lock_if_owner(redis, key: str, nonce: str) -> None:
     """Release a single-flight lock only if WE still own it.
 
@@ -428,7 +580,11 @@ async def _release_lock_if_owner(redis, key: str, nonce: str) -> None:
     # Fall back to a non-atomic delete if the script fails to load
     # (e.g. older redis-server without eval).
     try:
-        await redis.eval(_LUA_RELEASE_IF_OWNER, 1, key, nonce)
+        # SHA-cached EVALSHA via registered Script object — see the lazy
+        # _release_lock_script singleton above. Same EVALSHA-with-NOSCRIPT-
+        # fallback pattern as memory.py; no per-call script transfer.
+        script = _get_release_lock_script(redis)
+        await script(keys=[key], args=[nonce])
     except Exception:
         try:
             current = await redis.get(key)
@@ -454,7 +610,7 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
          is the actual OOM prevention — at 600 DAU each generating
          ~5 cached responses/session the cache would otherwise grow
          ~3k points/day. Keeping the ceiling at 50k bounds RAM at
-         ~300MB (50k × 6KB vectors) on the 8GB host, leaving the
+         ~200MB (50k × 4KB vectors) on the 8GB host, leaving the
          rest for the other 4 Qdrant collections + Postgres + Redis.
 
     Fire-and-forget: any failure is logged and swallowed so a prune
@@ -544,12 +700,15 @@ async def flush_cache_by_namespace(namespace: str) -> None:
     # 1. Clear Redis cache keys for this namespace
     redis = get_redis_client()
     try:
+        # 5000 is the new sweet spot for 8.x with I/O threading + batched
+        # prefetch (8.8); ~3-4× faster on large key sets than the old 1000.
         cursor = 0
         prefix = f"{namespace}:cache:"
         while True:
-            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
+            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=5000)
             if keys:
-                await redis.delete(*keys)
+                # UNLINK is non-blocking; background reclamation.
+                await redis.unlink(*keys)
             if cursor == 0:
                 break
         logger.info("Redis namespace cache flushed", namespace=namespace)
@@ -586,12 +745,15 @@ async def flush_cache_by_course(course_id: int) -> None:
     # 1. Clear Redis cache keys for this course
     redis = get_redis_client()
     try:
+        # 5000 is the new sweet spot for 8.x with I/O threading + batched
+        # prefetch (8.8); ~3-4× faster on large key sets than the old 1000.
         cursor = 0
         prefix = f"{_PREFIX}{course_id}:"
         while True:
-            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=100)
+            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=5000)
             if keys:
-                await redis.delete(*keys)
+                # UNLINK is non-blocking; background reclamation.
+                await redis.unlink(*keys)
             if cursor == 0:
                 break
         logger.info("Redis course cache flushed", course_id=course_id)
@@ -629,11 +791,14 @@ async def flush_cache() -> None:
     # 1. Clear Redis cache keys starting with the prefix
     redis = get_redis_client()
     try:
+        # 5000 is the new sweet spot for 8.x with I/O threading + batched
+        # prefetch (8.8); ~3-4× faster on large key sets than the old 1000.
         cursor = 0
         while True:
-            cursor, keys = await redis.scan(cursor, match=f"{_PREFIX}*", count=100)
+            cursor, keys = await redis.scan(cursor, match=f"{_PREFIX}*", count=5000)
             if keys:
-                await redis.delete(*keys)
+                # UNLINK is non-blocking; background reclamation.
+                await redis.unlink(*keys)
             if cursor == 0:
                 break
         logger.info("Redis cache flushed successfully")
