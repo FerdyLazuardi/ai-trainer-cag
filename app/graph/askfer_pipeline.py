@@ -33,6 +33,32 @@ from app.llm.client import get_llm, get_preprocessor_llm
 _settings = get_settings()
 
 
+@lru_cache(maxsize=1)
+def _load_profile_block() -> str:
+    """Read data/personal/profile.md ONCE per process and cache the result.
+
+    profile.md is a small static single-source-of-truth file. The previous
+    inline `open()` inside the async greeting handler did blocking file I/O on
+    the event loop on EVERY greeting. Caching at module level means the read
+    happens at most once per worker process; every subsequent greeting is a
+    pure in-memory return — no blocking, no redundant syscalls. Returns the
+    pre-wrapped `<profile>...</profile>` block (or "" if missing/empty/unreadable).
+    """
+    import os
+
+    profile_path = "data/personal/profile.md"
+    if not os.path.exists(profile_path):
+        return ""
+    try:
+        with open(profile_path, "r", encoding="utf-8") as f:
+            profile_text = f.read().strip()
+        if profile_text:
+            return f"\n\n<profile>\n{profile_text}\n</profile>"
+    except Exception as exc:
+        logger.warning(f"Greeting: failed to load profile.md: {exc}")
+    return ""
+
+
 def _detect_user_language(text: str) -> str:
     """Cheap heuristic language detector for the user's last message.
 
@@ -131,18 +157,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     retrieved <retrieved_context>, so any specific claim would be a
     hallucination. Stay generic and pivot to inviting the user to ask.
     """
-    import os
-
-    profile_block = ""
-    profile_path = "data/personal/profile.md"
-    if os.path.exists(profile_path):
-        try:
-            with open(profile_path, "r", encoding="utf-8") as f:
-                profile_text = f.read().strip()
-            if profile_text:
-                profile_block = f"\n\n<profile>\n{profile_text}\n</profile>"
-        except Exception as exc:
-            logger.warning(f"Greeting: failed to load profile.md: {exc}")
+    profile_block = _load_profile_block()
 
     llm = get_llm()
     sys = (

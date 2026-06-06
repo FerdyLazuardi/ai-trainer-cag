@@ -5,7 +5,7 @@ Initializes all DB connections on startup and tears them down on shutdown.
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,101 +14,123 @@ from loguru import logger
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
 from app.api.routes import chat, ingest, askfer
-from app.api.auth import get_current_user
+from app.worker import worker  # shared streaq Worker instance for status_by_id from API
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan: boot → yield → shutdown."""
+    """Application lifespan: boot → yield → shutdown.
+
+    Opens the streaq Worker async-context for the entire app lifetime so that
+    API handlers can call `worker.status_by_id()` / `worker.result_by_id()`
+    against the shared Redis pool without raising `StreaqError: Worker not
+    initialized` on every request. The custom `_worker_lifespan` in
+    `app/worker.py` only does `setup_logging` + `ensure_llamaindex_configured`
+    on startup, both safe to run in the API process.
+    """
     setup_logging(debug=settings.app_debug)
 
-    from app.database.postgres import init_db
-    from app.database.redis_client import get_redis_client
-    from app.database.qdrant_client import get_qdrant_client
-    from app.utils.logger_batch import batch_logger
+    async with worker:
+        from app.database.postgres import init_db
+        from app.database.redis_client import get_redis_client
+        from app.database.qdrant_client import get_qdrant_client
+        from app.utils.logger_batch import batch_logger
 
-    logger.info("Starting application", env=settings.app_env)
+        logger.info("Starting application", env=settings.app_env)
 
-    # Production-only guard: refuse to boot if the JWT secret looks like a
-    # dev placeholder. Catches the "forgot to set env in prod" failure mode
-    # where the entire /api/v1/chat* surface becomes forgeable.
-    if settings.app_env == "production" and "dev" in settings.jwt_secret.lower():
-        raise RuntimeError(
-            "JWT_SECRET contains 'dev' — refusing to start. Set a real secret in production."
-        )
-    # Production-only guard: refuse to boot if the dev-bypass flag is
-    # enabled in prod. DEV_BYPASS_ENABLED off-by-default in settings
-    # closes the "APP_ENV=development in a prod .env" mis-config class
-    # where the auth dep at app/api/auth.py:40 returns a synthetic
-    # user with no token. Setting the flag in a prod .env would be
-    # an explicit (loud, fatal) operator action — this check makes
-    # that loud and fatal at boot, not silent at request time.
-    if settings.app_env == "production" and settings.dev_bypass_enabled:
-        raise RuntimeError(
-            "DEV_BYPASS_ENABLED=true under APP_ENV=production — refusing to start. "
-            "This would silently disable JWT auth across the entire app. "
-            "Unset DEV_BYPASS_ENABLED (or set APP_ENV to a non-production value) and restart."
-        )
+        # Production-only guard: refuse to boot if the JWT secret looks like a
+        # dev placeholder. Catches the "forgot to set env in prod" failure mode
+        # where the entire /api/v1/chat* surface becomes forgeable.
+        if settings.app_env == "production" and "dev" in settings.jwt_secret.lower():
+            raise RuntimeError(
+                "JWT_SECRET contains 'dev' — refusing to start. Set a real secret in production."
+            )
+        # Production-only guard: refuse to boot if the dev-bypass flag is
+        # enabled in prod. DEV_BYPASS_ENABLED off-by-default in settings
+        # closes the "APP_ENV=development in a prod .env" mis-config class
+        # where the auth dep at app/api/auth.py:40 returns a synthetic
+        # user with no token. Setting the flag in a prod .env would be
+        # an explicit (loud, fatal) operator action — this check makes
+        # that loud and fatal at boot, not silent at request time.
+        if settings.app_env == "production" and settings.dev_bypass_enabled:
+            raise RuntimeError(
+                "DEV_BYPASS_ENABLED=true under APP_ENV=production — refusing to start. "
+                "This would silently disable JWT auth across the entire app. "
+                "Unset DEV_BYPASS_ENABLED (or set APP_ENV to a non-production value) and restart."
+            )
 
-    # Start BatchLogger background task
-    await batch_logger.start()
+        # Start BatchLogger background task
+        await batch_logger.start()
 
-    # Initialize PostgreSQL tables
-    await init_db()
-    logger.info("PostgreSQL initialized")
+        # Initialize PostgreSQL tables
+        await init_db()
+        logger.info("PostgreSQL initialized")
 
-    # Initialize Redis connection
-    redis = get_redis_client()
-    await redis.ping()
-    logger.info("Redis connection established")
+        # Initialize Redis connection
+        redis = get_redis_client()
+        await redis.ping()
+        logger.info("Redis connection established")
 
-    import asyncio
-    # Wait for Qdrant to be ready (docker race condition fix)
-    qdrant = get_qdrant_client()
-    qdrant_ready = False
-    for _ in range(15):
-        try:
-            await qdrant.ensure_collection()
-            qdrant_ready = True
-            break
-        except Exception as e:
-            logger.warning(f"Waiting for Qdrant... ({e})")
-            await asyncio.sleep(2)
-            
-    if not qdrant_ready:
-        logger.error("Failed to connect to Qdrant after 30 seconds.")
-        raise RuntimeError("Qdrant connection failed.")
-        
-    logger.info("Qdrant collection ready", collection=settings.qdrant_collection)
+        import asyncio
+        # Wait for Qdrant to be ready (docker race condition fix)
+        qdrant = get_qdrant_client()
+        qdrant_ready = False
+        for _ in range(15):
+            try:
+                await qdrant.ensure_collection()
+                qdrant_ready = True
+                break
+            except Exception as e:
+                logger.warning(f"Waiting for Qdrant... ({e})")
+                await asyncio.sleep(2)
 
-    # Initialize Knowledge_Base collection for Moodle ingestion
-    await qdrant.ensure_kb_collection()
-    logger.info("Qdrant Knowledge_Base collection ready", collection=settings.qdrant_kb_collection)
+        if not qdrant_ready:
+            logger.error("Failed to connect to Qdrant after 30 seconds.")
+            raise RuntimeError("Qdrant connection failed.")
 
-    # Initialize Long-Term Memory (LTM) collection in Qdrant
-    await qdrant.ensure_ltm_collection()
-    logger.info("Qdrant LTM collection ready (user_ltm_memories)")
+        logger.info("Qdrant collection ready", collection=settings.qdrant_collection)
 
-    # Initialize Personal_Portfolio collection (Askfer)
-    await qdrant.ensure_personal_collection()
-    logger.info("Qdrant Personal_Portfolio collection ready", collection=settings.qdrant_personal_collection)
+        # Initialize Knowledge_Base collection for Moodle ingestion
+        await qdrant.ensure_kb_collection()
+        logger.info("Qdrant Knowledge_Base collection ready", collection=settings.qdrant_kb_collection)
 
-    # Pre-warm semantic cache collection so first request doesn't pay the
-    # _ensure_semantic_collection() overhead (~10s) on cold start.
-    from app.utils.cache import _ensure_semantic_collection
-    await _ensure_semantic_collection()
-    logger.info("Semantic cache collection ready")
+        # Initialize Long-Term Memory (LTM) collection in Qdrant
+        await qdrant.ensure_ltm_collection()
+        logger.info("Qdrant LTM collection ready (user_ltm_memories)")
 
-    yield
+        # Initialize Personal_Portfolio collection (Askfer)
+        await qdrant.ensure_personal_collection()
+        logger.info("Qdrant Personal_Portfolio collection ready", collection=settings.qdrant_personal_collection)
 
-    # Shutdown
-    logger.info("Shutting down application")
-    from app.utils.logger_batch import batch_logger
-    await batch_logger.stop()
+        # Pre-warm semantic cache collection so first request doesn't pay the
+        # _ensure_semantic_collection() overhead (~10s) on cold start.
+        from app.utils.cache import _ensure_semantic_collection
+        await _ensure_semantic_collection()
+        logger.info("Semantic cache collection ready")
 
-    await redis.aclose()
+        # Pre-warm the embedding model config in the API process too.
+        # NOTE: entering `async with worker:` above runs Worker.__aenter__,
+        # which opens the coredis connection but does NOT run the worker's
+        # `_worker_lifespan` — that only fires in streaq's run_async() consume
+        # path (streaq/worker.py:597 enters `self.lifespan` separately). So the
+        # API process never pre-warmed embeddings; the first chat request paid
+        # the one-time LlamaIndex Settings.embed_model init inside
+        # _prepare_rag_context. Do it here at boot. Idempotent (module-level
+        # _initialized flag), so the lazy call at chat.py becomes a no-op.
+        from app.config.embedding_config import ensure_llamaindex_configured
+        ensure_llamaindex_configured()
+        logger.info("Embedding model config pre-warmed (API process)")
+
+        yield
+
+        # Shutdown
+        logger.info("Shutting down application")
+        from app.utils.logger_batch import batch_logger
+        await batch_logger.stop()
+
+        await redis.aclose()
 
 
 def create_app() -> FastAPI:

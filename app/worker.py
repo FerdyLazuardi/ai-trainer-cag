@@ -1,5 +1,7 @@
 import asyncio
+import zoneinfo
 from contextlib import asynccontextmanager
+from datetime import timedelta, timezone
 from typing import Any
 
 from loguru import logger
@@ -19,6 +21,22 @@ settings = get_settings()
 # arq → streaq migration (Jun 2026): streaq uses coredis (separate from
 # redis-py used by the app's 50+ direct Redis call sites), so this
 # doesn't constrain our redis-py 8 upgrade path.
+#
+# Cron timezone: streaq 7.0.0's `Worker.cron()` does NOT accept a `tz`
+# argument — timezone is set ONCE on the Worker constructor and applied
+# to every cron schedule (`CronTab(tab).next(now=datetime.now(self.tz))`,
+# streaq/worker.py:1395). Setting `tz=JakartaTz` keeps `0 2 * * *` running
+# at 02:00 WIB local instead of 09:00 WIB (UTC).
+#
+# ZoneInfo first (uses system tzdata on Linux / `tzdata` PyPI pkg on
+# Windows); fall back to a fixed UTC+7 offset if neither is available.
+# Indonesia does not observe DST, so UTC+7 is constant year-round —
+# the fixed offset is functionally identical to Asia/Jakarta for cron
+# scheduling purposes.
+try:
+    JakartaTz: Any = zoneinfo.ZoneInfo("Asia/Jakarta")
+except Exception:
+    JakartaTz = timezone(timedelta(hours=7), name="WIB")
 
 
 @asynccontextmanager
@@ -42,6 +60,16 @@ worker = Worker(
     redis_url=settings.redis_url,
     concurrency=2,  # was arq's max_jobs=2
     lifespan=_worker_lifespan,
+    tz=JakartaTz,  # cron schedules evaluate in WIB (UTC+7); see comment above
+    # HMAC-sign the pickled task payloads. streaq's default serializer is
+    # pickle (streaq/worker.py:1847-1851 signs the serialized bytes when a
+    # secret is set). Without signing, anyone who can write to the Redis task
+    # stream could smuggle a crafted pickle → RCE inside the worker on
+    # deserialize. The API (enqueue side) and worker (consume side) both import
+    # THIS `worker` object, so the secret is symmetric automatically. Empty
+    # string (unset env) → None → signing disabled for local dev; set
+    # STREAQ_SIGNING_SECRET in staging/prod.
+    signing_secret=settings.streaq_signing_secret or None,
 )
 
 
@@ -228,7 +256,16 @@ async def shutdown(ctx: dict):
     """Cleanup resources for the worker."""
     logger.info("Worker shutting down...")
 
-@worker.task
+# max_tries=None is DELIBERATE, not an oversight. streaq increments the try
+# counter at the start of every run (worker.py run_task: INCR retry_key) and
+# StreaqRetry re-enqueues the SAME task_id — so each Guard-2 AFK deferral below
+# burns one try. Real failures raise plain exceptions which streaq marks done
+# (no retry), so max_tries here would ONLY cap the intentional deferral loop.
+# A chatty user can defer many times across the 10h AFK window; a finite cap
+# would permanently drop their LTM episode. The loop is self-bounding: once the
+# user is truly idle, last_active stops refreshing, Guard-2 stops deferring, and
+# the task proceeds. timeout=180 still bounds a genuinely hung run (LLM/Qdrant).
+@worker.task(max_tries=None, timeout=180)
 async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     """
     streaq background task: persist a new LTM episode to Qdrant after 10-second AFK.
@@ -281,13 +318,14 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
             raise StreaqRetry(delay=remaining)
 
     # ── Step 3: Get session summary ───────────────────────────────────────────
-    from app.agents.memory import get_or_summarize_history
+    from app.agents.conversation_state import get_or_summarize_history
     from app.llm.client import get_cheap_llm
     from app.agents.long_term_memory_qdrant import qdrant_ltm
 
     cheap_llm = get_cheap_llm()
     summary, recent_history = await get_or_summarize_history(
-        conversation_id=conversation_id,
+        redis,
+        conversation_id,
         llm=cheap_llm,
         max_fresh_turns=10,
     )
@@ -495,11 +533,13 @@ async def prune_ltm_cron_task() -> dict[str, Any]:
 # to avoid two separate cold-starts. agent_logs hits Postgres; LTM hits
 # Qdrant; both are idempotent and small enough to run sequentially.
 # timeout=600 preserves arq's global job_timeout=600.
-# tz="Asia/Jakarta" (WIB, UTC+7) keeps the crons at 02:00 / 02:30 LOCAL
-# (was previously the streaq default of UTC = 09:00 / 09:30 local — peak
-# traffic on the same concurrency=2 budget that user-facing
-# ingest_text_task and admin sync_*_task jobs share). streaq uses
-# zoneinfo; "Asia/Jakarta" is a built-in zone.
+#
+# Schedule "0 2 * * *" runs at 02:00 WIB local — outside peak traffic
+# (00:00-22:00 WIB, ~5 req/s × ~3s/turn = 15 in-flight on the same
+# concurrency=2 worker budget that user-facing ingest_text_task and
+# admin sync_*_task jobs share). Timezone comes from the Worker's
+# `tz=ZoneInfo("Asia/Jakarta")` constructor arg above (streaq 7.0.0
+# does not accept tz on the cron decorator itself).
 @worker.cron("0 2 * * *", timeout=600)
 async def _run_ltm_prune():
     await prune_ltm_cron_task()
@@ -509,4 +549,9 @@ async def _run_ltm_prune():
 # worker.task(fn) returns an AsyncRegisteredTask that is both callable
 # (runs the function directly) and exposes .enqueue() for the queueing
 # path. chat.py uses the .enqueue() form.
-eval_turn_task = worker.task(_eval_turn_task_fn)
+# eval_turn_task is a fire-and-forget LLM-as-judge faithfulness scorer. It
+# never raises StreaqRetry, so max_tries only caps genuine retries (which don't
+# occur — plain exceptions are marked done by streaq). timeout=120 is the
+# meaningful guard: it bounds a hung LLM judge call so a stuck eval can't pin
+# one of the worker's 2 concurrency slots indefinitely.
+eval_turn_task = worker.task(_eval_turn_task_fn, max_tries=2, timeout=120)

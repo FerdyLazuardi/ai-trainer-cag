@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.config.settings import get_settings
 from app.graph.state import RAGState
-from app.llm.client import get_llm, get_preprocessor_llm, get_generate_llm
+from app.llm.client import get_preprocessor_llm, get_generate_llm
 from app.llm.prompts import PERSONA, OUTPUT_CONTRACT
 from app.utils.token_counter import truncate_to_tokens
 
@@ -177,9 +177,13 @@ SCORING (0.0–1.0, independent):
 - needs_empathy: 1.0=explicit emotion OR safety≥0.7. 0.5=subtle OR 3rd-party. 0.0=neutral. Role/tenure disclosure = neutral.
 - needs_safety_escalation: 0.7-1.0=user reports being personally harmed/threatened/harassed NOW (any language, any formality, even when also asking a procedural question). 0.5=3rd-party OR past OR subtle phrasing. ≤0.3=procedural/general question ("how do I report X"). When in doubt, lean HIGHER safety.
 - learning_context: 0.0-1.0, INDEPENDENT of the 4 axes above. Measures whether the user wants SCAFFOLDED INSTRUCTION (numbered step-by-step) rather than a flat explanation.
-  * 0.9-1.0 = explicit "ajarin aku" / "tolong ajari" / "step by step" / "masih bingung" / "ga ngerti" / "gimana cara" — user is asking to BE TAUGHT, not just informed.
-  * 0.5-0.7 = ambiguous with a hint of teach-me framing ("jelasin dong", "bantu aku paham", "apa bedanya X vs Y").
-  * 0.0-0.3 = pure info lookup ("apa itu X", "info tenor", "gimana cara lapor") where the user wants the FACT, not a teaching sequence.
+  * 0.8-1.0 = EXPLICIT teach-me verb, no ambiguity: "ajarin aku" / "tolong ajari" / "step by step" / "masih ga/ndak/belum ngerti" / "masih belum paham" / "masih bingung" + concept (not "bingung soal pilihan"). Target 0.85-0.95. User explicitly says they don't understand — they want to BE TAUGHT.
+  * 0.6-0.9 = STRONG teach-me + AMBIGUOUS/STRATEGY object OR "gimana cara" + CONCRETE MULTI-STEP PROCEDURE: "ajarin aku cara handle Mitra yang marah" (strategy object pulls down from 0.9 to ~0.75), "gimana cara naikin grade Mitra" (concrete procedure but no explicit teach-me verb), "ajarin aku paham complaint resolution". Target 0.7-0.85.
+  * 0.4-0.7 = MILD explain framing, NOT a step request: "bedanya X vs Y" / "apa bedanya X sama Y" / "kenapa X itu penting" / "gimana X bekerja" / "gimana X prosesnya" (process explanation, not step request). Target 0.5-0.65.
+  * 0.3-0.6 = soft explain: "jelasin dong konsep X" / "bantu aku paham X". Target 0.4-0.55.
+  * 0.0-0.3 = pure FACT lookup: "apa itu X" (definition) / "info X" / "X itu apa" / "gimana cara [lapor/report/proc dengan output CHANNEL]" — when the user wants the FACT (the contact channel, the policy as a fact) rather than a step sequence. Examples: "lapor pelecehan gimana?" (wants contact channel, not teaching), "info tenor AmarthaFin" (wants the number). Target 0.0-0.2.
+  * 0.0-0.2 = BRAINSTORM / vent / brainstorm request. "bantuin brainstorm strategi Q3" / "aku lagi suntuk" / "menurut kamu gimana".
+  * SUBJECTIVE FRAMING OVERRIDE: when the user asks for YOUR OPINION — "menurut kamu/lo/lu" / "kira-kira" / "apa yang terbaik" / "menurutmu" / "gimana menurut lo" / "lebih baik A atau B" / "gimana cara terbaik" — lc ≤ 0.4 regardless of any "ajarin" / "gimana cara" mid-sentence. The user wants a recommendation, not a teaching sequence. Example: "menurut kamu, gimana cara terbaik handle X?" = BRAINSTORM, lc=0.1, NOT a high-lc procedural.
   * Independent of intent: a BRAINSTORM vent can still be lc=0.0; a procedural KNOWLEDGE query can be lc=0.9 if the user wants the procedure AS steps.
 
 DISAMBIGUATION (safety vs procedural, when in doubt lean HIGHER):
@@ -248,7 +252,46 @@ REASONING: follow-up using pronoun reference. History anchor resolves "yang itu"
 Example 8 — Topic switch:
 Q: "oke, trs soal [NEW_TOPIC] gimana?" (ok, what about [NEW_TOPIC]?)
 → intent=KNOWLEDGE, rewrite=verbatim NEW_TOPIC (drop the prior anchor)
-REASONING: latest names a new concrete topic. Even if it echoes a word from prior context, the framing indicates a new question. → KNOWLEDGE, rewrite = NEW_TOPIC verbatim."""
+REASONING: latest names a new concrete topic. Even if it echoes a word from prior context, the framing indicates a new question. → KNOWLEDGE, rewrite = NEW_TOPIC verbatim.
+
+# LEARNING_CONTEXT CALIBRATION EXAMPLES (calibrate the lc axis; intent/safety/empathy
+# reasoning mirrors the standard INTENT examples above). These pin the boundary
+# disagreements seen in the mentor eval — Examples 9, 10, 11, 12, 13.
+
+Example 9 — "masih ga/ndak/belum ngerti" anchor (push lc to 0.9-1.0):
+Q: "masih ga ngerti soal Product Knowledge"
+→ intent=KNOWLEDGE, learning_context=0.95
+REASONING: "ga/ndak/belum ngerti" = explicit non-understanding admission. Same signal as "ajarin aku" / "step by step" — user is asking to BE TAUGHT, not informed. Pushed to 0.8-1.0 tier despite no explicit "ajarin" word.
+
+Example 10 — "gimana cara" + concrete multi-step procedure (push lc to 0.7-0.8):
+Q: "gimana cara naikin grade Mitra?"
+→ intent=KNOWLEDGE, learning_context=0.75
+REASONING: "gimana cara" + concrete action verb (naikin/lapor/verifikasi/apply/isi form) + a known MULTI-STEP procedure = "how do I do X" for a defined process. User wants the action sequence as steps. 0.6-0.9 tier (target 0.7-0.85). The object must be a procedure; "gimana cara handle Mitra yang marah" stays at 0.5-0.7 (strategy).
+
+Example 11 — subjective "menurut kamu" + "gimana cara" mid-sentence (override lc DOWN to ≤0.4):
+Q: "menurut kamu, gimana cara terbaik handle X?"
+→ intent=BRAINSTORM, learning_context=0.1
+REASONING: outer frame is SUBJECTIVE — "menurut kamu" / "kira-kira" / "gimana menurut lo" / "apa yang terbaik" / "lebih baik A atau B" / "gimana cara terbaik" = user wants your OPINION, not a teaching sequence. The "gimana cara" in the middle does NOT override the subjective outer frame. SUBJECTIVE FRAMING OVERRIDE → lc ≤ 0.4 even though "gimana cara" appears. → BRAINSTORM, lc=0.1.
+
+Example 12 — "ajarin" + strategy object (lc 0.7-0.85, NOT 0.9-1.0):
+Q: "ajarin aku cara handle Mitra yang marah"
+→ intent=KNOWLEDGE, learning_context=0.8
+REASONING: "ajarin aku" anchor wants TEACHING, but the object "handle Mitra yang marah" is a STRATEGY (interpersonal, multi-option) rather than a single defined procedure like "naikin grade" or "verifikasi Mitra baru". "ajarin" pulls up to 0.6-0.9, the strategy object prevents hitting 0.9-1.0. → KNOWLEDGE, lc=0.8 (wants tactical teaching of an ambiguous process).
+
+Example 13 — "gimana cara" + channel/lapor lookup (lc 0.0-0.3):
+Q: "lapor pelecehan gimana?"
+→ intent=KNOWLEDGE, learning_context=0.15
+REASONING: "lapor" / "report" / "hubungi" verbs name a CHANNEL/OUTCOME, not a multi-step procedure. The user wants the FACT — the contact path, the hotline number, the policy reference — not a teaching sequence. This is the FACT-LOOKUP exclusion: "gimana cara [lapor/report/proc yang output-nya CHANNEL]" stays in the 0.0-0.3 tier. NOT 0.7-0.8 like "gimana cara naikin grade" (a true multi-step procedure). → KNOWLEDGE, lc=0.15.
+
+Example 14 — "bedanya X vs Y" (lc 0.4-0.7):
+Q: "bedanya Cycle Zero vs Cycle 1?"
+→ intent=KNOWLEDGE, learning_context=0.55
+REASONING: "bedanya X vs Y" / "apa bedanya X sama Y" = comparison question, mild explain framing. Wants explanation, not numbered steps. 0.4-0.7 tier (target 0.5-0.65). NOT 0.0-0.3 (it's not a definition lookup), NOT 0.8+ (no teach-me verb).
+
+Example 15 — "kenapa X itu penting? aku masih bingung" (lc 0.7-1.0):
+Q: "kenapa Cycle Zero itu penting? aku masih bingung"
+→ intent=KNOWLEDGE, learning_context=0.85
+REASONING: "masih bingung" = teach-me anchor. The leading "kenapa" + concept topic softens slightly (not pure step request), but "masih bingung" wins → 0.7-1.0 tier (target 0.8-0.95). User wants the concept EXPLAINED to them, scaffolded."""
 
 
 # ─── Score-driven response-shape blocks ──────────────────────────────────────
@@ -334,8 +377,6 @@ AMBIGUITY_MODE_RULES = (
 
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
-
-import re
 
 # Strips leaked instruction blocks from the LLM response. Some models
 # (Gemini Flash Lite especially) occasionally echo the literal contents of
@@ -629,7 +670,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     from app.graph.intent_rules import classify as rule_classify
 
     user_msg = state["messages"][-1].content
-    low_msg = user_msg.lower().strip()
 
     # ── Tier 1: deterministic rules ─────────────────────────────────────
     rule_intent = rule_classify(user_msg)

@@ -25,6 +25,7 @@ field that previously expired creates a fresh entry with a fresh TTL.
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from loguru import logger
@@ -370,6 +371,147 @@ async def clear_conversation(redis: Redis, conv_id: str) -> None:
         await redis.delete(_conv_key(conv_id))
     except Exception:
         pass
+
+
+# ── High-level history operations (ported from legacy memory.py) ────────────
+SUMMARY_TRIGGER_TURNS = 6  # summarize after 6 full turns (12 messages)
+
+
+def extract_follow_up_questions(assistant_message: str) -> list[str]:
+    """Extract numbered follow-up questions from an assistant message.
+
+    Pure function (no Redis). Looks for a "penasaran tentang" section first,
+    then falls back to scanning the last 10 lines for a numbered list.
+    """
+    if not assistant_message:
+        return []
+    try:
+        match = re.search(
+            r'penasaran tentang.*?:?\*?\*?\s*(.*)',
+            assistant_message,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            lines = match.group(1).strip().split('\n')
+        else:
+            lines = assistant_message.strip().split('\n')[-10:]
+
+        questions = []
+        for line in lines:
+            line = line.strip()
+            match_num = re.match(r'^(?:\*\*)?([1-5])[\.\)]\s*(?:\*\*)?(.*)', line)
+            if match_num:
+                questions.append(match_num.group(2).strip())
+        return questions
+    except Exception as exc:
+        logger.warning("Failed to extract follow-up questions", error=str(exc))
+        return []
+
+
+async def resolve_numeric_query(
+    redis: Redis, query: str, conv_id: str
+) -> str:
+    """Resolve numeric input (1, 2, 3) to the matching follow-up question.
+
+    If `query` is a single digit 1-3 and the last assistant message contains
+    follow-up questions, returns the corresponding full question text.
+    Otherwise returns `query` unchanged.
+    """
+    stripped_query = query.strip()
+    if stripped_query not in ['1', '2', '3']:
+        return query
+
+    history = await get_history(redis, conv_id)
+    if not history:
+        return query
+
+    last_assistant_message = None
+    for message in reversed(history):
+        if message.get("role") == "assistant":
+            last_assistant_message = message.get("content", "")
+            break
+
+    if not last_assistant_message:
+        return query
+
+    follow_ups = extract_follow_up_questions(last_assistant_message)
+    if not follow_ups:
+        return query
+
+    try:
+        question_index = int(stripped_query) - 1
+        if 0 <= question_index < len(follow_ups):
+            resolved = follow_ups[question_index]
+            logger.info(
+                "Resolved numeric query to follow-up question",
+                original_query=query,
+                resolved_query=resolved,
+                conversation_id=conv_id,
+            )
+            return resolved
+        return query
+    except (ValueError, IndexError):
+        return query
+
+
+async def get_or_summarize_history(
+    redis: Redis,
+    conv_id: str,
+    llm,
+    max_fresh_turns: int = 5,
+) -> tuple[str, list[dict]]:
+    """Return (summary_str, recent_turns_list) using Rolling Batch Summarization.
+
+    HASH-schema port of the legacy memory.py implementation. Reads history +
+    summary in a single HMGET round-trip. When the conversation exceeds the
+    fresh-turn window, summarizes the oldest `max_fresh_turns*2` messages into
+    the persistent summary field and trims the history HASH field to the
+    remaining fresh turns.
+    """
+    history, cached_summary = await get_history_and_summary(redis, conv_id)
+
+    # 1. Within the fresh-turn window: no LLM call, return as-is.
+    if len(history) // 2 <= max_fresh_turns:
+        return cached_summary or "", history
+
+    # 2. Window exceeded: batch-summarize the oldest turns.
+    turns_to_summarize = history[:(max_fresh_turns * 2)]
+    fresh_turns = history[(max_fresh_turns * 2):]
+    old_summary = cached_summary or ""
+
+    # 3. Recursive refinement: merge existing summary with overflowing turns.
+    from langchain_core.messages import HumanMessage as HM
+    old_text = "\n".join(
+        f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:300]}"
+        for m in turns_to_summarize
+    )
+    prompt = (
+        "Refine the following conversation summary to include the key points from the new dialogue segment. "
+        "Maintain a concise, 2-3 sentence overview. "
+        "Write the summary in the dominant language of the conversation (English or Indonesian).\n\n"
+        f"Existing Summary:\n{old_summary}\n\n"
+        f"New context to integrate:\n{old_text}\n\n"
+        "Updated Summary:"
+    )
+
+    try:
+        resp = await llm.ainvoke(
+            [HM(content=prompt)],
+            config={"run_name": "a-pedi-rolling-summarization"},
+        )
+        new_summary = resp.content.strip()
+    except Exception as exc:
+        logger.warning(f"Failed to generate batch summary: {exc}")
+        new_summary = old_summary
+
+    # 4. Persist updated summary + trimmed history (HASH fields, shared 24h TTL).
+    await set_summary(redis, conv_id, new_summary)
+    await trim_history(redis, conv_id, fresh_turns)
+
+    logger.info(
+        "Conversation rolling batch summary updated", conversation_id=conv_id
+    )
+    return new_summary, fresh_turns
 
 
 # ── LTM sync lock (kept as separate STRING key, NOT in the HASH) ────────────

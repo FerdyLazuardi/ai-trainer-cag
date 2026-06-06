@@ -3,7 +3,6 @@ import json
 import random
 import time
 import uuid
-import datetime
 from typing import Optional
 from collections import Counter
 
@@ -14,13 +13,7 @@ from loguru import logger
 # Moved inline imports to file-level
 from langchain_core.messages import HumanMessage, AIMessage
 
-from app.agents.memory import (
-    append_to_history,
-    get_conversation_history,
-    resolve_numeric_query,
-    get_or_summarize_history,
-    clear_conversation_history
-)
+from app.agents import conversation_state as _cs
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
@@ -34,7 +27,6 @@ from app.llm.client import get_cheap_llm
 from app.api.user_utils import is_real_user
 from app.agents.long_term_memory_qdrant import qdrant_ltm
 from app.database.redis_client import get_redis_client
-from app.api.routes.ingest import get_arq_redis
 from app.worker import sync_ltm_task, eval_turn_task  # noqa: E402
 
 router = APIRouter()
@@ -44,48 +36,70 @@ settings = get_settings()
 # (prevents GC from cancelling them mid-flight after the SSE generator returns).
 _stream_bg_tasks: set[asyncio.Task] = set()
 
-async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
-    redis_client = get_redis_client()
-    afk_seconds = settings.ltm_afk_threshold_seconds
-    # Update last_active timestamp on every message (rolling window).
-    # TTL must outlive the AFK threshold + a buffer so the worker can still
-    # see it when the deferred job fires.
-    await redis_client.set(
-        f"rag:last_active:{conv_id}",
-        str(time.time()),
-        ex=afk_seconds + 3600,
+# ── STM facade ──────────────────────────────────────────────────────────────
+# Thin wrappers over app.agents.conversation_state (Redis 8 HASH schema).
+# These adapt the dependency-injected `redis`-first API to the call signatures
+# used throughout this module, injecting the singleton redis client so the
+# many call sites below stay unchanged. get_redis_client() is @lru_cache'd —
+# each call returns the same client instance, no per-call overhead.
+async def append_to_history(
+    conversation_id: str,
+    user_message: str,
+    assistant_message: str,
+    max_turns: int = 10,
+) -> int:
+    return await _cs.append_to_history(
+        get_redis_client(),
+        conversation_id,
+        user_message,
+        assistant_message,
+        max_turns=max_turns,
     )
 
-    # Deduplication: only enqueue if no task is already queued for this conversation
-    sched_key = f"rag:ltm:scheduled:{conv_id}"
-    already_scheduled = await redis_client.exists(sched_key)
-    if already_scheduled:
-        logger.debug("AFK LTM sync already scheduled, skipping", conversation_id=conv_id)
-        return
 
-    try:
-        arq_redis = await get_arq_redis()
-        await arq_redis.enqueue_job(
-            'sync_ltm_task',
-            conv_id,
-            u_id,
-            _defer_by=datetime.timedelta(seconds=afk_seconds)
-        )
-        # Mark as scheduled. TTL slightly larger than the defer window so the
-        # key is still alive when the worker checks it.
-        await redis_client.set(sched_key, "1", ex=afk_seconds + 600)
-        logger.debug("AFK LTM sync scheduled", conversation_id=conv_id, defer_s=afk_seconds)
-    except Exception as e:
-        logger.warning(f"Failed to schedule AFK LTM sync: {e}")
+async def get_conversation_history(conversation_id: str) -> list[dict]:
+    return await _cs.get_history(get_redis_client(), conversation_id)
+
+
+async def clear_conversation_history(conversation_id: str) -> None:
+    await _cs.clear_conversation(get_redis_client(), conversation_id)
+
+
+async def resolve_numeric_query(query: str, conversation_id: str) -> str:
+    return await _cs.resolve_numeric_query(
+        get_redis_client(), query, conversation_id
+    )
+
+
+async def get_or_summarize_history(
+    conversation_id: str, llm, max_fresh_turns: int = 5
+) -> tuple[str, list[dict]]:
+    return await _cs.get_or_summarize_history(
+        get_redis_client(),
+        conversation_id,
+        llm,
+        max_fresh_turns=max_fresh_turns,
+    )
+
+
+async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
+    """Delegate to the HASH-based scheduler. last_active + scheduled are now
+    HASH fields on `rag:conv:{id}` (written via HSETEX), and the worker's AFK
+    guard reads the SAME fields — closing the split-key bug where chat.py wrote
+    `rag:last_active:{id}`/`rag:ltm:scheduled:{id}` STRING keys the worker never
+    read. schedule_afk_sync handles set_last_active + dedup + enqueue + set_scheduled."""
+    await _cs.schedule_afk_sync(get_redis_client(), conv_id, u_id)
 
 
 async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
-    """Capture distinct course_names from retrieved_context into a Redis set.
+    """Capture distinct course_names from retrieved_context into the conversation
+    HASH `courses` field (via conversation_state.add_courses).
 
-    LTM sync worker reads this set instead of asking the LLM to extract course
-    names — the LLM hallucinates names that don't exist in the KB ("Amartha
-    products"), but `chunk.metadata.course_name` is ground truth from the
-    Moodle ingestion. Set has the same TTL as the LTM scheduling window.
+    LTM sync worker reads this via get_courses() instead of asking the LLM to
+    extract course names — the LLM hallucinates names that don't exist in the KB
+    ("Amartha products"), but `chunk.metadata.course_name` is ground truth from
+    the Moodle ingestion. Stored as a HASH field with the LTM scheduling-window
+    TTL so it's still readable when the AFK worker fires.
     """
     if not retrieved_context:
         return
@@ -97,12 +111,7 @@ async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
     if not names:
         return
     try:
-        redis_client = get_redis_client()
-        key = f"rag:courses:{conv_id}"
-        await redis_client.sadd(key, *names)
-        # Mirror the last_active TTL so the set is still readable when the
-        # AFK worker fires after `ltm_afk_threshold_seconds`.
-        await redis_client.expire(key, settings.ltm_afk_threshold_seconds + 3600)
+        await _cs.add_courses(get_redis_client(), conv_id, names)
     except Exception as e:
         logger.warning(f"Failed to track session courses: {e}")
 
