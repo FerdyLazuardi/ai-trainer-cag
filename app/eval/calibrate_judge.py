@@ -110,7 +110,12 @@ async def _run_item(record: dict[str, Any], *, sem: asyncio.Semaphore) -> dict[s
         "gold_faithful": gold,
         "judge_score": judge_score,
         "intent": intent,
+        # Full answer + context are persisted so a human (or reviewer) can
+        # actually ground-truth the gold label offline WITHOUT re-running the
+        # live graph. answer_preview is kept only for the compact console list.
         "answer_preview": (run["answer"] or "")[:160],
+        "answer": run["answer"] or "",
+        "retrieved_context": run.get("retrieved_context") or [],
         "error": (
             "judge_returned_none (API failure or unparseable JSON after retry)"
             if judge_failed
@@ -213,21 +218,43 @@ def _fmt(x: float | None, p: int = 3) -> str:
     return f"{x:.{p}f}" if isinstance(x, (int, float)) else "—"
 
 
-async def main(path: Path, concurrency: int, gold_floor: float) -> int:
+async def main(path: Path, concurrency: int, gold_floor: float, from_run: Path | None = None) -> int:
     settings = get_settings()
     records = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(records, list):
         logger.error(f"Expected JSON array, got {type(records).__name__}")
         return 2
 
-    logger.info(
-        f"Calibrating judge={settings.judge_llm_model} against {len(records)} items "
-        f"from {path.name} (gold_floor={gold_floor})"
-    )
-    start = time.perf_counter()
-    sem = asyncio.Semaphore(concurrency)
-    results = await asyncio.gather(*[_run_item(r, sem=sem) for r in records])
-    elapsed = round(time.perf_counter() - start, 2)
+    if from_run is not None:
+        # OFFLINE re-threshold: reuse the judge scores from a prior live run and
+        # re-merge the (freshly edited) gold_faithful labels from the seed by id.
+        # Zero API calls — labels don't change judge scores, so re-running the
+        # live graph + judge just to relabel would waste ~100 calls per pass.
+        if not from_run.exists():
+            logger.error(f"--from-run file not found: {from_run}")
+            return 2
+        prior = json.loads(from_run.read_text(encoding="utf-8"))
+        gold_by_id = {r.get("id"): r.get("gold_faithful") for r in records}
+        results = []
+        for r in prior.get("results", []):
+            merged = dict(r)
+            if merged.get("id") in gold_by_id:
+                merged["gold_faithful"] = gold_by_id[merged["id"]]
+            results.append(merged)
+        logger.info(
+            f"Offline re-threshold from {from_run.name}: reusing {len(results)} judge "
+            f"scores, re-merged gold labels from {path.name} (gold_floor={gold_floor})"
+        )
+        elapsed = 0.0
+    else:
+        logger.info(
+            f"Calibrating judge={settings.judge_llm_model} against {len(records)} items "
+            f"from {path.name} (gold_floor={gold_floor})"
+        )
+        start = time.perf_counter()
+        sem = asyncio.Semaphore(concurrency)
+        results = await asyncio.gather(*[_run_item(r, sem=sem) for r in records])
+        elapsed = round(time.perf_counter() - start, 2)
 
     # Partition results.
     usable: list[tuple[float, float]] = []   # (judge_score, gold_faithful)
@@ -303,7 +330,12 @@ async def main(path: Path, concurrency: int, gold_floor: float) -> int:
     print()
 
     # Persist raw results for offline analysis / re-thresholding without re-running.
-    out_path = path.with_name(path.stem + "_judge_run.json")
+    # An offline re-threshold writes to a DISTINCT file so it can never clobber
+    # the expensive live-run source it read from (--from-run).
+    if from_run is not None:
+        out_path = path.with_name(path.stem + "_judge_run_relabeled.json")
+    else:
+        out_path = path.with_name(path.stem + "_judge_run.json")
     out_path.write_text(
         json.dumps(
             {
@@ -340,8 +372,16 @@ def cli() -> int:
         "--gold-floor", type=float, default=0.7,
         help="gold_faithful >= this counts as 'faithful' for the confusion matrix (default 0.7)",
     )
+    p.add_argument(
+        "--from-run", type=Path, default=None,
+        help=(
+            "Offline re-threshold: reuse judge scores from a prior "
+            "*_judge_run.json and re-merge gold_faithful from the seed by id. "
+            "Zero API calls — use after editing labels."
+        ),
+    )
     args = p.parse_args()
-    return asyncio.run(main(args.path, args.concurrency, args.gold_floor))
+    return asyncio.run(main(args.path, args.concurrency, args.gold_floor, args.from_run))
 
 
 if __name__ == "__main__":
