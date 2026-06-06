@@ -1,0 +1,1765 @@
+[
+  {
+    "id": "pos-cal-001",
+    "query": "Apa itu Modal Kerja di Amartha?",
+    "answer": "Produk Modal di Amartha adalah layanan pembiayaan mikro yang dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan.\n\nKarakteristik utamanya meliputi:\n*   **Pencairan fleksibel**: Disesuaikan dengan kebutuhan dan limit pengguna.\n*   **Pembayaran cashless**: Dilakukan melalui sistem digital.\n*   **Akses mudah**: Menggunakan aplikasi AmarthaFin.\n\nAgen AmarthaLink berperan membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman untuk produk ini.",
+    "retrieved_context": [
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.8465,
+        "hybrid_score": 0.8465,
+        "dense_score": 0.6438,
+        "sparse_score": 5.907,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Product Knowledge Amartha — AmarthaFin, AmarthaLink, Poket, Modal, Celengan\r\n\r\nDokumen ini menjelaskan product knowledge utama dalam ekosistem Amartha yang meliputi AmarthaFin, AmarthaLink, Poket, Modal, dan Celengan. Materi ini digunakan oleh Agent Partner Amartha untuk memahami fitur, manfaat, serta cara kerja layanan keuangan digital yang tersedia dalam platform Amartha.\r\n\r\nAmartha membangun ekosistem produk ini untuk menghubungkan layanan keuangan mikro dengan ekonomi digital, sehingga masyarakat dapat mengakses layanan finansial secara lebih mudah, cepat, dan terjangkau melalui satu platform terintegrasi.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.5467,
+        "hybrid_score": 0.5467,
+        "dense_score": 0.5909,
+        "sparse_score": 7.1064,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.5366,
+        "hybrid_score": 0.5366,
+        "dense_score": 0.6199,
+        "sparse_score": 3.0708,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-001 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-002",
+    "query": "Jelaskan prinsip Client Protection",
+    "answer": "Ada 8 Prinsip Client Protection Amartha:\n\n1.  **Appropriate Product Design and Delivery**: Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2.  **Prevention of Over Indebtedness**: Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3.  **Transparency**: Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4.  **Responsible Pricing**: Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5.  **Fair and Respectful Treatment of Client**: Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6.  **Privacy of Client Data**: Menjaga keamanan dan kerahasiaan data pelanggan.\n7.  **Mechanism of Complaints Resolution**: Menyediakan mekanisme pengaduan yang mudah diakses.\n8.  **Governance and HR**: Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9884,
+        "hybrid_score": 0.9884,
+        "dense_score": 0.6939,
+        "sparse_score": 12.7257,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 1: Appropriate Product Design and Delivery\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-1 ini mendefinisikan bahwa perusahaan memanfaatkan data dan masukan dari pelanggan untuk merancang produk dan layanan yang sesuai dengan kebutuhan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menjalankan pilot project untuk mengidentifikasi risiko, peluang, dan kebutuhan pasar, lalu menyempurnakan produk berdasarkan hasil analisis umpan balik pelanggan.\n- **Field Office (FO):** BP mengunjungi Mitra untuk memastikan dana digunakan sesuai tujuan, melakukan survei, dan memberikan edukasi. BM juga melakukan survei saat proses validasi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9461,
+        "hybrid_score": 0.9461,
+        "dense_score": 0.6743,
+        "sparse_score": 12.986,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.944,
+        "hybrid_score": 0.944,
+        "dense_score": 0.675,
+        "sparse_score": 12.844,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-002 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-003",
+    "query": "Apa saja produk pembiayaan yang ditawarkan Amartha?",
+    "answer": "Amartha menawarkan produk **Modal** sebagai layanan pembiayaan mikro untuk usaha.",
+    "retrieved_context": [
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.7182,
+        "sparse_score": 7.9247,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Product Knowledge Amartha\r\n\r\nAmartha membangun ekosistem produk yang saling terintegrasi untuk mendukung layanan keuangan digital secara menyeluruh. Setiap produk memiliki peran yang saling melengkapi dalam menciptakan akses keuangan yang inklusif.\r\n\r\nBerikut peran produk dalam ekosistem Amartha:\r\n\r\n- **AmarthaFin:** Platform utama layanan digital  \r\n- **AmarthaLink:** Jaringan agen distribusi layanan  \r\n- **Poket:** Dompet digital untuk transaksi  \r\n- **Modal:** Pembiayaan mikro untuk usaha  \r\n- **Celengan:** Investasi mikro untuk masyarakat",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7335,
+        "hybrid_score": 0.7335,
+        "dense_score": 0.6772,
+        "sparse_score": 6.8984,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Produk Celengan sebagai Layanan Investasi Mikro\r\n\r\nSebagai bagian dari layanan keuangan yang lebih luas, Amartha juga menyediakan produk Celengan yang memungkinkan pengguna melakukan investasi mikro dengan nominal terjangkau. Produk ini dirancang agar masyarakat dapat mulai berinvestasi dengan risiko yang relatif rendah.\r\n\r\nBerikut implementasi atau contoh penerapan produk Celengan di Amartha:\r\n\r\n- **Modal awal rendah:** Mulai dari nominal kecil  \r\n- **Potensi keuntungan:** Kisaran return tertentu sesuai produk  \r\n- **Fleksibilitas penggunaan:** Dapat digunakan oleh mitra maupun non-mitra  \r\n\r\nDengan adanya Celengan, Amartha tidak hanya menyediakan layanan transaksi dan pembiayaan, tetapi juga membuka akses investasi bagi masyarakat.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.6895,
+        "hybrid_score": 0.6895,
+        "dense_score": 0.6705,
+        "sparse_score": 6.7176,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-003 (judge orig=0.7)"
+  },
+  {
+    "id": "pos-cal-004",
+    "query": "Bagaimana mekanisme penyelesaian keluhan nasabah?",
+    "answer": "Mekanisme penyelesaian keluhan nasabah di Amartha mengikuti Prinsip 7 Client Protection.\n\n*   **Head Office (HO):** Menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n*   **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.\n\nAda bagian lain yang mau kamu tanyain soal ini?",
+    "retrieved_context": [
+      {
+        "text": "# Prinsip 7: Mechanism of Complaints Resolution \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-7 ini mendefinisikan bahwa perusahaan menyediakan mekanisme pengaduan yang mudah diakses agar pelanggan dapat menyampaikan keluhan secara efisien, sekaligus sebagai masukan untuk meningkatkan kualitas layanan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n- **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5563,
+        "sparse_score": 12.2965,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 2: Prevention of Over Indebtedness\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-2 ini mendefinisikan bahwa perusahaan memastikan pertumbuhan yang bertanggung jawab dengan memperhatikan kemampuan klien dalam membayar, memantau risiko pasar, serta menyesuaikan pengawasan saat terjadi peningkatan pertumbuhan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha melakukan analisa kemampuan bayar dan memiliki sistem credit scoring untuk menentukan besaran pinjaman sesuai kebutuhan dan kemampuan Mitra.\n- **Field Office (FO):** Seluruh stakeholder secara konsisten memonitor portofolio pembiayaan, termasuk penetapan threshold dan tindak lanjutnya. BP mengumpulkan data pendapatan dan pengeluaran Mitra melalui aplikasi untuk dianalisis sebagai dasar credit scoring.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.3409,
+        "hybrid_score": 0.3409,
+        "dense_score": 0.4926,
+        "sparse_score": 0.0,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.3189,
+        "hybrid_score": 0.3189,
+        "dense_score": 0.4887,
+        "sparse_score": 5.9281,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-004 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-005",
+    "query": "Apa itu AmarthaLink?",
+    "answer": "AmarthaLink adalah jaringan agen layanan keuangan digital yang memperluas jangkauan layanan Amartha hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. AmarthaLink memungkinkan agen untuk menjual produk digital secara fleksibel melalui aplikasi AmarthaFIN.\n\nLayanan utama yang disediakan AmarthaLink meliputi:\n*   Setor dan tarik tunai\n*   Jual pulsa dan PPOB (Payment Point Online Bank)\n*   Kirim uang\n\nAmarthaLink berperan dalam ekosistem Amartha untuk:\n*   Menyediakan layanan transaksi langsung seperti tarik tunai, transfer, dan pembayaran.\n*   Menjadi perpanjangan layanan digital AmarthaFin.\n*   Meningkatkan peluang usaha agen dengan memberikan sumber pendapatan tambahan.\n\nAgen AmarthaLink mendapatkan keuntungan berupa transaksi yang aman, peluang pendapatan tambahan, dan kemudahan akses ke sistem digital yang sederhana.",
+    "retrieved_context": [
+      {
+        "text": "# Layanan dan Keuntungan Menjadi Agen AmarthaLink\n\nBerikut layanan utama yang disediakan oleh AmarthaLink:\n\n- **Setor dan tarik tunai:** Memudahkan akses keuangan tanpa harus ke bank  \n- **Jual pulsa dan PPOB:** Mendukung kebutuhan transaksi harian masyarakat  \n- **Kirim uang:** Mempermudah transfer antar pengguna  \n\nSelain itu, Amartha juga memberikan keuntungan bagi Agent Partner AmarthaLink:\n\n- **Aman:** Transaksi dirancang agar aman dan dapat dipastikan sampai  \n- **Menguntungkan:** Memberikan peluang tambahan pendapatan bagi agen  \n- **Mudah diakses:** Siapa saja dapat bergabung dengan sistem digital yang sederhana  \n\nUntuk memperluas jaringan AmarthaLink, Amartha mendorong Agent Partner untuk secara aktif mengajak mitra lain bergabung dengan cara berikut:\n\n1. Menyebarkan informasi kepada mitra dan pemilik usaha lokal  \n2. Menjelaskan manfaat dan produk AmarthaLink secara jelas  \n3. Mengarahkan calon agen untuk mengunduh dan mendaftar melalui aplikasi AmarthaFin",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.8759,
+        "hybrid_score": 0.8759,
+        "dense_score": 0.6835,
+        "sparse_score": 7.9972,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# AmarthaLink sebagai Jaringan Agen Layanan Keuangan\r\n\r\nAmarthaLink merupakan peluang usaha bagi agen untuk menjual produk digital secara fleksibel melalui aplikasi AmarthaFIN.\r\n\r\nBerikut peran AmarthaLink dalam ekosistem Amartha:\r\n\r\n- **Menyediakan layanan transaksi langsung:** Tarik tunai, transfer, dan pembayaran  \r\n- **Menjadi perpanjangan layanan digital:** Menghubungkan pengguna dengan sistem AmarthaFin  \r\n- **Meningkatkan peluang usaha agen:** Memberikan sumber pendapatan tambahan  \r\n\r\nDengan adanya AmarthaLink, Amartha mampu menjangkau lebih banyak pengguna melalui kombinasi layanan digital dan jaringan agen fisik.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7565,
+        "hybrid_score": 0.7565,
+        "dense_score": 0.7215,
+        "sparse_score": 3.2503,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.6423,
+        "hybrid_score": 0.6423,
+        "dense_score": 0.6835,
+        "sparse_score": 3.4424,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-005 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-008",
+    "query": "Sebutkan 8 DNA budaya Amartha",
+    "answer": "DNA Amartha ada delapan:\n* Get Things Done and Never Settle\n* Resilience\n* Planning & Organizing\n* Continuous Learning\n* Delivering Results\n* Customer Driven\n* Empowering Others\n* Innovation",
+    "retrieved_context": [
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.6703,
+        "sparse_score": 19.079,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.2424,
+        "hybrid_score": 0.2424,
+        "dense_score": 0.5243,
+        "sparse_score": 4.2181,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.2059,
+        "hybrid_score": 0.2059,
+        "dense_score": 0.5325,
+        "sparse_score": 0.0,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-008 (judge orig=0.6)"
+  },
+  {
+    "id": "pos-cal-009",
+    "query": "Apa itu CP dalam konteks Amartha?",
+    "answer": "CP dalam konteks Amartha adalah **Client Protection**, sebuah panduan yang memastikan produk dan layanan Amartha aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nPenerapan CP memberikan manfaat strategis bagi Amartha, seperti:\n*   Meningkatkan transparansi perusahaan di mata pemangku kepentingan.\n*   Menambah nilai kompetitif.\n*   Mendorong pertumbuhan berkelanjutan.\n*   Menjadikan Amartha contoh baik di industri.\n*   Membantu mengurangi risiko bisnis.\n\nAda 8 Prinsip Client Protection yang diterapkan Amartha:\n1.  **Appropriate Product Design and Delivery**: Merancang produk sesuai kebutuhan pelanggan.\n2.  **Prevention of Over Indebtedness**: Memastikan pertumbuhan yang bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3.  **Transparency**: Menyampaikan informasi produk secara transparan.\n4.  **Responsible Pricing**: Menetapkan harga dan biaya secara adil.\n5.  **Fair and Respectful Treatment of Client**: Memperlakukan pelanggan secara adil dan hormat.\n6.  **Privacy of Client Data**: Menjaga keamanan dan kerahasiaan data pelanggan.\n7.  **Mechanism of Complaints Resolution**: Menyediakan mekanisme pengaduan yang mudah diakses.\n8.  **Governance and HR**: Pengambilan keputusan berbasis data dan edukasi karyawan.\n\nAda aspek lain yang mau di-eksplor?",
+    "retrieved_context": [
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.7671,
+        "sparse_score": 10.6529,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8444,
+        "hybrid_score": 0.8444,
+        "dense_score": 0.7387,
+        "sparse_score": 9.139,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 6: Privacy of Client Data \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-6 ini mendefinisikan bahwa perusahaan menjaga keamanan dan kerahasiaan data pelanggan, serta memastikan pelanggan mendapat informasi yang jelas tentang privasi dan hak atas data mereka.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memiliki kebijakan privasi data pelanggan untuk data fisik maupun digital, sesuai standar ISO 27001. Akses dan penggunaan data pribadi pelanggan hanya dilakukan setelah memperoleh persetujuan pelanggan, sesuai regulasi OJK dan Komdigi.\n- **Field Office (FO):** Amartha secara konsisten mengedukasi Mitra untuk menjaga keamanan data pribadi mereka, termasuk PIN dan kode sandi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8408,
+        "hybrid_score": 0.8408,
+        "dense_score": 0.7403,
+        "sparse_score": 8.8654,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-009 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-013",
+    "query": "Apa peran Field Officer di Amartha?",
+    "answer": "Field Officer (FO) di Amartha punya beberapa peran penting terkait Client Protection:\n\n*   **Penerapan Kode Etik Penagihan:** FO dilarang menagih di luar jam kerja, memasuki rumah nasabah tanpa izin, berkata kasar, atau melakukan intimidasi berbasis SARA.\n*   **Pemasaran Tanpa Paksaan:** FO tidak melakukan *aggressive sales* dan memiliki batasan jumlah mitra yang dikelola, dengan skema insentif yang fokus pada kualitas portofolio.\n*   **Edukasi Nasabah:** FO memberikan pengarahan kepada karyawan mengenai cara menghitung kemampuan bayar Mitra, pemasaran produk tanpa paksaan, penerapan kode etik, penagihan yang benar, penanganan keluhan, dan penjagaan data pribadi pelanggan.\n*   **Informasi Pengaduan:** FO menyampaikan informasi tata cara pengaduan kepada nasabah secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+    "retrieved_context": [
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9832,
+        "hybrid_score": 0.9832,
+        "dense_score": 0.5026,
+        "sparse_score": 8.3547,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9119,
+        "hybrid_score": 0.9119,
+        "dense_score": 0.4952,
+        "sparse_score": 8.5205,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 7: Mechanism of Complaints Resolution \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-7 ini mendefinisikan bahwa perusahaan menyediakan mekanisme pengaduan yang mudah diakses agar pelanggan dapat menyampaikan keluhan secara efisien, sekaligus sebagai masukan untuk meningkatkan kualitas layanan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n- **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8168,
+        "hybrid_score": 0.8168,
+        "dense_score": 0.4857,
+        "sparse_score": 8.6039,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-013 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-015",
+    "query": "Apa itu group lending model?",
+    "answer": "Group lending model adalah model bisnis keuangan mikro \"akar rumput\" yang dipegang teguh oleh Amartha, dikenal juga sebagai **Grameen Model**. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\nAmartha memulai dengan model ini pada periode 2010–2015, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.",
+    "retrieved_context": [
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5392,
+        "sparse_score": 24.3695,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6913,
+        "hybrid_score": 0.6913,
+        "dense_score": 0.522,
+        "sparse_score": 8.4395,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.2884,
+        "hybrid_score": 0.2884,
+        "dense_score": 0.4348,
+        "sparse_score": 0.0,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-015 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-017",
+    "query": "Apa saja nilai inti perusahaan Amartha?",
+    "answer": "Nilai inti Amartha ada dua: **3 Value** dan **DNA Amartha**.\n\n**3 Value Amartha** adalah fondasi budaya perusahaan:\n*   **Get Things Done & Never Settle**: Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n*   **Collaborate & Communicate Effectively**: Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n*   **Be Customer-Driven & Make an Impact**: Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** adalah nilai-nilai perilaku harian yang diharapkan dari seluruh karyawan:\n*   Get Things Done and Never Settle\n*   Resilience\n*   Planning & Organizing\n*   Continuous Learning\n*   Delivering Results\n*   Customer Driven\n*   Empowering Others\n*   Innovation\n\nMau aku jelaskan lebih detail soal salah satu nilai tersebut?",
+    "retrieved_context": [
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.9033,
+        "hybrid_score": 0.9033,
+        "dense_score": 0.6955,
+        "sparse_score": 6.1424,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4915,
+        "hybrid_score": 0.4915,
+        "dense_score": 0.6227,
+        "sparse_score": 5.4268,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4721,
+        "hybrid_score": 0.4721,
+        "dense_score": 0.6349,
+        "sparse_score": 2.8898,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-017 (judge orig=0.9)"
+  },
+  {
+    "id": "pos-cal-021",
+    "query": "Apa manfaat menjadi mitra Amartha bagi perempuan pengusaha?",
+    "answer": "Menjadi mitra Amartha memberikan beberapa manfaat bagi perempuan pengusaha, terutama dalam hal peningkatan pendapatan, literasi keuangan, akses keuangan yang setara, dan pemberdayaan.\n\nManfaat-manfaat tersebut adalah:\n*   Meningkatkan pendapatan dan kesejahteraan Mitra.\n*   Meningkatkan literasi keuangan.\n*   Memberikan akses yang setara terhadap layanan keuangan.\n*   Memberdayakan perempuan dalam membangun perekonomian.\n\nAda aspek lain yang mau di-eksplor?",
+    "retrieved_context": [
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.7475,
+        "hybrid_score": 0.7475,
+        "dense_score": 0.6585,
+        "sparse_score": 5.3131,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.6391,
+        "hybrid_score": 0.6391,
+        "dense_score": 0.594,
+        "sparse_score": 21.4229,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6089,
+        "hybrid_score": 0.6089,
+        "dense_score": 0.6334,
+        "sparse_score": 5.4463,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-021 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-029",
+    "query": "Apa tujuan dari program pemberdayaan Amartha?",
+    "answer": "Tujuan program pemberdayaan Amartha adalah mewujudkan kesejahteraan merata untuk semua. Ini diwujudkan melalui:\n*   Membuka akses ke produk finansial terpercaya melalui teknologi.\n*   Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara.\n*   Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan.\n\nAda aspek lain yang mau di-eksplor?",
+    "retrieved_context": [
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.9982,
+        "hybrid_score": 0.9982,
+        "dense_score": 0.6104,
+        "sparse_score": 6.1879,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.5824,
+        "hybrid_score": 0.5824,
+        "dense_score": 0.5505,
+        "sparse_score": 6.2244,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4664,
+        "hybrid_score": 0.4664,
+        "dense_score": 0.5769,
+        "sparse_score": 0.0391,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-029 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-030",
+    "query": "Bagaimana Amartha memastikan keberlanjutan usaha mitra?",
+    "answer": "Amartha memastikan keberlanjutan usaha mitra melalui misi \"Mewujudkan kesejahteraan merata untuk semua\". Ini diwujudkan dengan:\n\n*   Membuka akses ke produk finansial terpercaya melalui teknologi.\n*   Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara.\n*   Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan.\n\nVisi Amartha, \"Kemakmuran Bersama\", juga mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.\n\nAda aspek lain yang mau di-eksplor?",
+    "retrieved_context": [
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.7,
+        "hybrid_score": 0.7,
+        "dense_score": 0.6418,
+        "sparse_score": 0.0,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.5366,
+        "hybrid_score": 0.5366,
+        "dense_score": 0.6221,
+        "sparse_score": 2.3153,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4895,
+        "hybrid_score": 0.4895,
+        "dense_score": 0.6152,
+        "sparse_score": 2.5093,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-030 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-032",
+    "query": "Sebutkan prinsip-prinsip perlindungan nasabah secara lengkap",
+    "answer": "Ada 8 Prinsip Client Protection Amartha:\n\n1.  **Appropriate Product Design and Delivery**: Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2.  **Prevention of Over Indebtedness**: Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3.  **Transparency**: Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4.  **Responsible Pricing**: Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5.  **Fair and Respectful Treatment of Client**: Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6.  **Privacy of Client Data**: Menjaga keamanan dan kerahasiaan data pelanggan.\n7.  **Mechanism of Complaints Resolution**: Menyediakan mekanisme pengaduan yang mudah diakses.\n8.  **Governance and HR**: Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9594,
+        "hybrid_score": 0.9594,
+        "dense_score": 0.6075,
+        "sparse_score": 8.272,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8462,
+        "hybrid_score": 0.8462,
+        "dense_score": 0.5661,
+        "sparse_score": 9.06,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 4: Responsible Pricing\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-4 ini mendefinisikan bahwa perusahaan memastikan harga dan biaya ditetapkan secara adil, tanpa membebani pelanggan dengan biaya yang tidak perlu.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menetapkan bunga atau bagi hasil yang kompetitif dibandingkan kompetitor.\n- **Field Office (FO):** Amartha tidak menetapkan biaya yang tidak berkaitan dengan pinjaman kepada Mitra. Contoh: Amartha tidak menerapkan sistem denda keterlambatan untuk Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.7244,
+        "hybrid_score": 0.7244,
+        "dense_score": 0.5933,
+        "sparse_score": 4.737,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-032 (judge orig=1.0)"
+  },
+  {
+    "id": "pos-cal-033",
+    "query": "Apa peran teknologi dalam layanan Amartha?",
+    "answer": "Teknologi berperan penting dalam layanan Amartha untuk mendorong inklusi keuangan dan memberdayakan komunitas akar rumput.\n\nPeran teknologi di Amartha meliputi:\n\n*   **Memperluas jangkauan layanan:** Melalui **AmarthaLink**, teknologi memungkinkan layanan keuangan digital dijangkau hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Ini membantu menjangkau pelanggan baru dari segmen tersebut.\n*   **Mengintegrasikan ekosistem:** Teknologi menghubungkan berbagai layanan dalam satu ekosistem keuangan digital AmarthaFin, menciptakan jaringan yang saling terhubung.\n*   **Meningkatkan nilai bisnis agen:** Agen AmarthaLink dapat menambah layanan finansial seperti tarik tunai, kirim uang, dan pembayaran melalui teknologi, sehingga menarik lebih banyak pelanggan.\n*   **Menyediakan fitur transaksi harian:** AmarthaFin, yang berbasis teknologi, menawarkan fitur seperti transfer uang antar bank, pembayaran tagihan, pembelian produk digital (pulsa, data, token listrik), top up e-wallet, dan layanan zakat.\n*   **Membuka akses ke produk finansial terpercaya:** Teknologi menjadi sarana utama Amartha untuk mewujudkan misi membuka akses ke produk finansial yang andal.\n*   **Membangun infrastruktur keuangan digital:** Visi Amartha untuk \"Kemakmuran Bersama\" diwujudkan dengan membangun infrastruktur keuangan digital yang memberdayakan potensi ekonomi masyarakat akar rumput.\n\nAda aspek lain yang mau di-eksplor?",
+    "retrieved_context": [
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.9407,
+        "hybrid_score": 0.9407,
+        "dense_score": 0.6552,
+        "sparse_score": 8.6188,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# Fitur dan Layanan Utama AmarthaFin\r\n\r\nDalam implementasinya, Amartha menyediakan berbagai fitur yang mendukung kebutuhan transaksi harian pengguna melalui AmarthaFin. Fitur ini dirancang untuk menjangkau kebutuhan masyarakat luas, baik untuk individu maupun pelaku usaha.\r\n\r\nBerikut layanan utama yang tersedia di AmarthaFin:\r\n\r\n- **Transfer uang ke berbagai bank:** Memudahkan pengiriman dana antar rekening  \r\n- **Pembayaran tagihan:** Mendukung pembayaran listrik, air, dan layanan lainnya  \r\n- **Pembelian produk digital:** Pulsa, paket data, dan token listrik  \r\n- **Top up e-wallet:** Mendukung berbagai dompet digital  \r\n- **Layanan zakat:** Memfasilitasi transaksi sosial berbasis digital  \r\n\r\nMelalui fitur ini, Amartha tidak hanya menyediakan layanan transaksi, tetapi juga mendukung aktivitas ekonomi dan sosial masyarakat.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7197,
+        "hybrid_score": 0.7197,
+        "dense_score": 0.6503,
+        "sparse_score": 3.9724,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6628,
+        "hybrid_score": 0.6628,
+        "dense_score": 0.6352,
+        "sparse_score": 6.1715,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 1.0,
+    "intent": "PROVIDED",
+    "note": "real grounded answer reused from cal-033 (judge orig=1.0)"
+  },
+  {
+    "id": "halu-001",
+    "query": "Apa itu Modal Kerja di Amartha?",
+    "answer": "Produk Modal menawarkan pinjaman mulai Rp 2.000.000 hingga Rp 50.000.000 dengan bunga tetap 1,5% per bulan dan tenor maksimal 24 bulan, dicairkan langsung ke rekening bank Mitra dalam 1x24 jam.",
+    "retrieved_context": [
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.8465,
+        "hybrid_score": 0.8465,
+        "dense_score": 0.6438,
+        "sparse_score": 5.907,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Product Knowledge Amartha — AmarthaFin, AmarthaLink, Poket, Modal, Celengan\r\n\r\nDokumen ini menjelaskan product knowledge utama dalam ekosistem Amartha yang meliputi AmarthaFin, AmarthaLink, Poket, Modal, dan Celengan. Materi ini digunakan oleh Agent Partner Amartha untuk memahami fitur, manfaat, serta cara kerja layanan keuangan digital yang tersedia dalam platform Amartha.\r\n\r\nAmartha membangun ekosistem produk ini untuk menghubungkan layanan keuangan mikro dengan ekonomi digital, sehingga masyarakat dapat mengakses layanan finansial secara lebih mudah, cepat, dan terjangkau melalui satu platform terintegrasi.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.5467,
+        "hybrid_score": 0.5467,
+        "dense_score": 0.5909,
+        "sparse_score": 7.1064,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.5366,
+        "hybrid_score": 0.5366,
+        "dense_score": 0.6199,
+        "sparse_score": 3.0708,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated loan amounts/rate/tenor not in context"
+  },
+  {
+    "id": "halu-002",
+    "query": "Apa itu group lending model?",
+    "answer": "Amartha memulai model group lending pada 2008–2014 dengan 5.000 peminjam pertama, melayani kelompok 10–15 Ibu Mitra dengan pinjaman awal Rp 1.000.000 per orang.",
+    "retrieved_context": [
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5392,
+        "sparse_score": 24.3695,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6913,
+        "hybrid_score": 0.6913,
+        "dense_score": 0.522,
+        "sparse_score": 8.4395,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.2884,
+        "hybrid_score": 0.2884,
+        "dense_score": 0.4348,
+        "sparse_score": 0.0,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "corrupted years/borrowers/group size/amount"
+  },
+  {
+    "id": "halu-003",
+    "query": "Jelaskan prinsip Client Protection",
+    "answer": "Salah satu dari 8 Prinsip Client Protection Amartha adalah Prinsip ke-4: Competitive Pricing Guarantee, yaitu Amartha menjamin memberikan bunga termurah di seluruh industri dan akan memberi kompensasi tunai jika Mitra menemukan penawaran yang lebih murah di tempat lain.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9884,
+        "hybrid_score": 0.9884,
+        "dense_score": 0.6939,
+        "sparse_score": 12.7257,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 1: Appropriate Product Design and Delivery\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-1 ini mendefinisikan bahwa perusahaan memanfaatkan data dan masukan dari pelanggan untuk merancang produk dan layanan yang sesuai dengan kebutuhan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menjalankan pilot project untuk mengidentifikasi risiko, peluang, dan kebutuhan pasar, lalu menyempurnakan produk berdasarkan hasil analisis umpan balik pelanggan.\n- **Field Office (FO):** BP mengunjungi Mitra untuk memastikan dana digunakan sesuai tujuan, melakukan survei, dan memberikan edukasi. BM juga melakukan survei saat proses validasi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9461,
+        "hybrid_score": 0.9461,
+        "dense_score": 0.6743,
+        "sparse_score": 12.986,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.944,
+        "hybrid_score": 0.944,
+        "dense_score": 0.675,
+        "sparse_score": 12.844,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "swapped/invented principle name + fabricated guarantee"
+  },
+  {
+    "id": "halu-004",
+    "query": "Apa itu CP dalam konteks Amartha?",
+    "answer": "Amartha menjaga kerahasiaan data nasabah sesuai standar ISO 9001 dan menyimpan seluruh data pribadi pelanggan di server pusat milik OJK yang tidak dapat diakses oleh karyawan Amartha.",
+    "retrieved_context": [
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.7671,
+        "sparse_score": 10.6529,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8444,
+        "hybrid_score": 0.8444,
+        "dense_score": 0.7387,
+        "sparse_score": 9.139,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 6: Privacy of Client Data \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-6 ini mendefinisikan bahwa perusahaan menjaga keamanan dan kerahasiaan data pelanggan, serta memastikan pelanggan mendapat informasi yang jelas tentang privasi dan hak atas data mereka.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memiliki kebijakan privasi data pelanggan untuk data fisik maupun digital, sesuai standar ISO 27001. Akses dan penggunaan data pribadi pelanggan hanya dilakukan setelah memperoleh persetujuan pelanggan, sesuai regulasi OJK dan Komdigi.\n- **Field Office (FO):** Amartha secara konsisten mengedukasi Mitra untuk menjaga keamanan data pribadi mereka, termasuk PIN dan kode sandi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8408,
+        "hybrid_score": 0.8408,
+        "dense_score": 0.7403,
+        "sparse_score": 8.8654,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "wrong ISO standard + fabricated OJK server claim"
+  },
+  {
+    "id": "halu-005",
+    "query": "Apa itu AmarthaLink?",
+    "answer": "Agen AmarthaLink memperoleh komisi tetap 10% dari setiap transaksi tarik tunai dan bonus bulanan sebesar Rp 500.000 bagi agen yang berhasil mencapai 100 transaksi dalam sebulan.",
+    "retrieved_context": [
+      {
+        "text": "# Layanan dan Keuntungan Menjadi Agen AmarthaLink\n\nBerikut layanan utama yang disediakan oleh AmarthaLink:\n\n- **Setor dan tarik tunai:** Memudahkan akses keuangan tanpa harus ke bank  \n- **Jual pulsa dan PPOB:** Mendukung kebutuhan transaksi harian masyarakat  \n- **Kirim uang:** Mempermudah transfer antar pengguna  \n\nSelain itu, Amartha juga memberikan keuntungan bagi Agent Partner AmarthaLink:\n\n- **Aman:** Transaksi dirancang agar aman dan dapat dipastikan sampai  \n- **Menguntungkan:** Memberikan peluang tambahan pendapatan bagi agen  \n- **Mudah diakses:** Siapa saja dapat bergabung dengan sistem digital yang sederhana  \n\nUntuk memperluas jaringan AmarthaLink, Amartha mendorong Agent Partner untuk secara aktif mengajak mitra lain bergabung dengan cara berikut:\n\n1. Menyebarkan informasi kepada mitra dan pemilik usaha lokal  \n2. Menjelaskan manfaat dan produk AmarthaLink secara jelas  \n3. Mengarahkan calon agen untuk mengunduh dan mendaftar melalui aplikasi AmarthaFin",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.8759,
+        "hybrid_score": 0.8759,
+        "dense_score": 0.6835,
+        "sparse_score": 7.9972,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# AmarthaLink sebagai Jaringan Agen Layanan Keuangan\r\n\r\nAmarthaLink merupakan peluang usaha bagi agen untuk menjual produk digital secara fleksibel melalui aplikasi AmarthaFIN.\r\n\r\nBerikut peran AmarthaLink dalam ekosistem Amartha:\r\n\r\n- **Menyediakan layanan transaksi langsung:** Tarik tunai, transfer, dan pembayaran  \r\n- **Menjadi perpanjangan layanan digital:** Menghubungkan pengguna dengan sistem AmarthaFin  \r\n- **Meningkatkan peluang usaha agen:** Memberikan sumber pendapatan tambahan  \r\n\r\nDengan adanya AmarthaLink, Amartha mampu menjangkau lebih banyak pengguna melalui kombinasi layanan digital dan jaringan agen fisik.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7565,
+        "hybrid_score": 0.7565,
+        "dense_score": 0.7215,
+        "sparse_score": 3.2503,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.6423,
+        "hybrid_score": 0.6423,
+        "dense_score": 0.6835,
+        "sparse_score": 3.4424,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated commission/bonus scheme"
+  },
+  {
+    "id": "halu-006",
+    "query": "Sebutkan 8 DNA budaya Amartha",
+    "answer": "8 DNA budaya Amartha adalah: Integrity First, Speed, Customer Obsession, Ownership, Frugality, Bias for Action, Think Big, dan Hire and Develop the Best.",
+    "retrieved_context": [
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.6703,
+        "sparse_score": 19.079,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.2424,
+        "hybrid_score": 0.2424,
+        "dense_score": 0.5243,
+        "sparse_score": 4.2181,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.2059,
+        "hybrid_score": 0.2059,
+        "dense_score": 0.5325,
+        "sparse_score": 0.0,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "DNA replaced with Amazon-style fabricated values"
+  },
+  {
+    "id": "halu-007",
+    "query": "Bagaimana mekanisme penyelesaian keluhan nasabah?",
+    "answer": "Nasabah dapat menyampaikan keluhan melalui call center 24 jam di nomor 1500-789 atau mengirim email resmi ke complaint@amartha.com, dengan jaminan SLA penyelesaian maksimal 3x24 jam kerja.",
+    "retrieved_context": [
+      {
+        "text": "# Prinsip 7: Mechanism of Complaints Resolution \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-7 ini mendefinisikan bahwa perusahaan menyediakan mekanisme pengaduan yang mudah diakses agar pelanggan dapat menyampaikan keluhan secara efisien, sekaligus sebagai masukan untuk meningkatkan kualitas layanan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n- **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5563,
+        "sparse_score": 12.2965,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 2: Prevention of Over Indebtedness\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-2 ini mendefinisikan bahwa perusahaan memastikan pertumbuhan yang bertanggung jawab dengan memperhatikan kemampuan klien dalam membayar, memantau risiko pasar, serta menyesuaikan pengawasan saat terjadi peningkatan pertumbuhan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha melakukan analisa kemampuan bayar dan memiliki sistem credit scoring untuk menentukan besaran pinjaman sesuai kebutuhan dan kemampuan Mitra.\n- **Field Office (FO):** Seluruh stakeholder secara konsisten memonitor portofolio pembiayaan, termasuk penetapan threshold dan tindak lanjutnya. BP mengumpulkan data pendapatan dan pengeluaran Mitra melalui aplikasi untuk dianalisis sebagai dasar credit scoring.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.3409,
+        "hybrid_score": 0.3409,
+        "dense_score": 0.4926,
+        "sparse_score": 0.0,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.3189,
+        "hybrid_score": 0.3189,
+        "dense_score": 0.4887,
+        "sparse_score": 5.9281,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated call-center number/email/SLA"
+  },
+  {
+    "id": "halu-008",
+    "query": "Apa tujuan dari program pemberdayaan Amartha?",
+    "answer": "Visi Amartha adalah \"Mewujudkan kesejahteraan merata untuk semua\", sedangkan misinya adalah \"Kemakmuran Bersama\" yang berfokus pada pembangunan infrastruktur keuangan digital.",
+    "retrieved_context": [
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.9982,
+        "hybrid_score": 0.9982,
+        "dense_score": 0.6104,
+        "sparse_score": 6.1879,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.5824,
+        "hybrid_score": 0.5824,
+        "dense_score": 0.5505,
+        "sparse_score": 6.2244,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4664,
+        "hybrid_score": 0.4664,
+        "dense_score": 0.5769,
+        "sparse_score": 0.0391,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "visi and misi swapped (subtle contradiction)"
+  },
+  {
+    "id": "halu-009",
+    "query": "Apa saja produk pembiayaan yang ditawarkan Amartha?",
+    "answer": "Amartha menawarkan lima produk pembiayaan utama: Modal, Dana Kilat, KreditPlus, AmarthaPay, dan Celengan Emas, yang semuanya dapat diakses tanpa agunan.",
+    "retrieved_context": [
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.7182,
+        "sparse_score": 7.9247,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Product Knowledge Amartha\r\n\r\nAmartha membangun ekosistem produk yang saling terintegrasi untuk mendukung layanan keuangan digital secara menyeluruh. Setiap produk memiliki peran yang saling melengkapi dalam menciptakan akses keuangan yang inklusif.\r\n\r\nBerikut peran produk dalam ekosistem Amartha:\r\n\r\n- **AmarthaFin:** Platform utama layanan digital  \r\n- **AmarthaLink:** Jaringan agen distribusi layanan  \r\n- **Poket:** Dompet digital untuk transaksi  \r\n- **Modal:** Pembiayaan mikro untuk usaha  \r\n- **Celengan:** Investasi mikro untuk masyarakat",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7335,
+        "hybrid_score": 0.7335,
+        "dense_score": 0.6772,
+        "sparse_score": 6.8984,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Produk Celengan sebagai Layanan Investasi Mikro\r\n\r\nSebagai bagian dari layanan keuangan yang lebih luas, Amartha juga menyediakan produk Celengan yang memungkinkan pengguna melakukan investasi mikro dengan nominal terjangkau. Produk ini dirancang agar masyarakat dapat mulai berinvestasi dengan risiko yang relatif rendah.\r\n\r\nBerikut implementasi atau contoh penerapan produk Celengan di Amartha:\r\n\r\n- **Modal awal rendah:** Mulai dari nominal kecil  \r\n- **Potensi keuntungan:** Kisaran return tertentu sesuai produk  \r\n- **Fleksibilitas penggunaan:** Dapat digunakan oleh mitra maupun non-mitra  \r\n\r\nDengan adanya Celengan, Amartha tidak hanya menyediakan layanan transaksi dan pembiayaan, tetapi juga membuka akses investasi bagi masyarakat.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.6895,
+        "hybrid_score": 0.6895,
+        "dense_score": 0.6705,
+        "sparse_score": 6.7176,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated product names"
+  },
+  {
+    "id": "halu-010",
+    "query": "Sebutkan prinsip-prinsip perlindungan nasabah secara lengkap",
+    "answer": "Untuk mendisiplinkan Mitra, Amartha menerapkan denda keterlambatan sebesar 2% per hari dari sisa pinjaman, sesuai Prinsip Responsible Pricing.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9594,
+        "hybrid_score": 0.9594,
+        "dense_score": 0.6075,
+        "sparse_score": 8.272,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8462,
+        "hybrid_score": 0.8462,
+        "dense_score": 0.5661,
+        "sparse_score": 9.06,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 4: Responsible Pricing\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-4 ini mendefinisikan bahwa perusahaan memastikan harga dan biaya ditetapkan secara adil, tanpa membebani pelanggan dengan biaya yang tidak perlu.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menetapkan bunga atau bagi hasil yang kompetitif dibandingkan kompetitor.\n- **Field Office (FO):** Amartha tidak menetapkan biaya yang tidak berkaitan dengan pinjaman kepada Mitra. Contoh: Amartha tidak menerapkan sistem denda keterlambatan untuk Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.7244,
+        "hybrid_score": 0.7244,
+        "dense_score": 0.5933,
+        "sparse_score": 4.737,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "direct contradiction — context states NO late fees"
+  },
+  {
+    "id": "halu-011",
+    "query": "Apa saja nilai inti perusahaan Amartha?",
+    "answer": "3 Value inti Amartha adalah Integrity, Innovation, dan Inclusion, yang menjadi fondasi seluruh budaya perusahaan.",
+    "retrieved_context": [
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.9033,
+        "hybrid_score": 0.9033,
+        "dense_score": 0.6955,
+        "sparse_score": 6.1424,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4915,
+        "hybrid_score": 0.4915,
+        "dense_score": 0.6227,
+        "sparse_score": 5.4268,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4721,
+        "hybrid_score": 0.4721,
+        "dense_score": 0.6349,
+        "sparse_score": 2.8898,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated 3 Value"
+  },
+  {
+    "id": "halu-012",
+    "query": "Apa peran Field Officer di Amartha?",
+    "answer": "Field Officer berwenang menyita aset jaminan milik Mitra yang menunggak lebih dari 30 hari dan menetapkan denda administratif tambahan sebagai bagian dari prosedur penagihan resmi Amartha.",
+    "retrieved_context": [
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9832,
+        "hybrid_score": 0.9832,
+        "dense_score": 0.5026,
+        "sparse_score": 8.3547,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9119,
+        "hybrid_score": 0.9119,
+        "dense_score": 0.4952,
+        "sparse_score": 8.5205,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 7: Mechanism of Complaints Resolution \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-7 ini mendefinisikan bahwa perusahaan menyediakan mekanisme pengaduan yang mudah diakses agar pelanggan dapat menyampaikan keluhan secara efisien, sekaligus sebagai masukan untuk meningkatkan kualitas layanan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n- **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8168,
+        "hybrid_score": 0.8168,
+        "dense_score": 0.4857,
+        "sparse_score": 8.6039,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "contradicts ethical collection code (asset seizure)"
+  },
+  {
+    "id": "halu-013",
+    "query": "Apa manfaat menjadi mitra Amartha bagi perempuan pengusaha?",
+    "answer": "Program pemberdayaan Amartha terbukti meningkatkan pendapatan Mitra perempuan rata-rata 300% hanya dalam 6 bulan dan telah menjangkau lebih dari 45 juta perempuan di seluruh Asia Tenggara.",
+    "retrieved_context": [
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.7475,
+        "hybrid_score": 0.7475,
+        "dense_score": 0.6585,
+        "sparse_score": 5.3131,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.6391,
+        "hybrid_score": 0.6391,
+        "dense_score": 0.594,
+        "sparse_score": 21.4229,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6089,
+        "hybrid_score": 0.6089,
+        "dense_score": 0.6334,
+        "sparse_score": 5.4463,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated impact stats + scope"
+  },
+  {
+    "id": "halu-014",
+    "query": "Apa itu AmarthaLink?",
+    "answer": "Setiap Mitra aktif AmarthaLink otomatis mendapatkan asuransi jiwa gratis senilai Rp 100 juta serta kartu debit fisik berlogo Visa yang dapat digunakan di seluruh ATM.",
+    "retrieved_context": [
+      {
+        "text": "# Layanan dan Keuntungan Menjadi Agen AmarthaLink\n\nBerikut layanan utama yang disediakan oleh AmarthaLink:\n\n- **Setor dan tarik tunai:** Memudahkan akses keuangan tanpa harus ke bank  \n- **Jual pulsa dan PPOB:** Mendukung kebutuhan transaksi harian masyarakat  \n- **Kirim uang:** Mempermudah transfer antar pengguna  \n\nSelain itu, Amartha juga memberikan keuntungan bagi Agent Partner AmarthaLink:\n\n- **Aman:** Transaksi dirancang agar aman dan dapat dipastikan sampai  \n- **Menguntungkan:** Memberikan peluang tambahan pendapatan bagi agen  \n- **Mudah diakses:** Siapa saja dapat bergabung dengan sistem digital yang sederhana  \n\nUntuk memperluas jaringan AmarthaLink, Amartha mendorong Agent Partner untuk secara aktif mengajak mitra lain bergabung dengan cara berikut:\n\n1. Menyebarkan informasi kepada mitra dan pemilik usaha lokal  \n2. Menjelaskan manfaat dan produk AmarthaLink secara jelas  \n3. Mengarahkan calon agen untuk mengunduh dan mendaftar melalui aplikasi AmarthaFin",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.8759,
+        "hybrid_score": 0.8759,
+        "dense_score": 0.6835,
+        "sparse_score": 7.9972,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# AmarthaLink sebagai Jaringan Agen Layanan Keuangan\r\n\r\nAmarthaLink merupakan peluang usaha bagi agen untuk menjual produk digital secara fleksibel melalui aplikasi AmarthaFIN.\r\n\r\nBerikut peran AmarthaLink dalam ekosistem Amartha:\r\n\r\n- **Menyediakan layanan transaksi langsung:** Tarik tunai, transfer, dan pembayaran  \r\n- **Menjadi perpanjangan layanan digital:** Menghubungkan pengguna dengan sistem AmarthaFin  \r\n- **Meningkatkan peluang usaha agen:** Memberikan sumber pendapatan tambahan  \r\n\r\nDengan adanya AmarthaLink, Amartha mampu menjangkau lebih banyak pengguna melalui kombinasi layanan digital dan jaringan agen fisik.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7565,
+        "hybrid_score": 0.7565,
+        "dense_score": 0.7215,
+        "sparse_score": 3.2503,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.6423,
+        "hybrid_score": 0.6423,
+        "dense_score": 0.6835,
+        "sparse_score": 3.4424,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated free insurance + Visa debit card"
+  },
+  {
+    "id": "halu-015",
+    "query": "Apa itu group lending model?",
+    "answer": "Sejak 2022 Amartha resmi melantai di Bursa Efek Indonesia melalui IPO dan kini mengelola dana kelolaan lebih dari Rp 10 triliun dari investor institusi global.",
+    "retrieved_context": [
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5392,
+        "sparse_score": 24.3695,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6913,
+        "hybrid_score": 0.6913,
+        "dense_score": 0.522,
+        "sparse_score": 8.4395,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.2884,
+        "hybrid_score": 0.2884,
+        "dense_score": 0.4348,
+        "sparse_score": 0.0,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "fabricated IPO + AUM"
+  },
+  {
+    "id": "halu-016",
+    "query": "Jelaskan prinsip Client Protection",
+    "answer": "Client Protection Amartha terdiri dari 10 prinsip yang disertifikasi ulang secara langsung oleh lembaga Smart Campaign internasional setiap tahun.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9884,
+        "hybrid_score": 0.9884,
+        "dense_score": 0.6939,
+        "sparse_score": 12.7257,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 1: Appropriate Product Design and Delivery\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-1 ini mendefinisikan bahwa perusahaan memanfaatkan data dan masukan dari pelanggan untuk merancang produk dan layanan yang sesuai dengan kebutuhan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menjalankan pilot project untuk mengidentifikasi risiko, peluang, dan kebutuhan pasar, lalu menyempurnakan produk berdasarkan hasil analisis umpan balik pelanggan.\n- **Field Office (FO):** BP mengunjungi Mitra untuk memastikan dana digunakan sesuai tujuan, melakukan survei, dan memberikan edukasi. BM juga melakukan survei saat proses validasi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9461,
+        "hybrid_score": 0.9461,
+        "dense_score": 0.6743,
+        "sparse_score": 12.986,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.944,
+        "hybrid_score": 0.944,
+        "dense_score": 0.675,
+        "sparse_score": 12.844,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.0,
+    "intent": "PROVIDED",
+    "note": "wrong principle count (8 not 10) + fabricated certification"
+  },
+  {
+    "id": "part-001",
+    "query": "Apa itu Modal Kerja di Amartha?",
+    "answer": "Produk Modal di Amartha adalah layanan pembiayaan mikro untuk pelaku usaha kecil, dengan pencairan fleksibel, pembayaran cashless, dan akses mudah lewat aplikasi AmarthaFin. Limit pinjaman maksimal mencapai Rp 25 juta per siklus.",
+    "retrieved_context": [
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.8465,
+        "hybrid_score": 0.8465,
+        "dense_score": 0.6438,
+        "sparse_score": 5.907,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Product Knowledge Amartha — AmarthaFin, AmarthaLink, Poket, Modal, Celengan\r\n\r\nDokumen ini menjelaskan product knowledge utama dalam ekosistem Amartha yang meliputi AmarthaFin, AmarthaLink, Poket, Modal, dan Celengan. Materi ini digunakan oleh Agent Partner Amartha untuk memahami fitur, manfaat, serta cara kerja layanan keuangan digital yang tersedia dalam platform Amartha.\r\n\r\nAmartha membangun ekosistem produk ini untuk menghubungkan layanan keuangan mikro dengan ekonomi digital, sehingga masyarakat dapat mengakses layanan finansial secara lebih mudah, cepat, dan terjangkau melalui satu platform terintegrasi.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.5467,
+        "hybrid_score": 0.5467,
+        "dense_score": 0.5909,
+        "sparse_score": 7.1064,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.5366,
+        "hybrid_score": 0.5366,
+        "dense_score": 0.6199,
+        "sparse_score": 3.0708,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "grounded Modal desc + fabricated limit"
+  },
+  {
+    "id": "part-002",
+    "query": "Jelaskan prinsip Client Protection",
+    "answer": "Ada 8 Prinsip Client Protection Amartha, mulai dari Appropriate Product Design hingga Governance and HR, yang mengatur perlindungan pelanggan secara menyeluruh. Seluruh prinsip ini diaudit langsung oleh OJK setiap kuartal.",
+    "retrieved_context": [
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9884,
+        "hybrid_score": 0.9884,
+        "dense_score": 0.6939,
+        "sparse_score": 12.7257,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 1: Appropriate Product Design and Delivery\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-1 ini mendefinisikan bahwa perusahaan memanfaatkan data dan masukan dari pelanggan untuk merancang produk dan layanan yang sesuai dengan kebutuhan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menjalankan pilot project untuk mengidentifikasi risiko, peluang, dan kebutuhan pasar, lalu menyempurnakan produk berdasarkan hasil analisis umpan balik pelanggan.\n- **Field Office (FO):** BP mengunjungi Mitra untuk memastikan dana digunakan sesuai tujuan, melakukan survei, dan memberikan edukasi. BM juga melakukan survei saat proses validasi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9461,
+        "hybrid_score": 0.9461,
+        "dense_score": 0.6743,
+        "sparse_score": 12.986,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.944,
+        "hybrid_score": 0.944,
+        "dense_score": 0.675,
+        "sparse_score": 12.844,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct 8 principles + unsupported quarterly OJK audit"
+  },
+  {
+    "id": "part-003",
+    "query": "Apa peran Field Officer di Amartha?",
+    "answer": "Field Officer menerapkan kode etik penagihan (dilarang menagih di luar jam kerja, masuk rumah tanpa izin, atau intimidasi) dan memasarkan produk tanpa paksaan. FO juga diwajibkan melakukan kunjungan harian ke rumah setiap Mitra binaannya.",
+    "retrieved_context": [
+      {
+        "text": "# Prinsip 5: Fair and Respectful Treatment of Client\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-5 ini mendefinisikan bahwa perusahaan memastikan kandidat yang direkrut sejalan dengan misi sosial, memperlakukan pelanggan secara adil, menawarkan produk tanpa paksaan, serta melakukan penagihan dengan etika dan menghormati hak pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memastikan seluruh karyawan memahami dan menerapkan kode etik perusahaan, yang diwujudkan melalui penandatanganan pakta integritas sebagai bagian dari kontrak kerja.\n- **Field Office (FO):** Amartha memiliki kode etik penagihan yang melarang: menagih di luar jam kerja, memasuki rumah pelanggan tanpa izin, berkata kasar, dan intimidasi berbasis SARA. Amartha juga tidak melakukan aggressive sales; BP memiliki batasan jumlah mitra yang dikelola dan skema insentif berbasis kualitas portofolio.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9832,
+        "hybrid_score": 0.9832,
+        "dense_score": 0.5026,
+        "sparse_score": 8.3547,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 8: Governance and HR\n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-8 ini mendefinisikan bahwa manajemen mengambil keputusan strategis dan operasional berdasarkan data sosial dan finansial, serta memberikan edukasi kepada seluruh karyawan mengenai perlindungan pelanggan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menerapkan pengendalian internal yang baik melalui standar prosedur kerja tertulis, fungsi manajemen risiko, dan audit internal.\n- **Field Office (FO):** Amartha rutin memberikan pengarahan kepada karyawan, mencakup:\n  - Cara menghitung kemampuan bayar Mitra\n  - Pemasaran produk tanpa paksaan\n  - Penerapan kode etik\n  - Penagihan yang benar\n  - Penanganan keluhan\n  - Penjagaan data pribadi pelanggan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.9119,
+        "hybrid_score": 0.9119,
+        "dense_score": 0.4952,
+        "sparse_score": 8.5205,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 7: Mechanism of Complaints Resolution \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-7 ini mendefinisikan bahwa perusahaan menyediakan mekanisme pengaduan yang mudah diakses agar pelanggan dapat menyampaikan keluhan secara efisien, sekaligus sebagai masukan untuk meningkatkan kualitas layanan.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha menyediakan berbagai saluran pengaduan dan pertanyaan pelanggan dengan SLA dan matriks penanganan yang jelas, dikelola melalui sistem dan tenaga manusia.\n- **Field Office (FO):** Informasi tata cara pengaduan disampaikan secara verbal, melalui dokumen LWK, dan secara digital melalui aplikasi Mitra.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8168,
+        "hybrid_score": 0.8168,
+        "dense_score": 0.4857,
+        "sparse_score": 8.6039,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct FO roles + unsupported daily-visit mandate"
+  },
+  {
+    "id": "part-004",
+    "query": "Apa itu AmarthaLink?",
+    "answer": "AmarthaLink adalah jaringan agen layanan keuangan digital yang menyediakan setor/tarik tunai, jual pulsa & PPOB, dan kirim uang melalui AmarthaFin. Agen mendapat komisi dari setiap transaksi yang mereka proses.",
+    "retrieved_context": [
+      {
+        "text": "# Layanan dan Keuntungan Menjadi Agen AmarthaLink\n\nBerikut layanan utama yang disediakan oleh AmarthaLink:\n\n- **Setor dan tarik tunai:** Memudahkan akses keuangan tanpa harus ke bank  \n- **Jual pulsa dan PPOB:** Mendukung kebutuhan transaksi harian masyarakat  \n- **Kirim uang:** Mempermudah transfer antar pengguna  \n\nSelain itu, Amartha juga memberikan keuntungan bagi Agent Partner AmarthaLink:\n\n- **Aman:** Transaksi dirancang agar aman dan dapat dipastikan sampai  \n- **Menguntungkan:** Memberikan peluang tambahan pendapatan bagi agen  \n- **Mudah diakses:** Siapa saja dapat bergabung dengan sistem digital yang sederhana  \n\nUntuk memperluas jaringan AmarthaLink, Amartha mendorong Agent Partner untuk secara aktif mengajak mitra lain bergabung dengan cara berikut:\n\n1. Menyebarkan informasi kepada mitra dan pemilik usaha lokal  \n2. Menjelaskan manfaat dan produk AmarthaLink secara jelas  \n3. Mengarahkan calon agen untuk mengunduh dan mendaftar melalui aplikasi AmarthaFin",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.8759,
+        "hybrid_score": 0.8759,
+        "dense_score": 0.6835,
+        "sparse_score": 7.9972,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# AmarthaLink sebagai Jaringan Agen Layanan Keuangan\r\n\r\nAmarthaLink merupakan peluang usaha bagi agen untuk menjual produk digital secara fleksibel melalui aplikasi AmarthaFIN.\r\n\r\nBerikut peran AmarthaLink dalam ekosistem Amartha:\r\n\r\n- **Menyediakan layanan transaksi langsung:** Tarik tunai, transfer, dan pembayaran  \r\n- **Menjadi perpanjangan layanan digital:** Menghubungkan pengguna dengan sistem AmarthaFin  \r\n- **Meningkatkan peluang usaha agen:** Memberikan sumber pendapatan tambahan  \r\n\r\nDengan adanya AmarthaLink, Amartha mampu menjangkau lebih banyak pengguna melalui kombinasi layanan digital dan jaringan agen fisik.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7565,
+        "hybrid_score": 0.7565,
+        "dense_score": 0.7215,
+        "sparse_score": 3.2503,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.6423,
+        "hybrid_score": 0.6423,
+        "dense_score": 0.6835,
+        "sparse_score": 3.4424,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct services + commission-per-tx not stated (context says 'peluang pendapatan')"
+  },
+  {
+    "id": "part-005",
+    "query": "Apa itu group lending model?",
+    "answer": "Group lending model adalah model keuangan mikro akar rumput yang dipegang Amartha untuk melayani kelompok berpenghasilan rendah tanpa akses keuangan konvensional. Model ini terinspirasi langsung dari Grameen Bank Bangladesh yang didirikan oleh Muhammad Yunus.",
+    "retrieved_context": [
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.5392,
+        "sparse_score": 24.3695,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6913,
+        "hybrid_score": 0.6913,
+        "dense_score": 0.522,
+        "sparse_score": 8.4395,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Produk Modal sebagai Layanan Pinjaman Usaha Mikro\r\n\r\nDalam mendukung pemberdayaan ekonomi, Amartha menyediakan produk Modal sebagai layanan pembiayaan mikro bagi mitra. Produk ini dirancang untuk membantu pelaku usaha kecil mendapatkan akses permodalan secara mudah dan digital.\r\n\r\nBerikut karakteristik utama produk Modal di Amartha:\r\n\r\n- **Pencairan fleksibel:** Disesuaikan dengan kebutuhan dan limit pengguna  \r\n- **Pembayaran cashless:** Dilakukan melalui sistem digital  \r\n- **Akses mudah:** Menggunakan aplikasi AmarthaFin  \r\n\r\nPeran Agen AmarthaLink dalam produk ini adalah membantu proses transaksi seperti top up saldo Poket mitra dan pembayaran angsuran pinjaman, sehingga ekosistem pembiayaan berjalan lancar.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.2884,
+        "hybrid_score": 0.2884,
+        "dense_score": 0.4348,
+        "sparse_score": 0.0,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct Grameen def + world-knowledge (Yunus/Bangladesh) not in context"
+  },
+  {
+    "id": "part-006",
+    "query": "Apa saja nilai inti perusahaan Amartha?",
+    "answer": "Nilai inti Amartha terdiri dari 3 Value (Get Things Done & Never Settle, Collaborate & Communicate Effectively, Be Customer-Driven & Make an Impact) dan 8 DNA Amartha. Nilai-nilai ini diperbarui setiap tahun melalui survei karyawan.",
+    "retrieved_context": [
+      {
+        "text": "# Budaya & DNA Amartha\n\nBudaya Amartha dibangun di atas 3 Value dan DNA Amartha yang menjadi panduan perilaku seluruh karyawan dalam bekerja sehari-hari. Budaya Amartha tercermin dalam **3 Value** sebagai fondasi dan **DNA Amartha** sebagai panduan perilaku harian seluruh karyawan.\n\n**3 Value Amartha:**\n- **Get Things Done & Never Settle** — Berorientasi pada hasil, tidak mudah puas, dan selalu mendorong diri untuk mencapai lebih.\n- **Collaborate & Communicate Effectively** — Membangun kerja sama yang solid dan komunikasi yang terbuka antar tim.\n- **Be Customer-Driven & Make an Impact** — Mengutamakan kebutuhan pelanggan dan memastikan setiap tindakan memberikan dampak nyata.\n\n**DNA Amartha** (nilai-nilai perilaku yang diharapkan dari seluruh karyawan Amartha):\n- **Get Things Done and Never Settle** — Menyelesaikan pekerjaan dengan tuntas dan terus berupaya melampaui standar yang ada.\n- **Resilience** — Tangguh menghadapi tantangan dan tetap konsisten dalam tekanan.\n- **Planning & Organizing** — Mampu merencanakan pekerjaan secara terstruktur dan sistematis.\n- **Continuous Learning** — Selalu terbuka untuk belajar dan berkembang.\n- **Delivering Results** — Fokus pada pencapaian hasil yang terukur dan berkualitas.\n- **Customer Driven** — Menempatkan kebutuhan pelanggan sebagai prioritas utama dalam setiap keputusan.\n- **Empowering Others** — Mendukung dan memberdayakan rekan kerja untuk tumbuh bersama.\n- **Innovation** — Mendorong ide-ide baru dan solusi kreatif untuk menghadapi tantangan.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.9033,
+        "hybrid_score": 0.9033,
+        "dense_score": 0.6955,
+        "sparse_score": 6.1424,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4915,
+        "hybrid_score": 0.4915,
+        "dense_score": 0.6227,
+        "sparse_score": 5.4268,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4721,
+        "hybrid_score": 0.4721,
+        "dense_score": 0.6349,
+        "sparse_score": 2.8898,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct values + unsupported annual survey-update"
+  },
+  {
+    "id": "part-007",
+    "query": "Apa itu CP dalam konteks Amartha?",
+    "answer": "Client Protection (CP) adalah panduan agar produk dan layanan Amartha aman, adil, dan tidak merugikan pelanggan, terdiri dari 8 prinsip. Penerapan CP ini diwajibkan sesuai POJK Nomor 6 Tahun 2022.",
+    "retrieved_context": [
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 1.0,
+        "hybrid_score": 1.0,
+        "dense_score": 0.7671,
+        "sparse_score": 10.6529,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# 8 Prinsip Client Protection Amartha\n\nBerikut adalah 8 prinsip Client Protection yang diterapkan Amartha:\n\n1. **Appropriate Product Design and Delivery** — Merancang produk sesuai kebutuhan pelanggan berdasarkan data dan masukan.\n2. **Prevention of Over Indebtedness** — Memastikan pertumbuhan bertanggung jawab dengan memperhatikan kemampuan bayar klien.\n3. **Transparency** — Menyampaikan informasi produk secara transparan dan komunikasi yang jelas.\n4. **Responsible Pricing** — Menetapkan harga dan biaya secara adil tanpa membebani pelanggan.\n5. **Fair and Respectful Treatment of Client** — Memperlakukan pelanggan secara adil, tanpa paksaan, dan dengan etika.\n6. **Privacy of Client Data** — Menjaga keamanan dan kerahasiaan data pelanggan.\n7. **Mechanism of Complaints Resolution** — Menyediakan mekanisme pengaduan yang mudah diakses.\n8. **Governance and HR** — Pengambilan keputusan berbasis data dan edukasi karyawan tentang perlindungan pelanggan.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8444,
+        "hybrid_score": 0.8444,
+        "dense_score": 0.7387,
+        "sparse_score": 9.139,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Prinsip 6: Privacy of Client Data \n\nSebagai bagian dari 8 Prinsip Client Protection Amartha, prinsip ke-6 ini mendefinisikan bahwa perusahaan menjaga keamanan dan kerahasiaan data pelanggan, serta memastikan pelanggan mendapat informasi yang jelas tentang privasi dan hak atas data mereka.\n\nBerikut implementasi atau contoh penerapan prinsip ini di Amartha:\n\n- **Head Office (HO):** Amartha memiliki kebijakan privasi data pelanggan untuk data fisik maupun digital, sesuai standar ISO 27001. Akses dan penggunaan data pribadi pelanggan hanya dilakukan setelah memperoleh persetujuan pelanggan, sesuai regulasi OJK dan Komdigi.\n- **Field Office (FO):** Amartha secara konsisten mengedukasi Mitra untuk menjaga keamanan data pribadi mereka, termasuk PIN dan kode sandi.",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.8408,
+        "hybrid_score": 0.8408,
+        "dense_score": 0.7403,
+        "sparse_score": 8.8654,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct CP definition + fabricated specific POJK number"
+  },
+  {
+    "id": "part-008",
+    "query": "Bagaimana Amartha memastikan keberlanjutan usaha mitra?",
+    "answer": "Amartha menjaga keberlanjutan usaha mitra lewat misi \"Mewujudkan kesejahteraan merata untuk semua\" dan visi \"Kemakmuran Bersama\". Perusahaan menargetkan menjangkau 100 juta penerima manfaat pada tahun 2030.",
+    "retrieved_context": [
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.7,
+        "hybrid_score": 0.7,
+        "dense_score": 0.6418,
+        "sparse_score": 0.0,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.5366,
+        "hybrid_score": 0.5366,
+        "dense_score": 0.6221,
+        "sparse_score": 2.3153,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.4895,
+        "hybrid_score": 0.4895,
+        "dense_score": 0.6152,
+        "sparse_score": 2.5093,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct misi/visi + unsupported 2030 target"
+  },
+  {
+    "id": "part-009",
+    "query": "Apa manfaat menjadi mitra Amartha bagi perempuan pengusaha?",
+    "answer": "Menjadi mitra Amartha meningkatkan pendapatan dan kesejahteraan, literasi keuangan, akses keuangan setara, dan memberdayakan perempuan. Mitra juga otomatis mendapatkan perlindungan asuransi kesehatan keluarga.",
+    "retrieved_context": [
+      {
+        "text": "# Business Model & Jaringan Layanan Amartha\n\nAmartha bertransformasi menjadi platform keuangan untuk melayani pelanggan lebih baik dan menyediakan layanan yang melampaui segmen Ibu Mitra. Segmen dan konsumen utama Amartha adalah **wanita**, khususnya pelaku UMKM di komunitas akar rumput.\n\n**Grameen Model** adalah konsep dan nilai bisnis keuangan mikro \"akar rumput\" yang masih dipegang teguh oleh Amartha. Model ini memberikan layanan keuangan kepada individu atau kelompok berpenghasilan rendah yang tidak memiliki akses terhadap layanan keuangan konvensional.\n\n**Agen Partner** membangun jaringan keuangan melalui **AmarthaLink** untuk mempermudah akses keuangan, tidak terbatas pada Ibu Mitra Grameen, melainkan seluruh masyarakat di sekitarnya.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.7475,
+        "hybrid_score": 0.7475,
+        "dense_score": 0.6585,
+        "sparse_score": 5.3131,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      },
+      {
+        "text": "# Tentang Client Protection Amartha\n\nClient Protection (CP) adalah panduan yang membantu Amartha memastikan bahwa produk dan layanan yang diberikan aman, adil, dan tidak merugikan pelanggan. Tujuannya adalah melindungi hak-hak pelanggan dan menghindari praktik yang merugikan.\n\nAmartha menerapkan Client Protection karena memberikan manfaat strategis:\n- Membuat perusahaan lebih transparan di mata pemangku kepentingan\n- Menambah nilai kompetitif\n- Mendorong pertumbuhan berkelanjutan\n- Menjadikan perusahaan contoh baik di industri\n- Membantu mengurangi risiko bisnis\n\n**Manfaat bagi Mitra:**\n- Meningkatkan pendapatan dan kesejahteraan Mitra\n- Meningkatkan literasi keuangan\n- Memberikan akses yang setara terhadap layanan keuangan\n- Memberdayakan perempuan dalam membangun perekonomian\n\n**Manfaat bagi Perusahaan:**\n- Menjadi landasan keuangan inklusif yang bertanggung jawab\n- Meminimalisir kredit macet\n- Meningkatkan reputasi\n- Meningkatkan loyalitas konsumen (retensi)\n- Menyediakan data andal untuk pengambilan keputusan",
+        "course_id": 4,
+        "course_name": "Client Protection",
+        "score": 0.6391,
+        "hybrid_score": 0.6391,
+        "dense_score": 0.594,
+        "sparse_score": 21.4229,
+        "source": "Client Protection.md",
+        "document_id": "fe04e620-cf9d-41c6-8e9e-b21a5c453180"
+      },
+      {
+        "text": "# Evolusi Bisnis Model Amartha\n\nAmartha telah melalui tiga fase evolusi bisnis model:\n- **2010–2015 (Grameen Microfinance):** Memulai dengan model group lending dengan 10.000 peminjam pertama, melayani kelompok 15–20 Ibu Mitra dengan pinjaman awal Rp 500.000.\n- **2016–2022 (Peer-to-Peer & Marketplace):** Berkembang menjadi platform P2P lending dengan 1.200.000 Ibu Mitra, 10.000 lender individu, dan 20+ bank/lembaga keuangan. Memperkenalkan produk marketplace seperti:\n  - Dana Sekarang\n  - Dana Sel\n  - Warung Sumber Berkah\n- **2022+ (Digital Financial Platform):** Melayani 20.000.000+ pelanggan mencakup UMKM wanita dan masyarakat luas. Produk digital meliputi:\n  - Self-Service Loan Application\n  - Catatan Keuangan Digital\n  - E-Wallet\n  - PPOB\n  - Celengan (Investasi Mitra)",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6089,
+        "hybrid_score": 0.6089,
+        "dense_score": 0.6334,
+        "sparse_score": 5.4463,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct benefits + unsupported health-insurance perk"
+  },
+  {
+    "id": "part-010",
+    "query": "Apa peran teknologi dalam layanan Amartha?",
+    "answer": "Teknologi memperluas jangkauan layanan Amartha lewat AmarthaLink dan mengintegrasikan ekosistem digital AmarthaFin. Amartha juga menggunakan AI dan blockchain untuk mencatat seluruh transaksi Mitra secara terdesentralisasi.",
+    "retrieved_context": [
+      {
+        "text": "# Positioning AmarthaLink dalam Ekosistem Amartha\n\nSebagai bagian dari strategi inklusi keuangan Amartha, AmarthaLink berperan sebagai jaringan agen layanan keuangan digital yang memperluas jangkauan layanan hingga ke level warung, Lembaga Keuangan Digital (LKD), dan konter pulsa. Amartha membangun AmarthaLink bukan hanya untuk transaksi, tetapi untuk memperkuat ekosistem yang saling terhubung.\n\nBerikut peran utama AmarthaLink dalam ekosistem Amartha:\n\n- **Perluasan jangkauan layanan:** Agen AmarthaLink membantu menjangkau pelanggan baru dari segmen warung dan konter pulsa  \n- **Integrasi ekosistem:** AmarthaLink menghubungkan berbagai layanan dalam satu ekosistem keuangan digital  \n- **Peningkatan value bisnis agen:** Agen tidak hanya menjual pulsa, tetapi juga menyediakan layanan finansial tambahan  \n\nSebagai contoh implementasi di Amartha, sebuah konter pulsa yang sebelumnya hanya melayani jual beli pulsa dapat menambah layanan seperti tarik tunai, kirim uang, dan pembayaran lainnya, sehingga menarik lebih banyak pelanggan dari mitra Amartha.",
+        "course_id": 10,
+        "course_name": "AmarthaLink & Digital Mindset",
+        "score": 0.9407,
+        "hybrid_score": 0.9407,
+        "dense_score": 0.6552,
+        "sparse_score": 8.6188,
+        "source": "AmarthaLink  Digital Mindset.md",
+        "document_id": "9506acf4-38f1-48e0-b17f-0ac3f6f2d858"
+      },
+      {
+        "text": "# Fitur dan Layanan Utama AmarthaFin\r\n\r\nDalam implementasinya, Amartha menyediakan berbagai fitur yang mendukung kebutuhan transaksi harian pengguna melalui AmarthaFin. Fitur ini dirancang untuk menjangkau kebutuhan masyarakat luas, baik untuk individu maupun pelaku usaha.\r\n\r\nBerikut layanan utama yang tersedia di AmarthaFin:\r\n\r\n- **Transfer uang ke berbagai bank:** Memudahkan pengiriman dana antar rekening  \r\n- **Pembayaran tagihan:** Mendukung pembayaran listrik, air, dan layanan lainnya  \r\n- **Pembelian produk digital:** Pulsa, paket data, dan token listrik  \r\n- **Top up e-wallet:** Mendukung berbagai dompet digital  \r\n- **Layanan zakat:** Memfasilitasi transaksi sosial berbasis digital  \r\n\r\nMelalui fitur ini, Amartha tidak hanya menyediakan layanan transaksi, tetapi juga mendukung aktivitas ekonomi dan sosial masyarakat.",
+        "course_id": 10,
+        "course_name": "Product Knowledge Amartha",
+        "score": 0.7197,
+        "hybrid_score": 0.7197,
+        "dense_score": 0.6503,
+        "sparse_score": 3.9724,
+        "source": "Product Knowledge Amartha.md",
+        "document_id": "a641cc69-b55e-4f0b-96c4-c38739c60c88"
+      },
+      {
+        "text": "# Company Profile & Visi Misi Amartha\n\nAmartha adalah perusahaan berbasis teknologi yang mendorong pertumbuhan inklusi melalui pemberdayaan akar rumput dan memberikan akses kepada semua orang melalui ekosistem keuangan AmarthaFin. Tagline Amartha adalah **\"Enabling Growth\"**.\n\n**Misi** Amartha adalah **\"Mewujudkan kesejahteraan merata untuk semua\"**, yang diwujudkan melalui:\n- Membuka akses ke produk finansial terpercaya melalui teknologi\n- Mendukung komunitas akar rumput dan keluarganya untuk memenuhi potensi mereka secara setara\n- Mempromosikan cara menghasilkan keuntungan dengan prinsip berkelanjutan\n\n**Visi** Amartha adalah **\"Kemakmuran Bersama\"**, yaitu mendorong kemakmuran bersama dan mengembangkan potensi ekonomi masyarakat akar rumput dengan membangun infrastruktur keuangan digital.",
+        "course_id": 10,
+        "course_name": "Company Amartha",
+        "score": 0.6628,
+        "hybrid_score": 0.6628,
+        "dense_score": 0.6352,
+        "sparse_score": 6.1715,
+        "source": "Profile-Amartha.md",
+        "document_id": "0de32a3b-ea82-4279-8364-3cdf5ac365db"
+      }
+    ],
+    "gold_faithful": 0.5,
+    "intent": "PROVIDED",
+    "note": "correct tech role + buzzword fabrication (AI/blockchain)"
+  }
+]

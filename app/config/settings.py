@@ -214,6 +214,31 @@ class Settings(BaseSettings):
     eval_always_if_dense_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_DENSE_BELOW")
     eval_always_if_empathy_above: float = Field(default=0.90, alias="EVAL_ALWAYS_IF_EMPATHY_ABOVE")
 
+    # D3 LOCKED faithfulness threshold. An answer with judge.score < this is
+    # graded UNFAITHFUL (runner.py gates on `judge.score < min_faithfulness`).
+    #
+    # LOCKED at 0.75 (not the provisional 0.70) on calibration evidence from a
+    # balanced, discrimination-valid set (41 items: 15 faithful / 10 partial /
+    # 16 hallucinated; refusals excluded from the math, judged via the
+    # provided-answer harness mode). DeepSeek V4 Pro was VALIDATED against human
+    # gold: Spearman ρ=0.915 [0.82,0.98], quadratic-weighted κ=0.906, and all
+    # 16/16 realistic hallucinations scored 0.00 (perfect hard-negative
+    # detection) — so the judge is trustworthy and was NOT swapped to the Qwen
+    # fallback.
+    #
+    # Why 0.75 over 0.70: moving the gate 0.70→0.75 raised best-τ Cohen's
+    # κ 0.515→0.741 and precision 0.62→0.81 while recall stayed IDENTICAL at
+    # 0.87 — i.e. it rejects 5 additional partial answers (each mostly grounded
+    # but carrying one fabricated claim: an invented POJK number, a made-up
+    # limit, a daily-visit mandate, etc.) at ZERO cost to genuinely faithful
+    # answers. This matches the gate's purpose (a faithfulness gate should fail
+    # answers with unsupported claims) and the gold_floor=0.70 binarization. The
+    # κ-max τ (0.75) is itself a stable plateau (0.75/0.80=0.741). Re-calibrate
+    # with more natural partials if the judge model or generator changes.
+    # Calibration harness: app/eval/calibrate_judge.py;
+    # dataset builder: data/eval/build_balanced_calibration.py.
+    faithfulness_min: float = Field(default=0.75, alias="FAITHFULNESS_MIN")
+
     # ─── Intent Classification (Tier-0 semantic gate) ──────────────────────
     # Used by app/graph/intent_classifier.classify_semantic. Embedding-based
     # cosine similarity against pre-computed intent centroids. Replaces the

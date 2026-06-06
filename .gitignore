@@ -39,5 +39,7 @@ docs/superpowers/
 tmp/
 
 # D3 judge-calibration run output (regenerable; overwritten each run).
-# The seed dataset (input) IS committed; the *_judge_run.json (output) is not.
+# The seed/balanced datasets (input) ARE committed; the run output is not.
+# Covers both the live-run output and the offline relabel output.
 data/eval/*_judge_run.json
+data/eval/*_judge_run_relabeled.json
