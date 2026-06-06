@@ -28,15 +28,6 @@ from app.database.models import UserProfile
 from app.graph.pipeline import get_rag_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
-from app.observability import (
-    flush as flush_traces,
-    is_observability_enabled,
-    root_span,
-    set_current_span_io,
-    set_current_span_attributes,
-    annotate_span,
-    update_current_span_name,
-)
 from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
 from app.llm.client import get_cheap_llm
@@ -44,6 +35,7 @@ from app.api.user_utils import is_real_user
 from app.agents.long_term_memory_qdrant import qdrant_ltm
 from app.database.redis_client import get_redis_client
 from app.api.routes.ingest import get_arq_redis
+from app.worker import sync_ltm_task, eval_turn_task  # noqa: E402
 
 router = APIRouter()
 settings = get_settings()
@@ -51,14 +43,6 @@ settings = get_settings()
 # Module-level set to keep references to background stream tasks alive
 # (prevents GC from cancelling them mid-flight after the SSE generator returns).
 _stream_bg_tasks: set[asyncio.Task] = set()
-
-def _flush_traces():
-    """Background: flush Phoenix traces so they're sent immediately."""
-    if is_observability_enabled():
-        try:
-            flush_traces()
-        except Exception as e:
-            logger.warning(f"Phoenix flush error: {e}")
 
 async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
     redis_client = get_redis_client()
@@ -172,33 +156,28 @@ def _should_eval_turn(
 async def _enqueue_eval(
     *,
     turn_id: Optional[str],
-    span_id: Optional[str],
     query: str,
     answer: str,
     retrieved_context: list,
     intent: Optional[str],
     intent_scores: Optional[dict],
 ) -> None:
-    """Push the turn onto the arq queue for async LLM-as-judge evaluation.
+    """Push the turn onto the streaq queue for async LLM-as-judge evaluation.
 
     Fire-and-forget — failures are logged and swallowed so eval scheduling
     never affects user-facing flow.
     """
-    # turn_id correlates the async faithfulness score back to the agent_logs
-    # row (Phoenix-independent). span_id is Phoenix-only and may be None.
-    if not turn_id and not span_id:
+    # turn_id correlates the async faithfulness score back to the agent_logs row.
+    if not turn_id:
         return
     try:
-        arq_redis = await get_arq_redis()
-        await arq_redis.enqueue_job(
-            "eval_turn_task",
-            span_id,
-            query,
-            answer,
-            retrieved_context or [],
-            intent,
-            intent_scores or {},
-            turn_id,
+        await eval_turn_task.enqueue(
+            query=query,
+            answer=answer,
+            retrieved_context=retrieved_context or [],
+            intent=intent,
+            intent_scores=intent_scores or {},
+            turn_id=turn_id,
         )
     except Exception as e:
         logger.warning(f"Failed to enqueue eval task: {e}")
@@ -211,8 +190,8 @@ def _quality_log_fields(
 ) -> dict:
     """Build the durable quality-signal columns for an agent_logs row.
 
-    These used to live only in Phoenix span annotations; persisting them to
-    Postgres makes monitoring possible without Phoenix running.
+    Persists intent + retrieval signal to Postgres so monitoring works
+    without any external tracing backend.
     """
     scores = intent_scores or {}
 
@@ -583,22 +562,7 @@ async def _run_chat(
 
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
-        try:
-            with root_span(
-                "a-pedi-chat",
-                session_id=conversation_id,
-                user_id=f"{current_user.username} (ID: {current_user.user_id})",
-                tags=["api-chat", settings.app_env, "cache-hit"],
-                metadata={"latency_ms": round(latency_ms, 2), "cache_hit": True, "env": settings.app_env},
-            ):
-                set_current_span_io(
-                    input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
-                    output={"answer": cached["answer"]},
-                )
-        except Exception as e:
-            logger.warning(f"Phoenix cache-hit trace failed: {e}")
 
-        background_tasks.add_task(_flush_traces)
         background_tasks.add_task(
             batch_logger.add_log,
             {
@@ -633,74 +597,24 @@ async def _run_chat(
     initial_state = context["initial_state"]
     rag_graph = get_rag_graph()
 
-    span_id: Optional[str] = None
     result = None
     answer = None
     latency_ms = 0.0
 
     try:
-        with root_span(
-            "a-pedi-chat",
-            session_id=conversation_id,
-            user_id=f"{current_user.username} (ID: {current_user.user_id})",
-            tags=["api-chat", settings.app_env],
-            metadata={
-                "cache_hit": False,
-                "env": settings.app_env,
-                "original_query": request.query,
-                "resolved_query": resolved_query,
-            },
-        ) as sid:
-            span_id = sid
-            result = await rag_graph.ainvoke(
-                initial_state,
-                config={"run_name": "a-pedi-chat"},
-            )
+        result = await rag_graph.ainvoke(
+            initial_state,
+            config={"run_name": "a-pedi-chat"},
+        )
 
-            latency_ms = (time.perf_counter() - start_time) * 1000
-            final_message = result["messages"][-1]
-            answer = final_message.content if hasattr(final_message, "content") else str(final_message)
-            llm_tokens_used = 0
-            if hasattr(final_message, "response_metadata"):
-                llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
-
-
-            # Compute observability attrs BEFORE the span exits — set_current_*
-            # only writes to the active span, so doing this after `with` would
-            # silently drop the values onto a closed span.
-            _scores = result.get("intent_scores") or {}
-            _intent = result.get("intent", "KNOWLEDGE")
-            _rewritten = result.get("rewritten_query") or resolved_query
-            _retrieved = result.get("retrieved_context") or []
-            _max_score = 0.0
-            if _retrieved:
-                _scores_list = [c.get("score") for c in _retrieved if isinstance(c.get("score"), (int, float))]
-                if _scores_list:
-                    _max_score = float(max(_scores_list))
-
-            set_current_span_io(
-                input={"query": request.query, "resolved_query": resolved_query, "conversation_id": conversation_id},
-                output={"answer": answer},
-            )
-            set_current_span_attributes({
-                "intent": _intent,
-                "rewritten_query": _rewritten,
-                "needs_lookup": float(_scores.get("needs_lookup", 0.0)),
-                "needs_reasoning": float(_scores.get("needs_reasoning", 0.0)),
-                "needs_empathy": float(_scores.get("needs_empathy", 0.0)),
-                "retrieved_chunks": len(_retrieved),
-                "max_chunk_score": _max_score,
-                "latency_ms": round(latency_ms, 2),
-                "streaming": False,
-            })
-            # Rename the span so Phoenix's span list shows intent inline
-            # ("a-pedi-chat:KNOWLEDGE") — no need to expand row or configure
-            # columns. Group-by-name then yields intent distribution directly.
-            update_current_span_name(f"a-pedi-chat:{_intent}")
-
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        final_message = result["messages"][-1]
+        answer = final_message.content if hasattr(final_message, "content") else str(final_message)
+        llm_tokens_used = 0
+        if hasattr(final_message, "response_metadata"):
+            llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
     except Exception as exc:
         logger.error("RAG pipeline error", error=str(exc), query=request.query[:60])
-        background_tasks.add_task(_flush_traces)
         raise HTTPException(status_code=500, detail="RAG pipeline failed") from exc
 
     rewritten_query = result.get("rewritten_query") or resolved_query
@@ -730,39 +644,6 @@ async def _run_chat(
     effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
 
-    if span_id and retrieved_context:
-        try:
-            # ── Fused hybrid scores (dense + sparse BM25 relative-score fusion) ──
-            hybrid_scores = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            # ── Raw dense cosine scores (absolute signal used for the NOT-FOUND gate) ──
-            dense_only = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
-
-            if hybrid_scores:
-                annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores), 4))
-                annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores) / len(hybrid_scores), 4))
-            if dense_only:
-                annotate_span(span_id, "retriever_dense_max", round(max(dense_only), 4))
-                annotate_span(span_id, "retriever_dense_avg", round(sum(dense_only) / len(dense_only), 4))
-        except Exception as e:
-            logger.warning(f"Failed to submit Phoenix retrieval scores: {e}")
-
-    # ── Intent annotations (Coexist observability) ─────────────────────────
-    # Span attributes (set inside the with-block above) are what Phoenix UI
-    # surfaces directly. These annotate calls feed evaluator aggregation —
-    # span_id remains valid even after the span is closed.
-    if span_id:
-        try:
-            scores = result.get("intent_scores") or {}
-            if "needs_lookup" in scores:
-                annotate_span(span_id, "intent_needs_lookup", float(scores["needs_lookup"]))
-            if "needs_reasoning" in scores:
-                annotate_span(span_id, "intent_needs_reasoning", float(scores["needs_reasoning"]))
-            if "needs_empathy" in scores:
-                annotate_span(span_id, "intent_needs_empathy", float(scores["needs_empathy"]))
-        except Exception as e:
-            logger.warning(f"Failed to submit Phoenix intent scores: {e}")
-
-    background_tasks.add_task(_flush_traces)
     # Skip cache write when retrieval missed: no chunks OR both gate signals
     # below floor (mirrors _route_after_rag's dense-OR-sparse logic). These
     # responses are canned "not found" messages — caching them would poison
@@ -830,7 +711,6 @@ async def _run_chat(
         background_tasks.add_task(
             _enqueue_eval,
             turn_id=turn_id,
-            span_id=span_id,
             query=resolved_query,
             answer=answer,
             retrieved_context=retrieved_context,
@@ -1032,142 +912,93 @@ async def chat_stream(
         retrieved_context = []
         intent = "KNOWLEDGE"
         stream_intent_scores: dict = {}
-        span_id: Optional[str] = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
         try:
-            with root_span(
-                "a-pedi-chat-stream",
-                session_id=conversation_id,
-                user_id=f"{current_user.username} (ID: {current_user.user_id})",
-                tags=["api-chat-stream", settings.app_env],
-                metadata={
-                    "cache_hit": False,
-                    "env": settings.app_env,
-                    "original_query": request.query,
-                    "resolved_query": resolved_query,
-                    "streaming": True,
-                },
-            ) as sid:
-                span_id = sid
-                config = {"run_name": "a-pedi-chat-stream"}
+            config = {"run_name": "a-pedi-chat-stream"}
 
-                if resolved_query != request.query:
-                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+            if resolved_query != request.query:
+                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
-                token_count = 0
-                # Canned-response nodes (malicious / topic_list / greeting
-                # Tier-2 / ambiguity Tier-2 / low_relevance / off_scope) return
-                # an AIMessage directly without invoking an LLM, so no
-                # `on_chat_model_stream` event fires for them. We emit their
-                # content from on_chain_end instead. Per-node flag prevents
-                # double-emission when greeting/ambiguity fall through to LLM
-                # (e.g. "hmm" routes through LLM in _handle_ambiguity).
-                streamed_nodes: set[str] = set()
+            token_count = 0
+            # Canned-response nodes (malicious / topic_list / greeting
+            # Tier-2 / ambiguity Tier-2 / low_relevance / off_scope) return
+            # an AIMessage directly without invoking an LLM, so no
+            # `on_chat_model_stream` event fires for them. We emit their
+            # content from on_chain_end instead. Per-node flag prevents
+            # double-emission when greeting/ambiguity fall through to LLM
+            # (e.g. "hmm" routes through LLM in _handle_ambiguity).
+            streamed_nodes: set[str] = set()
 
-                async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
-                    kind = event.get("event", "")
+            async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
+                kind = event.get("event", "")
 
-                    if kind == "on_chain_end" and event.get("name") == "rag_node":
-                        output = event.get("data", {}).get("output", {})
-                        if isinstance(output, dict) and "retrieved_context" in output:
-                            retrieved_context = output["retrieved_context"] or []
+                if kind == "on_chain_end" and event.get("name") == "rag_node":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict) and "retrieved_context" in output:
+                        retrieved_context = output["retrieved_context"] or []
 
-                    if kind == "on_chain_end" and event.get("name") == "pre_processor":
-                        output = event.get("data", {}).get("output", {})
-                        if isinstance(output, dict):
-                            if "intent" in output:
-                                intent = output.get("intent")
-                            if "intent_scores" in output:
-                                stream_intent_scores = output.get("intent_scores") or {}
-                            if "rewritten_query" in output:
-                                new_rewrite = output.get("rewritten_query")
-                                if new_rewrite and new_rewrite != resolved_query:
-                                    resolved_query = new_rewrite
-                                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+                if kind == "on_chain_end" and event.get("name") == "pre_processor":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        if "intent" in output:
+                            intent = output.get("intent")
+                        if "intent_scores" in output:
+                            stream_intent_scores = output.get("intent_scores") or {}
+                        if "rewritten_query" in output:
+                            new_rewrite = output.get("rewritten_query")
+                            if new_rewrite and new_rewrite != resolved_query:
+                                resolved_query = new_rewrite
+                                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
-                    # Canned-response nodes return an AIMessage directly without
-                    # invoking an LLM, so no `on_chat_model_stream` event fires
-                    # for them. Emit their content from on_chain_end instead.
-                    # Covers: greeting/ambiguity (Tier-2 hardcoded, no LLM),
-                    # malicious/topic_list/low_relevance/off_scope (deterministic
-                    # canned replies). Skip if LLM streaming already emitted
-                    # tokens for this node (e.g. "hmm" → LLM ambiguity).
-                    if (
-                        kind == "on_chain_end"
-                        and event.get("name") in (
-                            "greeting", "ambiguity",
-                            "malicious", "topic_list", "low_relevance", "off_scope",
+                # Canned-response nodes return an AIMessage directly without
+                # invoking an LLM, so no `on_chat_model_stream` event fires
+                # for them. Emit their content from on_chain_end instead.
+                # Covers: greeting/ambiguity (Tier-2 hardcoded, no LLM),
+                # malicious/topic_list/low_relevance/off_scope (deterministic
+                # canned replies). Skip if LLM streaming already emitted
+                # tokens for this node (e.g. "hmm" → LLM ambiguity).
+                if (
+                    kind == "on_chain_end"
+                    and event.get("name") in (
+                        "greeting", "ambiguity",
+                        "malicious", "topic_list", "low_relevance", "off_scope",
+                    )
+                    and event.get("name") not in streamed_nodes
+                ):
+                    out = event.get("data", {}).get("output", {})
+                    msgs = out.get("messages") if isinstance(out, dict) else None
+                    if msgs:
+                        content = getattr(msgs[-1], "content", None) or (
+                            msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
                         )
-                        and event.get("name") not in streamed_nodes
-                    ):
-                        out = event.get("data", {}).get("output", {})
-                        msgs = out.get("messages") if isinstance(out, dict) else None
-                        if msgs:
-                            content = getattr(msgs[-1], "content", None) or (
-                                msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
-                            )
-                            if content:
-                                full_answer += content
-                                yield f"data: {json.dumps({'token': content})}\n\n"
-                                canned_emitted = True
+                        if content:
+                            full_answer += content
+                            yield f"data: {json.dumps({'token': content})}\n\n"
+                            canned_emitted = True
 
-                    if kind == "on_chat_model_stream":
-                        node_name = event.get("metadata", {}).get("langgraph_node")
-                        if node_name in ("generate_node", "greeting", "ambiguity"):
-                            streamed_nodes.add(node_name)
-                            chunk = event.get("data", {}).get("chunk")
-                            if chunk and hasattr(chunk, "content") and chunk.content:
-                                token = chunk.content
-                                full_answer += token
-                                token_count += 1
+                if kind == "on_chat_model_stream":
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if node_name in ("generate_node", "greeting", "ambiguity"):
+                        streamed_nodes.add(node_name)
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            token = chunk.content
+                            full_answer += token
+                            token_count += 1
 
-                                # Pass through leak guard. Greeting/ambiguity
-                                # don't carry retrieved_context, but the guard
-                                # is a no-op on clean preambles so it's safe.
-                                safe = leak_guard.feed(token)
-                                if safe:
-                                    yield f"data: {json.dumps({'token': safe})}\n\n"
+                            # Pass through leak guard. Greeting/ambiguity
+                            # don't carry retrieved_context, but the guard
+                            # is a no-op on clean preambles so it's safe.
+                            safe = leak_guard.feed(token)
+                            if safe:
+                                yield f"data: {json.dumps({'token': safe})}\n\n"
 
-                                # Periodic disconnect check — bail out early if user closed the tab.
-                                if token_count % 10 == 0 and await req.is_disconnected():
-                                    logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
-                                    return
-
-                # ── Set span I/O + attributes BEFORE the root_span exits.
-                # Without this, Phoenix UI shows "--" for input/output on
-                # streaming traces and intent scores require expanding the
-                # Annotations panel. Doing it here keeps the span active.
-                _stream_preview = (full_answer or "")
-                set_current_span_io(
-                    input={
-                        "query": request.query,
-                        "resolved_query": resolved_query,
-                        "conversation_id": conversation_id,
-                    },
-                    output={"answer": _stream_preview},
-                )
-                _stream_max_score = 0.0
-                if retrieved_context:
-                    _scores_inline = [
-                        c.get("dense_score") for c in retrieved_context
-                        if isinstance(c.get("dense_score"), (int, float))
-                    ]
-                    if _scores_inline:
-                        _stream_max_score = float(max(_scores_inline))
-                set_current_span_attributes({
-                    "intent": intent,
-                    "rewritten_query": resolved_query,
-                    "needs_lookup": float(stream_intent_scores.get("needs_lookup", 0.0)),
-                    "needs_reasoning": float(stream_intent_scores.get("needs_reasoning", 0.0)),
-                    "needs_empathy": float(stream_intent_scores.get("needs_empathy", 0.0)),
-                    "retrieved_chunks": len(retrieved_context),
-                    "max_chunk_score": _stream_max_score,
-                    "streaming": True,
-                })
-                # Surface intent in Phoenix span list (see non-stream branch).
-                update_current_span_name(f"a-pedi-chat-stream:{intent}")
+                            # Periodic disconnect check — bail out early if user closed the tab.
+                            if token_count % 10 == 0 and await req.is_disconnected():
+                                logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                                return
 
         except Exception as exc:
             logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
@@ -1215,28 +1046,6 @@ async def chat_stream(
                 f"clean_len={len(cleaned_answer)} conv={conversation_id})"
             )
             full_answer = cleaned_answer
-
-        # ── Phoenix: log fused hybrid + raw dense scores for stream endpoint ──
-        try:
-            hybrid_scores_s = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-            dense_scores_s = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
-
-            if span_id:
-                if hybrid_scores_s:
-                    annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid_scores_s), 4))
-                    annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid_scores_s) / len(hybrid_scores_s), 4))
-                if dense_scores_s:
-                    annotate_span(span_id, "retriever_dense_max", round(max(dense_scores_s), 4))
-                    annotate_span(span_id, "retriever_dense_avg", round(sum(dense_scores_s) / len(dense_scores_s), 4))
-                if stream_intent_scores:
-                    if "needs_lookup" in stream_intent_scores:
-                        annotate_span(span_id, "intent_needs_lookup", float(stream_intent_scores["needs_lookup"]))
-                    if "needs_reasoning" in stream_intent_scores:
-                        annotate_span(span_id, "intent_needs_reasoning", float(stream_intent_scores["needs_reasoning"]))
-                    if "needs_empathy" in stream_intent_scores:
-                        annotate_span(span_id, "intent_needs_empathy", float(stream_intent_scores["needs_empathy"]))
-        except Exception as _err:
-            logger.warning(f"Stream Phoenix score logging failed: {_err}")
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
 
@@ -1302,18 +1111,12 @@ async def chat_stream(
             ):
                 await _enqueue_eval(
                     turn_id=turn_id,
-                    span_id=span_id,
                     query=resolved_query,
                     answer=full_answer,
                     retrieved_context=retrieved_context,
                     intent=intent,
                     intent_scores=stream_intent_scores,
                 )
-
-            # Tracked task set so Python doesn't GC mid-flight after the SSE generator returns.
-            task = asyncio.create_task(asyncio.to_thread(_flush_traces))
-            _stream_bg_tasks.add(task)
-            task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as bg_err:
             logger.warning(f"Stream background task error: {bg_err}")
         finally:

@@ -146,9 +146,9 @@ async def _log_cache_event(
 ) -> None:
     """Persist a cache_lookup event to agent_logs via BatchLogger.
 
-    Phoenix is gone — cache observability now flows through the same
-    agent_logs chokepoint as turn-level logs. PII in `query` is auto-redacted
-    by BatchLogger._redact_entry (query is in _PII_COLUMNS). Failures here
+    Cache observability flows through the same agent_logs chokepoint as
+    turn-level logs. PII in `query` is auto-redacted by
+    BatchLogger._redact_entry (query is in _PII_COLUMNS). Failures here
     are swallowed at debug level so a Postgres/Redis blip never blocks the
     cache hot path.
 

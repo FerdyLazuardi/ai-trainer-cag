@@ -177,6 +177,21 @@ async def evaluate_record(
         if forbidden.lower() in answer_lower:
             failures.append(f"contains_forbidden_phrase: {forbidden!r}")
 
+    # Mentor mode assertions — check learning_context range. MENTOR block
+    # gating (lc >= threshold + no empathy + no safety + chunks) is tested
+    # separately in tests/test_mentor_mode.py using replicated logic.
+    expected_lc_min = record.get("expected_learning_context_min")
+    expected_lc_max = record.get("expected_learning_context_max")
+    actual_lc = float((run.get("intent_scores") or {}).get("learning_context", 0.0))
+    if expected_lc_min is not None and actual_lc < expected_lc_min:
+        failures.append(
+            f"learning_context={actual_lc:.2f} < expected_min={expected_lc_min:.2f}"
+        )
+    if expected_lc_max is not None and actual_lc > expected_lc_max:
+        failures.append(
+            f"learning_context={actual_lc:.2f} > expected_max={expected_lc_max:.2f}"
+        )
+
     if judge is not None and judge.score < min_faithfulness:
         failures.append(
             f"faithfulness={judge.score:.2f} < min={min_faithfulness:.2f} — "

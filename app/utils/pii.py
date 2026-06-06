@@ -1,12 +1,11 @@
 """
 PII redaction for telemetry.
 
-Before query/answer text lands in Phoenix spans (or any other persisted
-telemetry), we run a regex pass over it to mask structured PII
-patterns. Names and free-form addresses are NOT covered (would need a
-NER model) — this targets the patterns that are both common in
-mood-support / financial / health conversations AND reliably
-detectable without false positives.
+Before query/answer text lands in any persisted telemetry, we run a
+regex pass over it to mask structured PII patterns. Names and free-form
+addresses are NOT covered (would need a NER model) — this targets the
+patterns that are both common in mood-support / financial / health
+conversations AND reliably detectable without false positives.
 
 Detected patterns (all replaced with the same-length mask character):
   - email addresses

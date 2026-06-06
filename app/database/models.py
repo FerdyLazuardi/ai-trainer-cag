@@ -89,8 +89,7 @@ class AgentLog(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     # Correlation key set by the chat handler at log time. The async eval task
-    # uses it to UPDATE this row with the faithfulness score once the judge runs
-    # (Phoenix-independent — works even when tracing is off).
+    # uses it to UPDATE this row with the faithfulness score once the judge runs.
     turn_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
     endpoint: Mapped[str] = mapped_column(String(32), nullable=True)
     conversation_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
@@ -113,7 +112,7 @@ class AgentLog(Base):
     cache_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     cache_namespace: Mapped[str | None] = mapped_column(String(64), nullable=True)
     query_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    # ── Quality signals (durable; previously Phoenix-only) ──
+    # ── Quality signals (durable) ──
     intent: Mapped[str] = mapped_column(String(32), nullable=True, index=True)
     needs_lookup: Mapped[float] = mapped_column(Float, nullable=True)
     needs_reasoning: Mapped[float] = mapped_column(Float, nullable=True)

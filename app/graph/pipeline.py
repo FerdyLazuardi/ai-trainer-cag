@@ -71,6 +71,20 @@ class PreProcessorResult(BaseModel):
             "No keyword requirement."
         ),
     )
+    learning_context: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "0-1, INDEPENDENT of the other axes. Measures whether the user wants SCAFFOLDED "
+            "INSTRUCTION (numbered step-by-step) rather than a flat explanation. 0.9-1.0 = explicit "
+            "teach-me framing ('ajarin aku', 'tolong ajari', 'step by step', 'masih bingung', "
+            "'ga ngerti', 'gimana cara'); 0.5-0.7 = ambiguous with a hint of teach-me ('jelasin "
+            "dong', 'bantu aku paham', 'apa bedanya X vs Y'); 0.0-0.3 = pure info lookup ('apa "
+            "itu X', 'info tenor', 'gimana cara lapor'). Independent of intent: a BRAINSTORM "
+            "vent can still be lc=0.0; a procedural KNOWLEDGE query can be lc=0.9."
+        ),
+    )
     safety_preserved_query: str = Field(
         default="",
         description=(
@@ -162,6 +176,11 @@ SCORING (0.0–1.0, independent):
 - needs_reasoning: 1.0=pure reasoning, 0.5=mixed, 0.0=lookup or non-thinking turn.
 - needs_empathy: 1.0=explicit emotion OR safety≥0.7. 0.5=subtle OR 3rd-party. 0.0=neutral. Role/tenure disclosure = neutral.
 - needs_safety_escalation: 0.7-1.0=user reports being personally harmed/threatened/harassed NOW (any language, any formality, even when also asking a procedural question). 0.5=3rd-party OR past OR subtle phrasing. ≤0.3=procedural/general question ("how do I report X"). When in doubt, lean HIGHER safety.
+- learning_context: 0.0-1.0, INDEPENDENT of the 4 axes above. Measures whether the user wants SCAFFOLDED INSTRUCTION (numbered step-by-step) rather than a flat explanation.
+  * 0.9-1.0 = explicit "ajarin aku" / "tolong ajari" / "step by step" / "masih bingung" / "ga ngerti" / "gimana cara" — user is asking to BE TAUGHT, not just informed.
+  * 0.5-0.7 = ambiguous with a hint of teach-me framing ("jelasin dong", "bantu aku paham", "apa bedanya X vs Y").
+  * 0.0-0.3 = pure info lookup ("apa itu X", "info tenor", "gimana cara lapor") where the user wants the FACT, not a teaching sequence.
+  * Independent of intent: a BRAINSTORM vent can still be lc=0.0; a procedural KNOWLEDGE query can be lc=0.9 if the user wants the procedure AS steps.
 
 DISAMBIGUATION (safety vs procedural, when in doubt lean HIGHER):
 - 1st-person harm report (any phrasing — slang, typos, with or without explicit safety keywords) → safety≥0.7, empathy≥0.8, REGARDLESS of intent.
@@ -277,6 +296,17 @@ RESPONSE_SHAPE_SAFETY = (
     "channels, escalation steps, and support resources as written in the KB. Use VERBATIM names for "
     "teams, policies, contact paths. Do NOT invent phone numbers, hotlines, or email addresses — "
     "if the KB does not name a specific channel, say so honestly. Close with one practical next step.\n"
+    "</response_shape>"
+)
+
+RESPONSE_SHAPE_MENTOR = (
+    "<response_shape>\n"
+    "User explicitly wants to LEARN (mentor mode). Format as numbered, scannable steps — max "
+    f"{_settings.lms_scaffolding_max_steps} steps.\n"
+    "Use bold for action verbs (e.g. **Stop**, **Tell**, **Document**). Use 1 sentence per step — no walls of text.\n"
+    "Each step must be DOABLE by a Field Officer in <2 minutes; concrete and tactical, not abstract policy.\n"
+    "Base each step in <retrieved_context> facts (or flag 'I don't have that info' for the gap). End with one short follow-up question: 'Ada bagian lain yang mau kamu tanyain soal ini?' (or English equivalent).\n"
+    "Do not invent policy/process not in the KB. If the KB has gaps, say 'Untuk bagian ini, aku belum punya info spesifik — coba hubungi {role/team} ya.'\n"
     "</response_shape>"
 )
 
@@ -609,7 +639,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "intent": rule_intent,
             "rewritten_query": user_msg,
             "retrieval_query": user_msg,
-            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0},
+            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "learning_context": 0.0},
         }
 
     llm = get_preprocessor_llm()
@@ -621,7 +651,8 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         "\n\nRespond ONLY with a valid JSON object matching this schema (no markdown, no explanation):\n"
         '{"intent": "<INTENT>", "rewritten_query": "<str>", "needs_lookup": <0.0-1.0>, '
         '"needs_reasoning": <0.0-1.0>, "needs_empathy": <0.0-1.0>, '
-        '"needs_safety_escalation": <0.0-1.0>, "safety_preserved_query": "<str>"}'
+        '"needs_safety_escalation": <0.0-1.0>, "learning_context": <0.0-1.0>, '
+        '"safety_preserved_query": "<str>"}'
     )
 
     messages = state["messages"]
@@ -644,6 +675,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         "needs_reasoning": 0.0,
         "needs_empathy": 0.0,
         "needs_safety_escalation": 0.0,
+        "learning_context": 0.0,
     }
     safety_preserved_query = ""
     try:
@@ -669,6 +701,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "needs_reasoning": float(result.needs_reasoning or 0.0),
             "needs_empathy": float(result.needs_empathy or 0.0),
             "needs_safety_escalation": float(result.needs_safety_escalation or 0.0),
+            "learning_context": float(result.learning_context or 0.0),
         }
         safety_preserved_query = (result.safety_preserved_query or "").strip()
     except Exception as exc:
@@ -1049,6 +1082,17 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             score_blocks.append(RESPONSE_SHAPE_REASONING_WITH_LOOKUP)
         else:
             score_blocks.append(RESPONSE_SHAPE_REASONING_ONLY)
+
+    # ── MENTOR gate ────────────────────────────────────────────────────────
+    # Fires when the user wants SCAFFOLDED INSTRUCTION (numbered steps) AND
+    # none of the safety/empathy shapes are already winning. Independently
+    # orthogonal to intent — a BRAINSTORM vent + lc=0.85 still gets scaffolding.
+    learning_context = float(scores.get("learning_context", 0.0))
+    if (learning_context >= _settings.learning_context_threshold
+        and needs_empathy < 0.4
+        and needs_safety < 0.5
+        and chunks):
+        score_blocks.append(RESPONSE_SHAPE_MENTOR)
 
     score_block_str = ("\n\n" + "\n\n".join(score_blocks)) if score_blocks else ""
 

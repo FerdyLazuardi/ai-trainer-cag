@@ -137,7 +137,7 @@ async def judge_faithfulness(
     """Score the faithfulness of `answer` against `retrieved_context`.
 
     Returns None on judge failure — caller should treat as "no signal" rather
-    than infer a default score. Phoenix annotation simply gets skipped.
+    than infer a default score.
     """
     from app.llm.client import get_llm
 

@@ -1,8 +1,9 @@
 """arq background task for post-hoc turn evaluation.
 
 Enqueued from chat handlers after the response has been streamed/returned
-to the user. Runs the LLM-as-judge evaluator and writes scores to Phoenix
-as span annotations on the original turn's root span.
+to the user. Runs the LLM-as-judge evaluator and writes the score to
+Postgres (agent_logs) keyed by turn_id so the Streamlit dashboard can
+read it.
 
 Cost control:
 - Sampling decided at enqueue site (chat.py) — task only runs when picked.
@@ -16,12 +17,10 @@ from typing import Any
 from loguru import logger
 
 from app.eval.judge import judge_faithfulness
-from app.observability import annotate_span
 
 
 async def eval_turn_task(
     ctx: dict,
-    span_id: str | None,
     query: str,
     answer: str,
     retrieved_context: list[dict[str, Any]],
@@ -31,12 +30,12 @@ async def eval_turn_task(
 ) -> dict[str, Any]:
     """Evaluate one turn post-hoc and persist the faithfulness score.
 
-    Writes the score to Postgres (agent_logs, keyed by turn_id) so monitoring
-    works without Phoenix, and ALSO annotates the Phoenix span when tracing is
-    on. Errors are caught and logged so a bad eval never propagates back to
+    Writes the score to Postgres (agent_logs, keyed by turn_id) so the
+    Streamlit monitoring dashboard can surface low-faithfulness turns.
+    Errors are caught and logged so a bad eval never propagates back to
     user-facing flow.
     """
-    if not turn_id and not span_id:
+    if not turn_id:
         return {"status": "skipped", "reason": "no_correlation_key"}
     if not answer or not answer.strip():
         return {"status": "skipped", "reason": "empty_answer"}
@@ -56,23 +55,12 @@ async def eval_turn_task(
 
     score = round(result.score, 4)
 
-    # ── Durable: persist to Postgres (Phoenix-independent) ──
-    persisted = False
-    if turn_id:
-        persisted = await _persist_faithfulness(turn_id, score)
-
-    # ── Optional: annotate Phoenix span when tracing is enabled ──
-    if span_id:
-        try:
-            annotate_span(span_id, "eval_faithfulness", score)
-        except Exception as exc:
-            logger.warning(f"eval_turn_task: Phoenix annotate failed: {exc}")
+    persisted = await _persist_faithfulness(turn_id, score)
 
     if result.score < 0.5:
         logger.warning(
             "Low faithfulness score detected",
             turn_id=turn_id,
-            span_id=span_id,
             score=round(result.score, 3),
             unsupported=result.unsupported_claims[:2],
             reasoning=result.reasoning[:120],
@@ -83,7 +71,6 @@ async def eval_turn_task(
         logger.debug(
             "Faithfulness eval done",
             turn_id=turn_id,
-            span_id=span_id,
             score=round(result.score, 3),
             intent=intent,
         )
@@ -91,7 +78,6 @@ async def eval_turn_task(
     return {
         "status": "annotated",
         "turn_id": turn_id,
-        "span_id": span_id,
         "score": score,
         "persisted": persisted,
     }

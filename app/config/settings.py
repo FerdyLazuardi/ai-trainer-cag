@@ -96,6 +96,17 @@ class Settings(BaseSettings):
     # ─── Qdrant ─────────────────────────────────────────────────────────────
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
+    # gRPC port — SEPARATE from HTTP port. The qdrant-client library's
+    # AsyncQdrantClient computes its gRPC port independently of HTTP, and
+    # the qdrant container exposes 6334 (gRPC) and 6333 (HTTP) by default.
+    # Our docker-compose maps host 6335→container 6333 (HTTP) and host
+    # 6336→container 6334 (gRPC), so when running outside docker (eval
+    # scripts, ad-hoc scripts) the gRPC port must be 6336, NOT 6334
+    # (which only works inside the docker network). Without this, the
+    # qdrant-client's gRPC stub logs UNAVAILABLE on 127.0.0.1:6334 even
+    # when `prefer_grpc=False`, because some async paths still
+    # lazily initialize the gRPC channel.
+    qdrant_grpc_port: int = 6336
     qdrant_collection: str = "documents"
     qdrant_kb_collection: str = "Knowledge_Base"
 
@@ -252,6 +263,22 @@ class Settings(BaseSettings):
     # junk) on purpose: raising it would kill low-scoring entities like
     # AmarthaLink (3.46) without blocking the 6-8 scoring off-scope phrases.
     kb_min_sparse_score: float = 1.0
+
+    # ─── Mentor Mode (Field Office scaffolding) ──────────────────────────────
+    # Field Office users often need explicit step-by-step learning, not just
+    # factual lookup. When the pre-processor emits learning_context >= this
+    # threshold, _generate_node layers RESPONSE_SHAPE_MENTOR on top of the
+    # base prompt (numbered steps, max `lms_scaffolding_max_steps`, bolded
+    # action terms, closing follow-up). The gate is suppressed by high
+    # empathy (vent) and high safety (real victim) so scaffolding never
+    # competes with empathy blocks. 0.5 was picked from 15 golden cases
+    # (tests/eval/mentor_mode_cases.json): clear separation between
+    # procedural ("gimana cara lapor pelecehan" ~0.2) and learning
+    # ("ajarin aku handle Mitra marah" ~0.85) intents.
+    learning_context_threshold: float = 0.5
+    # Hard cap on numbered steps in MENTOR scaffolded responses. 5 keeps
+    # the response scannable on mobile (~1 screen on a 13k-user FO phone).
+    lms_scaffolding_max_steps: int = 5
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).

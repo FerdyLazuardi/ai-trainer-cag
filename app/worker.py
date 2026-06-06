@@ -7,7 +7,7 @@ from streaq import StreaqRetry, Worker
 
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
-from app.database.postgres import AsyncSessionLocal, prune_agent_logs
+from app.database.postgres import AsyncSessionLocal
 from app.eval.tasks import eval_turn_task as _eval_turn_task_fn
 from app.ingestion.moodle_sync import sync_moodle_knowledge_base
 from app.ingestion.pipeline import ingest_document
@@ -45,7 +45,7 @@ worker = Worker(
 )
 
 
-@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
+@worker.task(max_tries=3, timeout=600)
 async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
     """streaq task: ingest a single document off the API request path.
 
@@ -81,7 +81,7 @@ async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -
         raise
 
 
-@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
+@worker.task(max_tries=3, timeout=600)
 async def sync_moodle_task(course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
     """streaq task to run the moodle sync."""
     logger.info(f"Starting background Moodle sync task via streaq for course_id={course_id}", force_reingest=force_reingest)
@@ -110,7 +110,7 @@ async def dummy_task(name: str) -> str:
     return f"Hello, {name}! Task completed."
 
 
-@worker.task(tries=3, retry_delays=(1, 5, 30), timeout=600)
+@worker.task(max_tries=3, timeout=600)
 async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
     """streaq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
     logger.info("Starting Askfer portfolio sync via streaq", force_reingest=force_reingest)
@@ -489,23 +489,6 @@ async def prune_ltm_cron_task() -> dict[str, Any]:
         raise
 
 
-async def prune_agent_logs_cron_task() -> dict[str, Any]:
-    """Cron task: daily sweep that deletes agent_logs rows older than 30 days.
-
-    Prevents unbounded growth — at 600 DAU × 8 q/day × ~5KB JSONB rows = ~24MB/day,
-    which would OOM the 768MB Postgres cgroup in 60-90 days. Retention is set to
-    30 days (1.5x the longest eval feedback cycle) which keeps the Streamlit
-    admin dashboard's "last 100" view (admin.py:21) comfortable while bounding RAM.
-    """
-    logger.info("Starting agent_logs retention sweep")
-    try:
-        deleted = await prune_agent_logs(retention_days=30)
-        return {"status": "pruned", "deleted_rows": deleted}
-    except Exception as exc:
-        logger.error(f"agent_logs retention sweep failed: {exc}")
-        raise
-
-
 # ── Cron registration ───────────────────────────────────────────────────────
 # arq used cron(fn, hour=2, minute=0). streaq's cron takes a crontab string
 # and decorates a no-arg async function. Both daily jobs share the 2 AM slot
@@ -517,14 +500,9 @@ async def prune_agent_logs_cron_task() -> dict[str, Any]:
 # traffic on the same concurrency=2 budget that user-facing
 # ingest_text_task and admin sync_*_task jobs share). streaq uses
 # zoneinfo; "Asia/Jakarta" is a built-in zone.
-@worker.cron("0 2 * * *", tz="Asia/Jakarta", timeout=600)
+@worker.cron("0 2 * * *", timeout=600)
 async def _run_ltm_prune():
     await prune_ltm_cron_task()
-
-
-@worker.cron("30 2 * * *", tz="Asia/Jakarta", timeout=600)
-async def _run_agent_logs_prune():
-    await prune_agent_logs_cron_task()
 
 
 # ── Task registration for the eval task (defined in app/eval/tasks.py) ─────

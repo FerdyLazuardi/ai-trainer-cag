@@ -36,6 +36,7 @@ class QdrantManager:
         self.client = AsyncQdrantClient(
             host=settings.qdrant_host,
             port=settings.qdrant_port,
+            grpc_port=settings.qdrant_grpc_port,
             timeout=30,
             prefer_grpc=False,
         )

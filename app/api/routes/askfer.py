@@ -10,7 +10,6 @@ import asyncio
 import json
 import secrets
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -23,12 +22,6 @@ from app.api.concurrency import acquire_pipeline_slot_or_503
 from app.api.schemas import AskferRequest, AskferSyncRequest
 from app.config.settings import get_settings
 from app.graph.askfer_pipeline import get_askfer_graph
-from app.observability import (
-    flush as flush_traces,
-    is_observability_enabled,
-    root_span,
-    annotate_span,
-)
 from app.utils.cache import get_cached_response, set_cached_response
 from app.utils.logger_batch import batch_logger
 
@@ -38,14 +31,6 @@ settings = get_settings()
 _CACHE_NS = "askfer"
 
 _stream_bg_tasks: set[asyncio.Task] = set()
-
-
-def _flush_traces():
-    if is_observability_enabled():
-        try:
-            flush_traces()
-        except Exception as exc:
-            logger.warning(f"Askfer Phoenix flush error: {exc}")
 
 
 def _extract_askfer_sources(retrieved_context: list) -> list:
@@ -131,77 +116,64 @@ async def askfer_stream(
         full_answer = ""
         retrieved_context: list = []
         intent = "KNOWLEDGE"
-        span_id: Optional[str] = None
         leak_guard = StreamLeakGuard()
 
         try:
-            with root_span(
-                "askfer-stream",
-                session_id=f"ip:{client_ip}",
-                user_id=f"anon-{client_ip}",
-                tags=["askfer", settings.app_env],
-                metadata={
-                    "collection": settings.qdrant_personal_collection,
-                    "streaming": True,
-                    "query": query[:80],
-                },
-            ) as sid:
-                span_id = sid
-                config = {"run_name": "askfer-stream"}
+            config = {"run_name": "askfer-stream"}
 
-                token_count = 0
-                # Track which terminal nodes finished. The malicious AND
-                # off_scope nodes both return canned AIMessages (no LLM call →
-                # no on_chat_model_stream events) so we emit their content
-                # from on_chain_end instead.
-                canned_emitted = False
+            token_count = 0
+            # Track which terminal nodes finished. The malicious AND
+            # off_scope nodes both return canned AIMessages (no LLM call →
+            # no on_chat_model_stream events) so we emit their content
+            # from on_chain_end instead.
+            canned_emitted = False
 
-                async for event in askfer_graph.astream_events(initial_state, config=config, version="v2"):
-                    kind = event.get("event", "")
+            async for event in askfer_graph.astream_events(initial_state, config=config, version="v2"):
+                kind = event.get("event", "")
 
-                    if kind == "on_chain_end" and event.get("name") == "rag_node":
-                        out = event.get("data", {}).get("output", {})
-                        if isinstance(out, dict) and "retrieved_context" in out:
-                            retrieved_context = out["retrieved_context"] or []
+                if kind == "on_chain_end" and event.get("name") == "rag_node":
+                    out = event.get("data", {}).get("output", {})
+                    if isinstance(out, dict) and "retrieved_context" in out:
+                        retrieved_context = out["retrieved_context"] or []
 
-                    if kind == "on_chain_end" and event.get("name") == "pre_processor":
-                        out = event.get("data", {}).get("output", {})
-                        if isinstance(out, dict) and "intent" in out:
-                            intent = out["intent"]
+                if kind == "on_chain_end" and event.get("name") == "pre_processor":
+                    out = event.get("data", {}).get("output", {})
+                    if isinstance(out, dict) and "intent" in out:
+                        intent = out["intent"]
 
-                    # Canned-response nodes: emit their AIMessage content as a
-                    # single token chunk since no LLM stream fires for them.
-                    if (
-                        kind == "on_chain_end"
-                        and event.get("name") in ("malicious", "off_scope")
-                        and not canned_emitted
-                    ):
-                        out = event.get("data", {}).get("output", {})
-                        msgs = out.get("messages") if isinstance(out, dict) else None
-                        if msgs:
-                            content = getattr(msgs[-1], "content", None) or (
-                                msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
-                            )
-                            if content:
-                                full_answer += content
-                                yield f"data: {json.dumps({'token': content})}\n\n"
-                                canned_emitted = True
+                # Canned-response nodes: emit their AIMessage content as a
+                # single token chunk since no LLM stream fires for them.
+                if (
+                    kind == "on_chain_end"
+                    and event.get("name") in ("malicious", "off_scope")
+                    and not canned_emitted
+                ):
+                    out = event.get("data", {}).get("output", {})
+                    msgs = out.get("messages") if isinstance(out, dict) else None
+                    if msgs:
+                        content = getattr(msgs[-1], "content", None) or (
+                            msgs[-1].get("content") if isinstance(msgs[-1], dict) else ""
+                        )
+                        if content:
+                            full_answer += content
+                            yield f"data: {json.dumps({'token': content})}\n\n"
+                            canned_emitted = True
 
-                    if kind == "on_chat_model_stream":
-                        node_name = event.get("metadata", {}).get("langgraph_node")
-                        if node_name in ("generate_node", "greeting", "off_scope", "malicious"):
-                            chunk = event.get("data", {}).get("chunk")
-                            if chunk and hasattr(chunk, "content") and chunk.content:
-                                token = chunk.content
-                                full_answer += token
-                                token_count += 1
-                                safe = leak_guard.feed(token)
-                                if safe:
-                                    yield f"data: {json.dumps({'token': safe})}\n\n"
+                if kind == "on_chat_model_stream":
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if node_name in ("generate_node", "greeting", "off_scope", "malicious"):
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            token = chunk.content
+                            full_answer += token
+                            token_count += 1
+                            safe = leak_guard.feed(token)
+                            if safe:
+                                yield f"data: {json.dumps({'token': safe})}\n\n"
 
-                                if token_count % 10 == 0 and await req.is_disconnected():
-                                    logger.info("Askfer client disconnected", ip=client_ip, tokens=token_count)
-                                    return
+                            if token_count % 10 == 0 and await req.is_disconnected():
+                                logger.info("Askfer client disconnected", ip=client_ip, tokens=token_count)
+                                return
 
         except Exception as exc:
             logger.error(f"Askfer pipeline error: {exc}", query=query[:60])
@@ -226,20 +198,6 @@ async def askfer_stream(
 
         latency_ms = (time.perf_counter() - start_time) * 1000
         sources = _extract_askfer_sources(retrieved_context)
-
-        # Phoenix retrieval scores
-        try:
-            if span_id and retrieved_context:
-                hybrid = [c.get("hybrid_score") for c in retrieved_context if isinstance(c.get("hybrid_score"), (int, float))]
-                dense = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
-                if hybrid:
-                    annotate_span(span_id, "retriever_hybrid_max", round(max(hybrid), 4))
-                    annotate_span(span_id, "retriever_hybrid_avg", round(sum(hybrid)/len(hybrid), 4))
-                if dense:
-                    annotate_span(span_id, "retriever_dense_max", round(max(dense), 4))
-                    annotate_span(span_id, "retriever_dense_avg", round(sum(dense)/len(dense), 4))
-        except Exception as exc:
-            logger.warning(f"Askfer Phoenix score logging failed: {exc}")
 
         yield (
             f"event: done\ndata: "
@@ -268,9 +226,6 @@ async def askfer_stream(
                 "llm_tokens_used": token_count,
                 "cache_hit": False,
             })
-            task = asyncio.create_task(asyncio.to_thread(_flush_traces))
-            _stream_bg_tasks.add(task)
-            task.add_done_callback(_stream_bg_tasks.discard)
         except Exception as exc:
             logger.warning(f"Askfer background task error: {exc}")
         finally:
