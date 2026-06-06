@@ -208,6 +208,13 @@ async def evaluate_record(
         "latency_ms": run["latency_ms"],
         "answer_preview": (run["answer"] or "")[:200],
         "faithfulness": round(judge.score, 4) if judge else None,
+        # Distinguish "judge ran but couldn't score" (None after C3's retry,
+        # i.e. a judge-model outage / unparseable output) from "judge skipped"
+        # (canned intent / min_faithfulness==0). A None here means the
+        # faithfulness check was REQUESTED but produced no signal — it must NOT
+        # be silently counted as a pass, or a judge outage would make every
+        # graded turn pass while the mean is computed over a shrinking sample.
+        "judge_no_signal": (not skip_judge) and min_faithfulness > 0 and judge is None,
         "unsupported_claims": judge.unsupported_claims if judge else [],
         "passed": not failures,
         "failures": failures,
@@ -229,17 +236,24 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize pass/fail counts and per-category faithfulness means."""
     total = len(results)
     passed = sum(1 for r in results if r["passed"])
+    # Count turns where the judge was requested but returned no signal (None
+    # after C3's retry — a judge-model outage or unparseable output). Surfaced
+    # so "no signal" is never silently equivalent to "faithful": a spike here
+    # means the faithfulness mean is computed over a shrinking, unreliable sample.
+    judge_no_signal = sum(1 for r in results if r.get("judge_no_signal"))
     by_cat: dict[str, dict[str, Any]] = {}
 
     for r in results:
         cat = r.get("category") or "uncategorized"
         slot = by_cat.setdefault(
             cat,
-            {"total": 0, "passed": 0, "faithfulness_sum": 0.0, "faithfulness_n": 0},
+            {"total": 0, "passed": 0, "faithfulness_sum": 0.0, "faithfulness_n": 0, "judge_no_signal": 0},
         )
         slot["total"] += 1
         if r["passed"]:
             slot["passed"] += 1
+        if r.get("judge_no_signal"):
+            slot["judge_no_signal"] += 1
         if r.get("faithfulness") is not None:
             slot["faithfulness_sum"] += float(r["faithfulness"])
             slot["faithfulness_n"] += 1
@@ -256,6 +270,7 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
             "passed": s["passed"],
             "pass_rate": round(s["passed"] / s["total"], 4) if s["total"] else 0.0,
             "faithfulness_mean": mean,
+            "judge_no_signal": s["judge_no_signal"],
         }
 
     return {
@@ -263,5 +278,6 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         "passed": passed,
         "failed": total - passed,
         "pass_rate": round(passed / total, 4) if total else 0.0,
+        "judge_no_signal": judge_no_signal,
         "by_category": cat_summary,
     }

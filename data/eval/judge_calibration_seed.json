@@ -1,0 +1,302 @@
+[
+  {
+    "id": "cal-001",
+    "query": "Apa itu Modal Kerja di Amartha?",
+    "gold_faithful": null,
+    "note": "Core KB entity lookup. Expect grounded definition. LABEL after run."
+  },
+  {
+    "id": "cal-002",
+    "query": "Jelaskan prinsip Client Protection",
+    "gold_faithful": null,
+    "note": "Multi-chunk KB concept."
+  },
+  {
+    "id": "cal-003",
+    "query": "Apa saja produk pembiayaan yang ditawarkan Amartha?",
+    "gold_faithful": null,
+    "note": "List-type answer; check VERBATIM product names vs hallucinated."
+  },
+  {
+    "id": "cal-004",
+    "query": "Bagaimana mekanisme penyelesaian keluhan nasabah?",
+    "gold_faithful": null,
+    "note": "Procedural. Watch for CGAP-flavored name substitution (known halu pattern)."
+  },
+  {
+    "id": "cal-005",
+    "query": "Apa itu AmarthaLink?",
+    "gold_faithful": null,
+    "note": "Terse entity — low dense, sparse-rescued. Tests gate + judge together."
+  },
+  {
+    "id": "cal-006",
+    "query": "Berapa plafon maksimal pinjaman untuk nasabah baru?",
+    "gold_faithful": null,
+    "note": "Numeric claim — high halu risk if KB lacks the figure."
+  },
+  {
+    "id": "cal-007",
+    "query": "Apa perbedaan Modal Kerja dan Modal Investasi?",
+    "gold_faithful": null,
+    "note": "Comparative synthesis across chunks."
+  },
+  {
+    "id": "cal-008",
+    "query": "Sebutkan 8 DNA budaya Amartha",
+    "gold_faithful": null,
+    "note": "Enumerated list — the Profile-Amartha truncation bug case. Check completeness."
+  },
+  {
+    "id": "cal-009",
+    "query": "Apa itu CP dalam konteks Amartha?",
+    "gold_faithful": null,
+    "note": "Acronym/terse — sparse rescue path."
+  },
+  {
+    "id": "cal-010",
+    "query": "Bagaimana cara mengajukan pinjaman di Amartha?",
+    "gold_faithful": null,
+    "note": "Procedural how-to."
+  },
+  {
+    "id": "cal-011",
+    "query": "Apa saja tahapan dalam proses ADDIE?",
+    "gold_faithful": null,
+    "note": "Learning-design KB content; enumerated stages."
+  },
+  {
+    "id": "cal-012",
+    "query": "Jelaskan taksonomi Bloom dan penerapannya",
+    "gold_faithful": null,
+    "note": "Concept + application — partial-grounding likely (0.5 zone)."
+  },
+  {
+    "id": "cal-013",
+    "query": "Apa peran Field Officer di Amartha?",
+    "gold_faithful": null,
+    "note": "Role description."
+  },
+  {
+    "id": "cal-014",
+    "query": "Bagaimana Amartha mengukur dampak sosial?",
+    "gold_faithful": null,
+    "note": "May pull general-knowledge halu if KB thin — good discriminator."
+  },
+  {
+    "id": "cal-015",
+    "query": "Apa itu group lending model?",
+    "gold_faithful": null,
+    "note": "Microfinance concept; risk of world-knowledge leakage."
+  },
+  {
+    "id": "cal-016",
+    "query": "Siapa pendiri Amartha?",
+    "gold_faithful": null,
+    "note": "Factual entity — verify against KB, not training data."
+  },
+  {
+    "id": "cal-017",
+    "query": "Apa saja nilai inti perusahaan Amartha?",
+    "gold_faithful": null,
+    "note": "Values list — VERBATIM check."
+  },
+  {
+    "id": "cal-018",
+    "query": "Bagaimana proses verifikasi nasabah dilakukan?",
+    "gold_faithful": null,
+    "note": "Procedural."
+  },
+  {
+    "id": "cal-019",
+    "query": "Apa itu majelis dalam sistem Amartha?",
+    "gold_faithful": null,
+    "note": "Domain-specific term."
+  },
+  {
+    "id": "cal-020",
+    "query": "Jelaskan struktur angsuran mingguan",
+    "gold_faithful": null,
+    "note": "Numeric/structural — halu risk on specifics."
+  },
+  {
+    "id": "cal-021",
+    "query": "Apa manfaat menjadi mitra Amartha bagi perempuan pengusaha?",
+    "gold_faithful": null,
+    "note": "Benefit synthesis."
+  },
+  {
+    "id": "cal-022",
+    "query": "Bagaimana Amartha menangani gagal bayar?",
+    "gold_faithful": null,
+    "note": "Policy/procedure — sensitive, halu risk."
+  },
+  {
+    "id": "cal-023",
+    "query": "Apa itu literasi keuangan menurut materi Amartha?",
+    "gold_faithful": null,
+    "note": "Concept; 'menurut materi' frames as KB-sourced."
+  },
+  {
+    "id": "cal-024",
+    "query": "Sebutkan jenis-jenis risiko dalam pembiayaan mikro",
+    "gold_faithful": null,
+    "note": "Enumerated; partial grounding likely."
+  },
+  {
+    "id": "cal-025",
+    "query": "Apa itu prinsip tanggung renteng?",
+    "gold_faithful": null,
+    "note": "Core microfinance term in KB."
+  },
+  {
+    "id": "cal-026",
+    "query": "Bagaimana cara kerja pendampingan usaha mitra?",
+    "gold_faithful": null,
+    "note": "Procedural mentoring."
+  },
+  {
+    "id": "cal-027",
+    "query": "Apa saja dokumen yang diperlukan untuk mendaftar?",
+    "gold_faithful": null,
+    "note": "List — halu risk on specific doc names."
+  },
+  {
+    "id": "cal-028",
+    "query": "Jelaskan konsep pembelajaran orang dewasa (andragogi)",
+    "gold_faithful": null,
+    "note": "Learning theory; world-knowledge leakage discriminator."
+  },
+  {
+    "id": "cal-029",
+    "query": "Apa tujuan dari program pemberdayaan Amartha?",
+    "gold_faithful": null,
+    "note": "Mission statement."
+  },
+  {
+    "id": "cal-030",
+    "query": "Bagaimana Amartha memastikan keberlanjutan usaha mitra?",
+    "gold_faithful": null,
+    "note": "Synthesis — partial grounding zone."
+  },
+  {
+    "id": "cal-031",
+    "query": "Apa itu skor kredit dan bagaimana Amartha menggunakannya?",
+    "gold_faithful": null,
+    "note": "Concept + application; halu risk on methodology."
+  },
+  {
+    "id": "cal-032",
+    "query": "Sebutkan prinsip-prinsip perlindungan nasabah secara lengkap",
+    "gold_faithful": null,
+    "note": "Full enumeration — completeness + VERBATIM."
+  },
+  {
+    "id": "cal-033",
+    "query": "Apa peran teknologi dalam layanan Amartha?",
+    "gold_faithful": null,
+    "note": "Broad — halu risk."
+  },
+  {
+    "id": "cal-034",
+    "query": "Bagaimana cara menghitung bunga pinjaman?",
+    "gold_faithful": null,
+    "note": "Numeric/formula — high halu risk if KB lacks it."
+  },
+  {
+    "id": "cal-035",
+    "query": "Apa itu modal sosial dalam konteks pemberdayaan?",
+    "gold_faithful": null,
+    "note": "Concept; world-knowledge leakage discriminator."
+  },
+  {
+    "id": "cal-036",
+    "query": "Jelaskan tahapan onboarding mitra baru",
+    "gold_faithful": null,
+    "note": "Procedural sequence."
+  },
+  {
+    "id": "cal-037",
+    "query": "Apa saja indikator keberhasilan program?",
+    "gold_faithful": null,
+    "note": "Metrics list — halu risk on specific KPIs."
+  },
+  {
+    "id": "cal-038",
+    "query": "Bagaimana Amartha menjaga kerahasiaan data nasabah?",
+    "gold_faithful": null,
+    "note": "Privacy policy — sensitive."
+  },
+  {
+    "id": "cal-039",
+    "query": "Apa perbedaan nasabah individu dan kelompok?",
+    "gold_faithful": null,
+    "note": "Comparative."
+  },
+  {
+    "id": "cal-040",
+    "query": "Jelaskan filosofi di balik model bisnis Amartha",
+    "gold_faithful": null,
+    "note": "Open-ended — synthesis + halu risk."
+  },
+  {
+    "id": "cal-041",
+    "query": "Apa itu evaluasi pembelajaran formatif?",
+    "gold_faithful": null,
+    "note": "Learning-design concept; leakage discriminator."
+  },
+  {
+    "id": "cal-042",
+    "query": "Bagaimana cara memberikan umpan balik yang efektif ke mitra?",
+    "gold_faithful": null,
+    "note": "Procedural/soft-skill — partial grounding."
+  },
+  {
+    "id": "cal-043",
+    "query": "Apa saja saluran komunikasi resmi Amartha?",
+    "gold_faithful": null,
+    "note": "Factual list — halu risk."
+  },
+  {
+    "id": "cal-044",
+    "query": "Jelaskan konsep desain instruksional",
+    "gold_faithful": null,
+    "note": "Learning theory."
+  },
+  {
+    "id": "cal-045",
+    "query": "Apa peran data dalam pengambilan keputusan kredit?",
+    "gold_faithful": null,
+    "note": "Concept + application."
+  },
+  {
+    "id": "cal-046",
+    "query": "Bagaimana Amartha mendukung inklusi keuangan?",
+    "gold_faithful": null,
+    "note": "Mission/impact — synthesis."
+  },
+  {
+    "id": "cal-047",
+    "query": "Apa itu kurikulum pelatihan untuk Field Officer?",
+    "gold_faithful": null,
+    "note": "Specific program content — halu risk."
+  },
+  {
+    "id": "cal-048",
+    "query": "Sebutkan langkah-langkah penilaian kelayakan usaha",
+    "gold_faithful": null,
+    "note": "Procedural enumeration."
+  },
+  {
+    "id": "cal-049",
+    "query": "Apa itu prinsip transparansi dalam layanan keuangan?",
+    "gold_faithful": null,
+    "note": "Concept; 'menurut materi'-style grounding check."
+  },
+  {
+    "id": "cal-050",
+    "query": "Bagaimana Amartha mengelola hubungan jangka panjang dengan mitra?",
+    "gold_faithful": null,
+    "note": "Relationship strategy — synthesis + partial grounding zone."
+  }
+]

@@ -1,30 +1,44 @@
 """Faithfulness judge for A-Pedi answers.
 
-Uses the MAIN LLM (`get_llm`) — NOT the cheap LLM the generator uses — to
-score whether the answer is grounded in the retrieved context. Output is
+Uses a DEDICATED judge model (`get_judge_llm` = deepseek/deepseek-v4-pro) —
+a different model family than BOTH the generator (`get_generate_llm`) and the
+old judge slot (`get_llm`), which are both Gemini 2.5 Flash Lite. Output is
 in [0, 1]:
 
     1.0  every claim in the answer is supported by the context
     0.5  partially grounded (some claims unsupported but plausible)
     0.0  hallucination — claims contradict or invent beyond the context
 
-Why a different model than the generator? When judge and generator share
-a model they share fabrication patterns, and the eval systematically
-undercounts the ungrounded rate. (Was `get_cheap_llm` previously — that
-was the bug: same Gemini 2.5 Flash Lite family on both sides meant the
-judge was effectively the generator grading itself.) Trade-off: when the
-main LLM is swapped (Sonnet → Flash → Flash-Lite) the judge baseline
-shifts too, so week-over-week scores need a calibration note. Generator
-can still swap freely; the judge baseline only shifts on the main LLM
-side, not the cheap side.
+Why a dedicated model, distinct from the generator? When judge and generator
+share a model family they share fabrication patterns, and the eval
+systematically undercounts the ungrounded rate (the judge effectively grades
+its own output). The previous code used `get_llm` (llm_model) for the judge
+and `get_generate_llm` (cheap_llm_model) for generation — but BOTH resolve to
+Gemini 2.5 Flash Lite, so it was Flash-Lite grading Flash-Lite (C3). Pinning
+the judge to DeepSeek V4 Pro (native provider, no fallbacks, reasoning off)
+breaks that shared-family bias. The boot guard
+`assert_judge_model_distinct` enforces judge != generator at startup; the
+50-query calibration (D3) validates V4 Pro correlation vs gold-grade before
+the judge threshold is locked.
+
+Output contract: the judge runs with response_format=json_object (NOT
+tool-calling structured output), so it returns a raw JSON string in
+AIMessage.content. We json.loads + FaithfulnessResult.model_validate it
+here. A reasoning model can occasionally emit an empty content string
+(everything routed to reasoning_content, which ChatOpenAI drops) — we retry
+once on empty/invalid content, then return None ("no signal") rather than
+infer a default score that would skew the mean.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+from app.llm.client import get_judge_llm
 
 
 # Cap context shown to the judge — long context inflates judge tokens
@@ -91,7 +105,9 @@ RETRIEVED CONTEXT:
 AI ANSWER:
 {answer}
 
-Score the answer's faithfulness to the context."""
+Score the answer's faithfulness to the context. Respond with ONLY a JSON
+object (no prose, no markdown fences) matching this schema exactly:
+{{"score": <float 0..1>, "unsupported_claims": [<string>, ...], "reasoning": "<one short sentence, max 30 words>"}}"""
 
 
 def _format_context(retrieved: list[dict[str, Any]]) -> str:
@@ -128,6 +144,55 @@ def _format_context(retrieved: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts) if parts else "(no usable context)"
 
 
+def _coerce_content_to_text(content: Any) -> str:
+    """Flatten an AIMessage.content (str | list[block]) to plain text.
+
+    OpenRouter/ChatOpenAI may return content as a list of content blocks.
+    We only want the text payload to json.loads. Returns "" when nothing
+    usable is present (the empty-content signal the retry loop checks).
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                t = block.get("text") or block.get("content")
+                if isinstance(t, str):
+                    parts.append(t)
+        return "".join(parts).strip()
+    return ""
+
+
+def _parse_judge_json(raw: str) -> FaithfulnessResult | None:
+    """Parse the judge's JSON string into a FaithfulnessResult.
+
+    Tolerates a stray ```json fence (some models still wrap json_object
+    output). Returns None on empty/invalid/schema-mismatch so the caller's
+    retry loop can fire, and ultimately surfaces "no signal" rather than a
+    fabricated default score.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        # strip a leading ```json / ``` fence and trailing ```
+        text = text.split("\n", 1)[-1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0].strip()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        return FaithfulnessResult.model_validate(data)
+    except ValidationError:
+        return None
+
+
 async def judge_faithfulness(
     *,
     query: str,
@@ -138,9 +203,13 @@ async def judge_faithfulness(
 
     Returns None on judge failure — caller should treat as "no signal" rather
     than infer a default score.
-    """
-    from app.llm.client import get_llm
 
+    Uses the dedicated DeepSeek V4 Pro judge with response_format=json_object
+    (not tool-calling structured output). Retries ONCE when the model returns
+    empty content (reasoning leaked to a dropped field) or unparseable JSON,
+    appending the bad reply + a JSON-only correction so the retry is a true
+    repair, not a blind re-roll.
+    """
     if not answer or not answer.strip():
         return None
 
@@ -151,13 +220,43 @@ async def judge_faithfulness(
     )
 
     try:
-        judge_llm = get_llm()
-        structured = judge_llm.with_structured_output(FaithfulnessResult)
-        result = await structured.ainvoke(
-            [HumanMessage(content=prompt)],
-            config={"run_name": "a-pedi-eval-faithfulness"},
-        )
-        return result
+        judge_llm = get_judge_llm()
+        messages: list[Any] = [HumanMessage(content=prompt)]
+
+        for attempt in range(2):
+            reply = await judge_llm.ainvoke(
+                messages,
+                config={"run_name": "a-pedi-eval-faithfulness"},
+            )
+            raw = _coerce_content_to_text(getattr(reply, "content", ""))
+            parsed = _parse_judge_json(raw)
+            if parsed is not None:
+                return parsed
+
+            # First failure → append the bad reply + a JSON-only correction
+            # and retry once. Empty content (reasoning leaked) and malformed
+            # JSON both land here.
+            if attempt == 0:
+                logger.warning(
+                    "Faithfulness judge returned empty/invalid content; retrying once",
+                    empty=not raw,
+                    preview=raw[:120],
+                )
+                messages = messages + [
+                    AIMessage(content=raw or "(empty)"),
+                    HumanMessage(
+                        content=(
+                            "Your previous reply was not valid JSON. Respond with "
+                            "ONLY a JSON object matching: "
+                            '{"score": <float 0..1>, "unsupported_claims": '
+                            '[<string>...], "reasoning": "<one short sentence>"}. '
+                            "No prose, no markdown fences."
+                        )
+                    ),
+                ]
+
+        logger.warning("Faithfulness judge failed to produce valid JSON after retry")
+        return None
     except Exception as exc:
         logger.warning(f"Faithfulness judge failed: {exc}")
         return None

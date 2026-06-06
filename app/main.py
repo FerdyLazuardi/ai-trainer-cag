@@ -71,7 +71,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Initialize Redis connection
         redis = get_redis_client()
         await redis.ping()
-        logger.info("Redis connection established")
+
+        # Fail-fast: the STM/LTM layer relies on HSETEX/HEXPIRE (field-level
+        # TTL on conversation + memory HASHes), which only exist in Redis
+        # >= 8.0. On an older server those write paths fail SILENTLY — the
+        # command errors are swallowed and memory simply never persists,
+        # so a mis-pointed REDIS_HOST or a half-finished migration would
+        # degrade memory with no loud signal. Assert the version at boot
+        # so that class of failure is caught here, not in production drift.
+        _info = await redis.info("server")
+        _ver = str(_info.get("redis_version", "0"))
+        try:
+            _major = int(_ver.split(".", 1)[0])
+        except (ValueError, IndexError):
+            _major = 0
+        if _major < 8:
+            raise RuntimeError(
+                f"Redis {_ver} detected — this app requires Redis >= 8.0 for "
+                f"HSETEX/HEXPIRE field-level TTL used by the STM/LTM memory "
+                f"layer. On older servers those writes fail silently and "
+                f"memory never persists. Upgrade Redis or fix REDIS_HOST."
+            )
+        logger.info("Redis connection established", redis_version=_ver)
+
+        # Fail-fast (C3): the eval judge MUST be a different model family than
+        # the generator. When judge == generator they share fabrication
+        # patterns and the faithfulness eval undercounts the hallucination
+        # rate (judge grading itself). The generator slots are
+        # cheap_llm_model (get_generate_llm) and llm_model (the old judge
+        # slot, get_llm) — both Gemini Flash Lite. JUDGE_LLM_MODEL must not
+        # collide with either, or eval scores silently inflate in production.
+        from app.llm.client import assert_judge_model_distinct
+        assert_judge_model_distinct(
+            settings.judge_llm_model,
+            {settings.cheap_llm_model, settings.llm_model},
+        )
+        logger.info(
+            "Eval judge model distinct from generator",
+            judge=settings.judge_llm_model,
+        )
 
         import asyncio
         # Wait for Qdrant to be ready (docker race condition fix)

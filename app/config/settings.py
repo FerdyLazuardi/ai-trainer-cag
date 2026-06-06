@@ -166,6 +166,33 @@ class Settings(BaseSettings):
     # back to a 7B class and keep Flash Lite on judge + generate.
     cheap_llm_model: str = "google/gemini-2.5-flash-lite"
 
+    # ─── LLM-as-judge (eval faithfulness) ────────────────────────────────────
+    # C3: the judge MUST be a different model family than the generator. When
+    # judge == generator they share fabrication patterns and the eval
+    # systematically undercounts the ungrounded/hallucination rate (the judge
+    # effectively grades its own output). Both the old judge slot (`get_llm` =
+    # llm_model) and the generator (`get_generate_llm` = cheap_llm_model) are
+    # Gemini 2.5 Flash Lite, so the judge was Flash-Lite grading Flash-Lite.
+    #
+    # DeepSeek V4 Pro is pinned to DeepSeek's NATIVE OpenRouter provider with
+    # allow_fallbacks=false (so a provider outage can't silently reroute and
+    # shift the judge baseline mid-week), reasoning DISABLED (effort:"none" —
+    # we only need a faithfulness score, not chain-of-thought, and reasoning
+    # tokens would land in reasoning_content which ChatOpenAI drops), and
+    # response_format=json_object (NOT tool_choice — structured-output via
+    # tool calling adds a function-call round-trip the gateway may not pin
+    # cleanly under provider routing). See app/llm/client.get_judge_llm.
+    #
+    # Fallback (manual swap via env) is Qwen 2.5 72B — also distinct from the
+    # Gemini generator family — if V4 Pro correlation vs gold-grade fails the
+    # 50-query calibration (D3).
+    judge_llm_model: str = Field(
+        default="deepseek/deepseek-v4-pro", alias="JUDGE_LLM_MODEL"
+    )
+    judge_llm_fallback_model: str = Field(
+        default="qwen/qwen-2.5-72b-instruct", alias="JUDGE_LLM_FALLBACK_MODEL"
+    )
+
     # ─── OpenRouter prompt caching ───────────────────────────────────────────
     # When True, system prompts are wrapped in content blocks with
     # cache_control={type: "ephemeral", ttl: "1h"} so OpenRouter can
@@ -266,6 +293,20 @@ class Settings(BaseSettings):
     # junk) on purpose: raising it would kill low-scoring entities like
     # AmarthaLink (3.46) without blocking the 6-8 scoring off-scope phrases.
     kb_min_sparse_score: float = 1.0
+
+    # ─── Embedding resilience (C5 — query-embedding SPOF) ────────────────────
+    # The query embedding is produced by a SINGLE process-global
+    # OpenAILikeEmbedding (app/config/embedding_config.py) hitting a remote
+    # provider. With no retry/timeout, a transient provider blip turned every
+    # retrieval into a hard failure (the dense + sparse encodings are awaited in
+    # one gather, so a dense-embed exception aborted sparse too → HTTP 500).
+    # These knobs wrap the dense embed in a bounded tenacity retry; on final
+    # failure hybrid_search degrades to SPARSE-ONLY (BM25) instead of raising,
+    # so terse/lexical queries still return results during an embedding outage.
+    embedding_timeout_seconds: float = 8.0
+    embedding_max_attempts: int = 3
+    embedding_backoff_base_seconds: float = 0.5
+    embedding_backoff_max_seconds: float = 4.0
 
     # ─── Mentor Mode (Field Office scaffolding) ──────────────────────────────
     # Field Office users often need explicit step-by-step learning, not just

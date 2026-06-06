@@ -182,6 +182,89 @@ def get_cheap_llm() -> ChatOpenAI:
 
 
 @lru_cache(maxsize=1)
+def get_judge_llm() -> ChatOpenAI:
+    """Dedicated LLM-as-judge for eval faithfulness — `deepseek/deepseek-v4-pro`.
+
+    C3: intentionally a DIFFERENT model family than BOTH the generator
+    (`get_generate_llm` = cheap_llm_model) and the old judge slot
+    (`get_llm` = llm_model), which are both Gemini 2.5 Flash Lite. A judge
+    that shares the generator's family shares its fabrication patterns and
+    undercounts the ungrounded rate (judge grading itself). The boot guard
+    `assert_judge_model_distinct` enforces this at startup.
+
+    Config rationale (verified against current OpenRouter docs):
+      - extra_body.provider.only=["deepseek"] + allow_fallbacks=False — hard-pin
+        to DeepSeek's native upstream so a provider outage fails LOUD instead
+        of silently rerouting to a different upstream and shifting the judge
+        baseline mid-week. `only` (allowlist) over `order` (preference) for an
+        unambiguous pin.
+      - extra_body.reasoning.effort="none" — V4 Pro is reasoning-capable; we
+        only need a faithfulness score. "none" is the documented canonical
+        form to disable reasoning entirely (NOT {"enabled": false}, which
+        mandatory-reasoning models reject with 400). With reasoning off the
+        answer lands in standard message.content, not reasoning_content
+        (which ChatOpenAI drops anyway).
+      - model_kwargs.response_format={"type":"json_object"} — emit a parseable
+        JSON object directly, NOT via with_structured_output()'s tool-calling
+        path (tool_choice adds a function-call round-trip that interacts badly
+        with provider pinning). judge_faithfulness parses content with
+        json.loads + FaithfulnessResult.model_validate.
+      - temperature=0, max_tokens=1024 per D1.
+
+    NOTE: provider pinning is an OpenRouter extension. If openrouter_base_url
+    points at a non-OpenRouter gateway it will ignore the `provider` field;
+    the json_object + temperature config still applies.
+    """
+    llm = ChatOpenAI(
+        model=settings.judge_llm_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+        temperature=0,
+        max_tokens=1024,
+        request_timeout=60,
+        max_retries=1,
+        http_async_client=_make_http_client(),
+        model_kwargs={
+            "response_format": {"type": "json_object"},
+        },
+        extra_body={
+            "provider": {
+                "only": ["deepseek"],
+                "allow_fallbacks": False,
+            },
+            "reasoning": {"effort": "none"},
+        },
+        default_headers={
+            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "X-Title": "AI LMS RAG Agent (Judge)",
+        },
+    )
+    _wrap_with_retry(llm)
+    return llm
+
+
+def assert_judge_model_distinct(
+    judge_model: str, generator_models: set[str]
+) -> None:
+    """Boot guard (C3): the judge model MUST differ from every generator model.
+
+    Pure + arg-driven so it's unit-testable without spinning a real Settings.
+    Called from the FastAPI lifespan so a mis-config (e.g. JUDGE_LLM_MODEL left
+    pointing at the Gemini generator) fails LOUD at startup rather than
+    silently producing inflated faithfulness scores in production.
+    """
+    if judge_model in generator_models:
+        raise RuntimeError(
+            f"JUDGE_LLM_MODEL={judge_model!r} matches a generator model "
+            f"({sorted(generator_models)!r}). The eval judge must be a "
+            f"different model family than the generator — a same-family judge "
+            f"shares fabrication patterns and undercounts the hallucination "
+            f"rate (judge grading itself). Set JUDGE_LLM_MODEL to a distinct "
+            f"model (default: deepseek/deepseek-v4-pro)."
+        )
+
+
+@lru_cache(maxsize=1)
 def get_preprocessor_llm() -> ChatOpenAI:
     """Cheap LLM for the pre-processor's intent classification + query rewrite.
 

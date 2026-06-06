@@ -39,13 +39,18 @@ async def main(path: Path, concurrency: int) -> int:
     print(f"  passed      : {summary['passed']}")
     print(f"  failed      : {summary['failed']}")
     print(f"  pass_rate   : {summary['pass_rate']:.2%}")
+    if summary.get("judge_no_signal"):
+        print(f"  ⚠ judge_no_signal : {summary['judge_no_signal']}  "
+              f"(faithfulness requested but judge returned NO score — "
+              f"NOT counted as pass; possible judge-model outage)")
     print(f"  elapsed     : {elapsed}s")
     print("-" * 72)
     for cat, s in sorted(summary["by_category"].items()):
         fm = f"{s['faithfulness_mean']:.2f}" if s["faithfulness_mean"] is not None else "—"
+        ns = f"  no_signal={s['judge_no_signal']}" if s.get("judge_no_signal") else ""
         print(
             f"  {cat:<20s} {s['passed']:>3d}/{s['total']:<3d}  "
-            f"({s['pass_rate']:.0%})  faithfulness_mean={fm}"
+            f"({s['pass_rate']:.0%})  faithfulness_mean={fm}{ns}"
         )
     print("=" * 72)
 
