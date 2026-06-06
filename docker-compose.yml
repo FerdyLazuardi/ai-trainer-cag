@@ -126,27 +126,32 @@ services:
   redis:
     image: redis:8.6.3-alpine
     container_name: peped-redis
-    # maxmemory 768m (set in command) + process overhead. Ceiling slightly above
-    # so the cgroup limit never fires before redis's own LRU eviction does.
-    # io-threads is left at the server default (1) — the 2-vCPU box this runs
-    # on would gain nothing from threading I/O, and the default avoids the
-    # extra threads eating into the cgroup's CPU share.
-    # 768mb (was 512mb): at 600 DAU the 50k cap semantic_cache + per-conv
-    # HASHes + LTM locks + streaq stream + agent_log buffer head toward
-    # 400-450MB under burst, leaving only ~60MB headroom at 512mb. 768mb
-    # gives ~300MB headroom for the same load at 13k DAU.
+    # mem_limit 1g (cgroup) vs maxmemory 600mb (in command): the gap is
+    # DELIBERATE. RDB is active (default save points 3600 1 / 300 100 / 60 10000,
+    # verified live post-migration), so BGSAVE forks a child that shares pages
+    # copy-on-write; under a write burst the fork can transiently add ~150-200MB
+    # on top of the dataset. With maxmemory 600mb the fork peak (600 + ~40
+    # baseline + ~200 COW ≈ 840MB) keeps ~180MB headroom under the 1g cgroup. At
+    # the previous 768mb it peaked ~1008MB and risked an OOM-kill during BGSAVE
+    # that would take down the streaq QUEUE + conversation history + cache
+    # together. Durability unchanged (RDB still on). Fast-follow: audit which
+    # keys are non-regenerable (esp. rag:conv_owner:*) — if all regenerable,
+    # switch to `save ""` (no fork) and restore 768mb cache headroom.
+    #
+    # io-threads left at server default (1): the 2-vCPU box gains nothing from
+    # threading I/O, and extra threads would eat into the cgroup's CPU share.
     mem_limit: 1g
     mem_reservation: 256m
     # volatile-lru (NOT allkeys-lru): this single Redis is shared by the query
     # cache, conversation history, the streaq job QUEUE, rate-limit counters, and
     # the agent_log buffer. allkeys-lru would evict ANY key under memory
-    # pressure — including queued LTM/eval jobs and the log buffer, which carry
-    # NO TTL — silently dropping scheduled work. volatile-lru only evicts keys
-    # that have an explicit TTL (cache/history/rate-limit), so the untled queue
-    # + buffer are never sacrificed to make room for cache growth.
-    # --maxmemory-samples 10: Redis 8.0+ raised the LRU sample size default to
-    # 10 for better eviction fidelity; cost is negligible vs. default 5.
-    command: ["redis-server", "--maxmemory", "768mb", "--maxmemory-policy", "volatile-lru", "--maxmemory-samples", "10"]
+    # pressure — including the queued LTM/eval jobs and the log buffer, which
+    # carry NO TTL — silently dropping scheduled work. volatile-lru only evicts
+    # keys that have an explicit TTL (cache/history/rate-limit), so the no-TTL
+    # queue + buffer are never sacrificed to make room for cache growth.
+    # --maxmemory-samples 10: Redis 8.0+ raised the LRU sample default to 10 for
+    # better eviction fidelity; cost is negligible vs. the old default of 5.
+    command: ["redis-server", "--maxmemory", "600mb", "--maxmemory-policy", "volatile-lru", "--maxmemory-samples", "10"]
     ports:
       - "6381:6379"
     restart: unless-stopped
