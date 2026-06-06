@@ -3,7 +3,7 @@ import json
 import random
 import time
 import uuid
-from typing import Optional
+from typing import Optional, cast
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
@@ -18,7 +18,8 @@ from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
 from app.database.models import UserProfile
-from app.graph.pipeline import get_rag_graph
+from app.graph.pipeline import get_rag_graph, _route_after_rag
+from app.graph.state import RAGState
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
 from app.utils.logger_batch import batch_logger
@@ -31,6 +32,57 @@ from app.worker import sync_ltm_task, eval_turn_task  # noqa: E402
 
 router = APIRouter()
 settings = get_settings()
+
+
+# ── Cache privacy helpers (C1) ────────────────────────────────────────────────
+def compute_was_personalized(
+    *,
+    ltm_profile: Optional[dict],
+    user_pref_dict: Optional[dict],
+    recent_history: Optional[list],
+    summary: Optional[str],
+) -> bool:
+    """True when user-specific content was injected into the LLM prompt.
+
+    The query cache is keyed by {namespace}:{course_id|global}:{sha256(query)}
+    — NOT by user_id. Any answer shaped by user-specific input must be cached
+    under a user-scoped namespace (see `cache_namespace_for`) or it leaks to
+    other users asking the same question.
+
+    Personalizing inputs:
+      - LTM episodes (user's past queries/preferences)
+      - UserProfile prefs (custom tone/formatting)
+      - Conversation history / summary (C1): `recent_history` and `summary` are
+        injected into `messages` / `conversation_summary` and DO shape
+        multi-turn answers (pronoun binding, follow-ups referencing earlier
+        turns). A multi-turn answer can embed details from this user's earlier
+        private turns, so it must not land in the global namespace. The earlier
+        assumption that "summary is not personal" was exactly the leak.
+
+    A first-turn-ever query (no history, summary, LTM, or prefs) returns False
+    and stays globally cacheable, preserving the cold-KB cache-hit rate.
+    """
+    _ltm = ltm_profile or {}
+    has_ltm = (
+        bool((_ltm.get("summary") or "").strip())
+        or bool(_ltm.get("course_names"))
+        or bool(_ltm.get("unanswered_questions"))
+    )
+    has_prefs = bool(user_pref_dict) and any(
+        bool((v or "").strip()) if isinstance(v, str) else bool(v)
+        for v in (user_pref_dict or {}).values()
+    )
+    has_history = bool(recent_history) or bool((summary or "").strip())
+    return has_ltm or has_prefs or has_history
+
+
+def cache_namespace_for(*, was_personalized: bool, user_id) -> str:
+    """Resolve the cache namespace. User-scoped when personalized, else global.
+
+    Single source of truth for both the chat and chat-stream write paths so the
+    privacy guarantee can't drift between them.
+    """
+    return f"rag_user_{user_id}" if was_personalized else "rag"
 
 # Module-level set to keep references to background stream tasks alive
 # (prevents GC from cancelling them mid-flight after the SSE generator returns).
@@ -131,6 +183,7 @@ def _should_eval_turn(
     intent_scores: dict | None,
     max_dense_score: float | None,
     answer: str | None,
+    is_low_relevance: bool = False,
 ) -> bool:
     """Sampling decision for post-hoc evaluation.
 
@@ -140,12 +193,22 @@ def _should_eval_turn(
     - Top dense cosine below threshold (suspected retrieval miss / potential halu).
 
     Skips canned-response intents and empty answers regardless.
+
+    H6: Skips low-relevance turns entirely. When both gate signals miss, the
+    generator emits a canned NOT-FOUND refusal that makes no factual claim, so
+    the judge auto-scores it 1.0 (faithful-by-vacuity) — grading these inflates
+    the mean faithfulness and hides real regressions. The `dense<below` force
+    branch is therefore meaningful only for sparse-rescued turns (low dense but
+    a real, grounded answer was produced), which is exactly what remains once
+    low-relevance is filtered out here.
     """
     if not settings.eval_enabled:
         return False
     if not answer or not answer.strip():
         return False
     if intent in _EVAL_SKIP_INTENTS:
+        return False
+    if is_low_relevance:
         return False
 
     scores = intent_scores or {}
@@ -476,29 +539,26 @@ async def _prepare_rag_context(
         "conversation_summary": summary,
         "user_profile": ltm_profile,
         "user_preferences": user_pref_dict,
+        # H5 — hand the already-computed query embedding to rag_node so it can
+        # skip a second embed. `query_embedding_text` is the EXACT string we
+        # embedded (resolved_query); rag_node reuses the vector only when the
+        # retrieval query matches this text, else it re-embeds (post-rewrite the
+        # retrieval query can differ). None when embedding failed (C5 degrade).
+        "query_embedding": query_embedding,
+        "query_embedding_text": resolved_query if query_embedding is not None else None,
     }
 
-    # ── Cross-user cache-leak guard (FIX 1) ───────────────────────────────────
-    # The query cache is keyed by {namespace}:{course_id|global}:{sha256(query)}
-    # — NOT by user_id. Skip cache write only when user-specific content was
-    # actually injected into the LLM prompt:
-    #   - LTM episodes: contain user's past queries/preferences → personal
-    #   - UserProfile prefs: custom tone/formatting → personal
-    # Conversation summary is NOT personal — it's a history of topics, not
-    # injected into the KB answer. Caching KB answers even when summary exists
-    # is safe because the answer content is the same for all users asking the
-    # same question. This dramatically improves cache hit rate.
-    _ltm = ltm_profile or {}
-    has_ltm = (
-        bool((_ltm.get("summary") or "").strip())
-        or bool(_ltm.get("course_names"))
-        or bool(_ltm.get("unanswered_questions"))
+    # ── Cross-user cache-leak guard (FIX 1 + C1) ──────────────────────────────
+    # Privacy decision extracted to `compute_was_personalized` (pure + unit
+    # tested). When any user-specific content (LTM, prefs, OR conversation
+    # history/summary) shaped the answer, it must be cached user-scoped so it
+    # can't leak to another user asking the same question.
+    was_personalized = compute_was_personalized(
+        ltm_profile=ltm_profile,
+        user_pref_dict=user_pref_dict,
+        recent_history=recent_history,
+        summary=summary,
     )
-    has_prefs = bool(user_pref_dict) and any(
-        bool((v or "").strip()) if isinstance(v, str) else bool(v)
-        for v in user_pref_dict.values()
-    )
-    was_personalized = has_ltm or has_prefs
 
     return {
         "cached": None,
@@ -653,20 +713,22 @@ async def _run_chat(
     effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
 
-    # Skip cache write when retrieval missed: no chunks OR both gate signals
-    # below floor (mirrors _route_after_rag's dense-OR-sparse logic). These
-    # responses are canned "not found" messages — caching them would poison
-    # later hits when the KB grows.
-    _dense_miss = max_chunk_score is None or max_chunk_score < settings.kb_min_dense_score
-    _sparse_miss = max_chunk_sparse is None or max_chunk_sparse < settings.kb_min_sparse_score
-    is_low_relevance = actual_chunks == 0 or (_dense_miss and _sparse_miss)
+    # Skip cache write when retrieval missed. AUTHORITATIVE source: the graph's
+    # own gate (`_route_after_rag`) — call it on the final state so this decision
+    # can NEVER diverge from what the pipeline actually did. Recomputing from the
+    # top-3 chunk scores (as before) drifted from the gate after C4: the gate now
+    # reads POOL-level maxes (full fetch_k), so a C4-pool-rescued turn (high-dense
+    # chunk at pool rank 4-20) generates a real answer in the graph but the old
+    # top-3 recompute here would wrongly flag it low-relevance — skipping both the
+    # cache write AND the faithfulness eval for exactly the turns C4 rescued.
+    is_low_relevance = _route_after_rag(cast(RAGState, result)) == "low_relevance"
     # FIX 1: Personalized answers are now cached using a user-scoped namespace
     # so they can't leak to another user but still provide cache hits for this user.
     if (
         intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
         and not is_low_relevance
     ):
-        ns = f"rag_user_{current_user.user_id}" if was_personalized else "rag"
+        ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
         background_tasks.add_task(
             set_cached_response,
             query=resolved_query,
@@ -716,6 +778,7 @@ async def _run_chat(
         intent_scores=result.get("intent_scores"),
         max_dense_score=max_chunk_score,
         answer=answer,
+        is_low_relevance=is_low_relevance,
     ):
         background_tasks.add_task(
             _enqueue_eval,
@@ -921,6 +984,12 @@ async def chat_stream(
         retrieved_context = []
         intent = "KNOWLEDGE"
         stream_intent_scores: dict = {}
+        # C4/C5 pool-level gate signals captured from rag_node's on_chain_end
+        # output; consumed by _route_after_rag at finalization so the stream
+        # eval/cache decision matches the graph's actual route.
+        stream_pool_max_dense = None
+        stream_pool_max_sparse = None
+        stream_dense_retrieval_ok = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
@@ -947,6 +1016,13 @@ async def chat_stream(
                     output = event.get("data", {}).get("output", {})
                     if isinstance(output, dict) and "retrieved_context" in output:
                         retrieved_context = output["retrieved_context"] or []
+                        # C4/C5: capture the pool-level gate signals rag_node
+                        # computed so the eval/cache decision below can reuse the
+                        # AUTHORITATIVE gate (_route_after_rag) instead of a
+                        # divergent top-3 recompute.
+                        stream_pool_max_dense = output.get("pool_max_dense")
+                        stream_pool_max_sparse = output.get("pool_max_sparse")
+                        stream_dense_retrieval_ok = output.get("dense_retrieval_ok")
 
                 if kind == "on_chain_end" and event.get("name") == "pre_processor":
                     output = event.get("data", {}).get("output", {})
@@ -1077,15 +1153,24 @@ async def chat_stream(
             stream_max_score = max(stream_dense_scores) if stream_dense_scores else None
             stream_sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
             stream_max_sparse = max(stream_sparse_scores) if stream_sparse_scores else None
-            # Mirror _route_after_rag: low-relevance only when BOTH signals miss.
-            _s_dense_miss = stream_max_score is None or stream_max_score < settings.kb_min_dense_score
-            _s_sparse_miss = stream_max_sparse is None or stream_max_sparse < settings.kb_min_sparse_score
-            is_low_relevance_stream = (not retrieved_context) or (_s_dense_miss and _s_sparse_miss)
+            # AUTHORITATIVE low-relevance: reconstruct the minimal state the gate
+            # reads and call _route_after_rag, so the stream eval/cache decision
+            # can't diverge from the graph's actual route (same C4/C5 fix as the
+            # non-stream path — the old top-3 recompute drifted from the pool-level
+            # gate and skipped eval on C4-rescued turns).
+            _gate_state = {
+                "intent": intent,
+                "retrieved_context": retrieved_context,
+                "pool_max_dense": stream_pool_max_dense,
+                "pool_max_sparse": stream_pool_max_sparse,
+                "dense_retrieval_ok": stream_dense_retrieval_ok,
+            }
+            is_low_relevance_stream = _route_after_rag(cast(RAGState, _gate_state)) == "low_relevance"
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
             ):
-                ns = f"rag_user_{current_user.user_id}" if was_personalized else "rag"
+                ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
                 await set_cached_response(
                     query=resolved_query,
                     answer=full_answer,
@@ -1117,6 +1202,7 @@ async def chat_stream(
                 intent_scores=stream_intent_scores,
                 max_dense_score=stream_max_score,
                 answer=full_answer,
+                is_low_relevance=is_low_relevance_stream,
             ):
                 await _enqueue_eval(
                     turn_id=turn_id,

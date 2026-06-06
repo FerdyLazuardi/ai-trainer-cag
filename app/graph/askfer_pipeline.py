@@ -235,12 +235,13 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
 
     query_to_search = state.get("rewritten_query") or state["messages"][-1].content
     try:
-        docs = await hybrid_search(
+        result = await hybrid_search(
             query=query_to_search,
             top_k=_settings.askfer_final_top_k,
             fetch_k=_settings.askfer_retrieval_top_k,
             collection=_settings.qdrant_personal_collection,
         )
+        docs = result.chunks
 
         chunks = []
         for d in docs:

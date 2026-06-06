@@ -33,3 +33,29 @@ class RetrievedChunk:
             "dense_score": round(self.dense_score, 4),
             "sparse_score": round(self.sparse_score, 4),
         }
+
+
+@dataclass
+class HybridSearchResult:
+    """Return envelope for `hybrid_search`.
+
+    Carries the final fused chunks PLUS pool-level retrieval signals that the
+    NOT-FOUND gate needs but that the truncated `chunks` list cannot provide.
+
+    C4 — `pool_max_dense` / `pool_max_sparse` are the MAX raw scores over the
+    full fetch_k candidate pool (per modality), computed BEFORE the top-k slice.
+    The gate must see these, not the per-chunk maxes of the returned top-k: a
+    chunk with the highest raw dense cosine can rank below the top-k by *fused*
+    score (fusion blends in normalized sparse) and get sliced off, which would
+    make the gate read an artificially low max and emit a false NOT-FOUND.
+
+    C5 — `dense_available` is False when the dense embedding could not be
+    produced (embedding provider down) and retrieval degraded to sparse-only
+    BM25. The gate uses this to avoid treating a missing dense signal as a
+    semantic miss (it would gate purely on sparse in that window).
+    """
+    chunks: list[RetrievedChunk] = field(default_factory=list)
+    pool_max_dense: float = 0.0
+    pool_max_sparse: float = 0.0
+    dense_available: bool = True
+    sparse_available: bool = True

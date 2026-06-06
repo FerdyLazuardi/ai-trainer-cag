@@ -655,6 +655,31 @@ class StreamLeakGuard:
         return self._mode == "buffered"
 
 
+async def _incr_parse_failure_metric() -> None:
+    """Fire-and-forget counter for pre-processor JSON parse failures (C2).
+
+    Bucketed by UTC date so the key self-expires (7-day retention) and gives a
+    per-day failure rate that ops can scrape with a single SCAN/GET. Never
+    raises — a metrics write must never break the request path. A rising count
+    here means the pre-processor LLM is returning malformed JSON often enough
+    that the BRAINSTORM+empathy fail-safe is firing, i.e. silent quality decay.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from app.database.redis_client import get_redis_client
+
+        redis = get_redis_client()
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        key = f"rag:metrics:preprocess_parse_failure:{day}"
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 7 * 24 * 3600)
+        await pipe.execute()
+    except Exception:
+        pass
+
+
 async def _pre_processor(state: RAGState, config: RunnableConfig):
     """Classify intent and rewrite query.
 
@@ -718,22 +743,67 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         "learning_context": 0.0,
     }
     safety_preserved_query = ""
-    try:
-        import json as _json
-        raw = await llm.ainvoke([
-            SystemMessage(content=PRE_PROCESSOR_PROMPT + _JSON_SUFFIX),
-            HumanMessage(content=f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {user_msg}")
-        ], config=config)
-        raw_content = raw.content if isinstance(raw.content, str) else str(raw.content)
-        # Strip markdown code fences if present
+
+    import json as _json
+
+    _preproc_msgs = [
+        SystemMessage(content=PRE_PROCESSOR_PROMPT + _JSON_SUFFIX),
+        HumanMessage(content=f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {user_msg}"),
+    ]
+
+    def _extract_json(raw_content: str) -> str:
         raw_content = raw_content.strip()
+        # Strip markdown code fences if present
         if raw_content.startswith("```"):
             raw_content = raw_content.split("```")[1]
             if raw_content.startswith("json"):
                 raw_content = raw_content[4:]
             raw_content = raw_content.strip()
-        parsed = _json.loads(raw_content)
-        result = PreProcessorResult(**parsed)
+        return raw_content
+
+    async def _invoke_and_parse(repair_from: str | None = None) -> PreProcessorResult:
+        # On the repair pass, feed the previous malformed output back with a
+        # corrective instruction. A plain re-invoke of the same messages on a
+        # temp=0 pre-processor would just reproduce the same broken output —
+        # near-zero recovery. Echoing the bad text + "return ONLY valid JSON"
+        # is what actually fixes the common failure modes (trailing prose,
+        # truncated object, smart quotes, fences).
+        msgs = list(_preproc_msgs)
+        if repair_from is not None:
+            msgs.append(AIMessage(content=repair_from))
+            msgs.append(HumanMessage(content=(
+                "Your previous response was not valid JSON. Return ONLY the JSON "
+                "object matching the schema — no markdown fences, no prose before "
+                "or after, no trailing commas, standard double quotes."
+            )))
+        raw = await llm.ainvoke(msgs, config=config)
+        raw_content = raw.content if isinstance(raw.content, str) else str(raw.content)
+        last_raw["text"] = raw_content
+        parsed = _json.loads(_extract_json(raw_content))
+        return PreProcessorResult(**parsed)
+
+    # C2: 1 initial attempt + 1 JSON-repair retry. The pre-processor LLM
+    # occasionally emits malformed JSON (trailing prose, truncated object,
+    # smart quotes). The repair pass (see above) echoes the bad output back
+    # with a corrective instruction before we fall back.
+    last_raw: dict[str, str] = {"text": ""}
+    result = None
+    for _attempt in range(2):
+        try:
+            result = await _invoke_and_parse(
+                repair_from=last_raw["text"] if _attempt == 1 else None
+            )
+            break
+        except Exception as exc:
+            if _attempt == 0:
+                logger.warning(f"Pre-processor JSON parse failed (attempt 1/2), JSON-repair retry: {exc}")
+                continue
+            logger.error(
+                f"Pre-processor JSON parse failed after repair retry — engaging "
+                f"fail-safe BRAINSTORM+empathy (NOT KNOWLEDGE): {exc}"
+            )
+
+    if result is not None:
         intent = result.intent
         rewritten = result.rewritten_query.strip() or user_msg
         intent_scores = {
@@ -744,10 +814,29 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "learning_context": float(result.learning_context or 0.0),
         }
         safety_preserved_query = (result.safety_preserved_query or "").strip()
-    except Exception as exc:
-        logger.warning(f"Pre-processor structured output failed, defaulting to KNOWLEDGE: {exc}")
-        intent = "KNOWLEDGE"
+    else:
+        # ── C2 fail-safe ──────────────────────────────────────────────────
+        # Both parse attempts failed. The OLD behavior defaulted to KNOWLEDGE,
+        # which routes to the cold, strict procedural prompt with ZERO empathy.
+        # If the un-parseable turn was a distressed / safety message, that's
+        # the worst possible UX — a victim gets a flat KB lookup. Since parsing
+        # failed we cannot know the intent, so we fail SAFE: route to
+        # BRAINSTORM (the empathy-aware generate prompt) and force empathy to
+        # 0.8 so RESPONSE_SHAPE_EMPATHY fires. A neutral factual turn merely
+        # gets a slightly warmer answer (still KB-grounded — BRAINSTORM still
+        # flows through rag_node); a distressed turn gets acknowledged instead
+        # of cold facts. Emit a counter so a rising parse-failure rate is
+        # observable instead of silently degrading quality.
+        await _incr_parse_failure_metric()
+        intent = "BRAINSTORM"
         rewritten = user_msg
+        intent_scores = {
+            "needs_lookup": 0.0,
+            "needs_reasoning": 0.0,
+            "needs_empathy": 0.8,
+            "needs_safety_escalation": 0.0,
+            "learning_context": 0.0,
+        }
 
     intent, intent_scores, retrieval_override = _apply_safety_overrides(
         user_msg=user_msg,
@@ -988,8 +1077,26 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
         or state["messages"][-1].content
     )
 
+    # H5 — reuse the embedding the chat route already computed, but ONLY if it
+    # was computed from the exact text we're about to search. The route embeds
+    # `resolved_query` (for cache/LTM); after rewrite/safety-anchoring the
+    # retrieval query often differs, in which case reusing would search the
+    # wrong vector — so we fall back to embedding inside hybrid_search.
+    precomputed = state.get("query_embedding")
+    precomputed_text = state.get("query_embedding_text")
+    reuse_embedding = (
+        precomputed
+        if precomputed and precomputed_text == query_to_search
+        else None
+    )
+
     try:
-        docs = await hybrid_search(query=query_to_search, top_k=_settings.final_top_k)
+        result = await hybrid_search(
+            query=query_to_search,
+            top_k=_settings.final_top_k,
+            query_embedding=reuse_embedding,
+        )
+        docs = result.chunks
 
         chunks = []
         for d in docs:
@@ -1007,7 +1114,15 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
             })
 
         logger.info(f"RAG node retrieved {len(chunks)} chunks for query: {query_to_search[:60]}")
-        return {"retrieved_context": chunks}
+        # C4: surface pool-level signals (max over full fetch_k pool, pre-slice)
+        # for the NOT-FOUND gate; C5: dense_retrieval_ok=False when degraded to
+        # sparse-only so the gate doesn't read the missing dense signal as a miss.
+        return {
+            "retrieved_context": chunks,
+            "pool_max_dense": result.pool_max_dense,
+            "pool_max_sparse": result.pool_max_sparse,
+            "dense_retrieval_ok": result.dense_available,
+        }
 
     except Exception as e:
         logger.error(f"RAG node retrieval failed: {e}")
@@ -1299,25 +1414,60 @@ def _route_after_rag(state: RAGState) -> str:
     letting off-scope through (it has neither signal). The fused
     `score`/`hybrid_score` is min-max normalized per-query (top hit ≈ 1.0 on
     every query), so it can't gate a global miss — these raw signals can.
+
+    C4 — the gate reads POOL-LEVEL maxes (`pool_max_dense`/`pool_max_sparse`,
+    set by rag_node over the full fetch_k pool BEFORE the top-k slice), not the
+    per-chunk maxes of the returned top-k. A chunk with the highest raw dense
+    cosine can rank below the final top-k by FUSED score (fusion blends in
+    normalized sparse) and get sliced off — gating on the post-slice chunks
+    would then read an artificially low max and emit a FALSE NOT-FOUND. Falls
+    back to the per-chunk computation if pool stats are absent (defensive).
+
+    C5 — when retrieval degraded to sparse-only (embedding outage,
+    `dense_retrieval_ok` is False), the dense signal is MISSING, not low. We
+    must not let an absent dense score force a NOT-FOUND; the gate runs on
+    sparse alone in that window.
     """
     if state.get("intent") == "BRAINSTORM":
         return "generate"
     chunks = state.get("retrieved_context") or []
     if not chunks:
         return "low_relevance"
-    dense_scores = [c.get("dense_score") for c in chunks if isinstance(c.get("dense_score"), (int, float))]
-    sparse_scores = [c.get("sparse_score") for c in chunks if isinstance(c.get("sparse_score"), (int, float))]
-    if not dense_scores and not sparse_scores:
+
+    # C4: prefer pool-level maxes computed over the full fetch_k pool. Fall back
+    # to per-chunk maxes (legacy behaviour) only when pool stats are unavailable.
+    pool_max_dense = state.get("pool_max_dense")
+    pool_max_sparse = state.get("pool_max_sparse")
+    if pool_max_dense is None and pool_max_sparse is None:
+        dense_scores = [c.get("dense_score") for c in chunks if isinstance(c.get("dense_score"), (int, float))]
+        sparse_scores = [c.get("sparse_score") for c in chunks if isinstance(c.get("sparse_score"), (int, float))]
+        if not dense_scores and not sparse_scores:
+            return "low_relevance"
+        max_dense = max(dense_scores) if dense_scores else 0.0
+        max_sparse = max(sparse_scores) if sparse_scores else 0.0
+    else:
+        max_dense = float(pool_max_dense or 0.0)
+        max_sparse = float(pool_max_sparse or 0.0)
+
+    # C5: dense degraded to sparse-only — judge on sparse alone, don't let the
+    # missing dense signal (0.0) manufacture a NOT-FOUND.
+    dense_retrieval_ok = state.get("dense_retrieval_ok")
+    if dense_retrieval_ok is False:
+        if max_sparse >= _settings.kb_min_sparse_score:
+            return "generate"
+        logger.info(
+            f"Sparse-only retrieval below sparse gate — skipping generate_node "
+            f"(sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score}, dense unavailable)"
+        )
         return "low_relevance"
-    max_dense = max(dense_scores) if dense_scores else 0.0
-    max_sparse = max(sparse_scores) if sparse_scores else 0.0
+
     dense_ok = max_dense >= _settings.kb_min_dense_score
     sparse_ok = max_sparse >= _settings.kb_min_sparse_score
     if not dense_ok and not sparse_ok:
         logger.info(
             f"Retrieval below both gates — skipping generate_node "
-            f"(dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-            f"sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score})"
+            f"(pool dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
+            f"pool sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score})"
         )
         return "low_relevance"
     return "generate"

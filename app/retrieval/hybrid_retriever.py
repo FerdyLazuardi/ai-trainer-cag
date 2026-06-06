@@ -22,6 +22,12 @@ from functools import lru_cache
 
 from loguru import logger
 from qdrant_client import models as rest
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from llama_index.core import Settings
 from llama_index.core.vector_stores.utils import metadata_dict_to_node
@@ -30,7 +36,7 @@ from llama_index.vector_stores.qdrant.utils import fastembed_sparse_encoder
 from app.config.settings import get_settings
 from app.config.embedding_config import ensure_llamaindex_configured
 from app.database.qdrant_client import get_qdrant_client
-from app.retrieval.schemas import RetrievedChunk
+from app.retrieval.schemas import RetrievedChunk, HybridSearchResult
 
 settings = get_settings()
 
@@ -78,12 +84,47 @@ def _minmax_normalize(scores: dict[str, float]) -> dict[str, float]:
     return {node_id: (val - lo) / span for node_id, val in scores.items()}
 
 
+async def _embed_query_resilient(query: str) -> list[float] | None:
+    """Embed the query with bounded retry + timeout (C5).
+
+    The embedding provider is a single remote SPOF. We wrap the call in a
+    tenacity retry (exponential backoff) and a per-attempt timeout. On final
+    failure we return None — the caller degrades to sparse-only BM25 rather
+    than raising, so retrieval stays available during an embedding outage.
+    """
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(settings.embedding_max_attempts),
+            wait=wait_exponential(
+                multiplier=settings.embedding_backoff_base_seconds,
+                max=settings.embedding_backoff_max_seconds,
+            ),
+            retry=retry_if_exception_type((Exception,)),
+            reraise=True,
+        ):
+            with attempt:
+                return await asyncio.wait_for(
+                    Settings.embed_model.aget_query_embedding(query),
+                    timeout=settings.embedding_timeout_seconds,
+                )
+    except Exception as exc:
+        logger.error(
+            "Query embedding failed after retries — degrading to sparse-only",
+            error=str(exc)[:200],
+            error_type=type(exc).__name__,
+            query=query[:60],
+        )
+        return None
+    return None
+
+
 async def hybrid_search(
     query: str,
     top_k: int | None = None,
     collection: str | None = None,
     fetch_k: int | None = None,
-) -> list[RetrievedChunk]:
+    query_embedding: list[float] | None = None,
+) -> HybridSearchResult:
     """
     Perform native hybrid (dense + sparse BM25) retrieval against Qdrant.
 
@@ -106,9 +147,18 @@ async def hybrid_search(
             settings.qdrant_kb_collection.
         fetch_k: Candidates per modality before fusion. Defaults to
             max(top_k, settings.retrieval_top_k).
+        query_embedding: Optional precomputed dense embedding for THIS exact
+            query string (H5). When supplied we skip re-embedding — the caller
+            (chat route) already embedded the same text for the cache/LTM
+            lookup. MUST be the embedding of `query`; callers guard this with a
+            text-equality check. Pass None to embed here.
 
     Returns:
-        Fused list[RetrievedChunk] sorted by descending fused score.
+        HybridSearchResult: fused `chunks` (sorted by descending fused score)
+        plus pool-level signals — `pool_max_dense`/`pool_max_sparse` (max raw
+        score over the FULL fetch_k pool, pre-slice, for the NOT-FOUND gate)
+        and `dense_available`/`sparse_available` (False when that modality could
+        not run, e.g. embedding outage → dense-only degrade).
     """
     ensure_llamaindex_configured()
     k = top_k or settings.retrieval_top_k
@@ -120,26 +170,63 @@ async def hybrid_search(
 
     # 1. Encode the query: dense (same embed model as ingestion) + sparse BM25.
     # Run both encodings concurrently — they are independent I/O + CPU calls.
-    # Dense: async OpenAI API call. Sparse: CPU-bound fastembed BM25 offloaded
-    # to a thread so the event loop stays free.
+    # Dense: async OpenAI API call (resilient — retry/timeout, may return None).
+    # Sparse: CPU-bound fastembed BM25 offloaded to a thread so the loop stays
+    # free. C5: we use return_exceptions semantics via separate awaits so a
+    # dense-embed failure does NOT abort the (independent) sparse arm — we then
+    # run sparse-only instead of failing the whole retrieval.
     encoder = _get_sparse_encoder()
-    
+
     async def _encode_sparse():
         # Semaphore limits concurrency to 1, preventing fastembed (onnxruntime)
         # from saturating all CPU cores and starving the asyncio event loop.
         async with _get_sparse_semaphore():
             return await asyncio.to_thread(encoder, [query])
 
-    dense_vec, (sparse_idx, sparse_val) = await asyncio.gather(
-        Settings.embed_model.aget_query_embedding(query),
+    # H5: reuse a precomputed embedding for the SAME query text instead of
+    # re-embedding. The caller guarantees (by text equality) it matches `query`.
+    async def _dense():
+        if query_embedding is not None:
+            return query_embedding
+        return await _embed_query_resilient(query)
+
+    dense_vec, sparse_encoded = await asyncio.gather(
+        _dense(),
         _encode_sparse(),
+        return_exceptions=True,
     )
 
+    # Sparse is local CPU (fastembed) — an exception here is unexpected; treat
+    # as sparse unavailable rather than crashing the request.
+    sparse_available = not isinstance(sparse_encoded, BaseException)
+    dense_available = (not isinstance(dense_vec, BaseException)) and dense_vec is not None
+
+    if not dense_available and not sparse_available:
+        logger.error(
+            "Both dense and sparse encodings failed — returning empty result",
+            query=query[:60],
+        )
+        return HybridSearchResult(
+            chunks=[], pool_max_dense=0.0, pool_max_sparse=0.0,
+            dense_available=False, sparse_available=False,
+        )
+
+    if not dense_available:
+        logger.warning("Dense embedding unavailable — running sparse-only (BM25) retrieval")
+    if not sparse_available:
+        logger.warning("Sparse encoding unavailable — running dense-only retrieval")
+
+    sparse_idx = sparse_val = None
+    if sparse_available:
+        sparse_idx, sparse_val = sparse_encoded  # type: ignore[misc]
+
     # 2. One batched round-trip: dense KNN + sparse BM25 KNN over a `pool`-sized
-    #    candidate set per modality.
-    responses = await qdrant.client.query_batch_points(
-        collection_name=collection_name,
-        requests=[
+    #    candidate set per modality. Only include the arms that are available.
+    requests = []
+    _dense_req_idx = _sparse_req_idx = None
+    if dense_available:
+        _dense_req_idx = len(requests)
+        requests.append(
             rest.QueryRequest(
                 query=dense_vec,
                 using=_DENSE_VECTOR_NAME,
@@ -151,18 +238,26 @@ async def hybrid_search(
                 # to 128 for top_k<=20 and cuts the per-search CPU
                 # cost noticeably.
                 params={"hnsw_ef": 64},
-            ),
+            )
+        )
+    if sparse_available:
+        _sparse_req_idx = len(requests)
+        requests.append(
             rest.QueryRequest(
                 query=rest.SparseVector(indices=sparse_idx[0], values=sparse_val[0]),
                 using=_SPARSE_VECTOR_NAME,
                 limit=pool,
                 with_payload=True,
                 # No hnsw_ef for sparse — sparse uses inverted index, not HNSW.
-            ),
-        ],
+            )
+        )
+
+    responses = await qdrant.client.query_batch_points(
+        collection_name=collection_name,
+        requests=requests,
     )
-    dense_points = responses[0].points
-    sparse_points = responses[1].points
+    dense_points = responses[_dense_req_idx].points if _dense_req_idx is not None else []
+    sparse_points = responses[_sparse_req_idx].points if _sparse_req_idx is not None else []
 
     # 3. Raw scores per modality + first-seen payload per node.
     dense_raw: dict[str, float] = {p.id: float(p.score) for p in dense_points}
@@ -173,13 +268,28 @@ async def hybrid_search(
     for p in sparse_points:
         payloads.setdefault(p.id, p.payload)
 
+    # C4: pool-level maxes over the FULL fetch_k candidate set, computed BEFORE
+    # the top-k slice below. The NOT-FOUND gate must read these — a chunk with
+    # the highest raw dense cosine can rank below the top-k by FUSED score (the
+    # fused rank blends in normalized sparse) and get sliced off at step 5, so
+    # the per-chunk max of the returned top-k can read artificially low and emit
+    # a false NOT-FOUND. These are the true retrieval signals for the pool.
+    pool_max_dense = max(dense_raw.values()) if dense_raw else 0.0
+    pool_max_sparse = max(sparse_raw.values()) if sparse_raw else 0.0
+
     if not payloads:
         logger.debug(
             "Hybrid retrieval returned no candidates",
             query=query[:60],
             collection=collection_name,
         )
-        return []
+        return HybridSearchResult(
+            chunks=[],
+            pool_max_dense=0.0,
+            pool_max_sparse=0.0,
+            dense_available=dense_available,
+            sparse_available=sparse_available,
+        )
 
     # 4. Normalize each modality independently, then weighted-fuse. A node
     #    missing from one modality contributes 0 for that side.
@@ -234,7 +344,17 @@ async def hybrid_search(
         results=len(chunks),
         dense_hits=len(dense_points),
         sparse_hits=len(sparse_points),
+        pool_max_dense=round(pool_max_dense, 4),
+        pool_max_sparse=round(pool_max_sparse, 4),
+        dense_available=dense_available,
+        sparse_available=sparse_available,
         query=query[:60],
         collection=collection_name,
     )
-    return chunks
+    return HybridSearchResult(
+        chunks=chunks,
+        pool_max_dense=round(pool_max_dense, 6),
+        pool_max_sparse=round(pool_max_sparse, 6),
+        dense_available=dense_available,
+        sparse_available=sparse_available,
+    )

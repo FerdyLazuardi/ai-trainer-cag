@@ -36,4 +36,20 @@ class RAGState(TypedDict):
     conversation_summary: Optional[str]  # Sprint 2 — short-term session summary
     user_profile: Optional[dict]         # Sprint 3 — long-term user memory
     user_preferences: Optional[dict]     # Sprint 4 — persistent user preferences from SQL
+    # H5 — precomputed dense embedding of the query, threaded from the chat
+    # route (which already embedded for cache/LTM lookup) to avoid a second
+    # embed in rag_node. `query_embedding_text` records the EXACT string that
+    # embedding was computed from; rag_node reuses the vector ONLY when it
+    # matches the text it is about to search (the retrieval query may differ
+    # from the embedded query after rewrite/safety-anchoring), else it re-embeds.
+    query_embedding: Optional[List[float]]
+    query_embedding_text: Optional[str]
+    # C4 — pool-level retrieval signals written by rag_node and read by
+    # _route_after_rag. Max raw dense cosine / raw BM25 over the FULL fetch_k
+    # candidate pool (pre top-k slice), so the NOT-FOUND gate isn't fooled by a
+    # high-dense chunk that fell below the fused top-k. `dense_retrieval_ok` is
+    # False when retrieval degraded to sparse-only (embedding outage, C5).
+    pool_max_dense: Optional[float]
+    pool_max_sparse: Optional[float]
+    dense_retrieval_ok: Optional[bool]
 
