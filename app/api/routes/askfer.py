@@ -17,13 +17,13 @@ from langchain_core.messages import HumanMessage
 from loguru import logger
 
 from app.api.askfer_deps import rate_limit_by_ip, rate_limit_sync_by_ip
-from app.api.routes.ingest import get_arq_redis
 from app.api.concurrency import acquire_pipeline_slot_or_503
 from app.api.schemas import AskferRequest, AskferSyncRequest
 from app.config.settings import get_settings
 from app.graph.askfer_pipeline import get_askfer_graph
 from app.utils.cache import get_cached_response, set_cached_response
 from app.utils.logger_batch import batch_logger
+from app.worker import sync_portfolio_task  # noqa: E402
 
 router = APIRouter()
 settings = get_settings()
@@ -246,14 +246,16 @@ async def askfer_sync(
     x_admin_secret: str = Header(..., alias="X-Admin-Secret"),
     _client_ip: str = Depends(rate_limit_sync_by_ip),
 ):
-    """Enqueue an arq job to re-scrape homepage + projects + CV. Requires
+    """Enqueue a streaq task to re-scrape homepage + projects + CV. Requires
     `X-Admin-Secret` header matching ASKFER_ADMIN_SECRET (constant-time check)."""
     if not settings.askfer_admin_secret:
         raise HTTPException(status_code=503, detail="Askfer admin secret not configured")
     if not secrets.compare_digest(x_admin_secret, settings.askfer_admin_secret):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    arq_redis = await get_arq_redis()
-    job = await arq_redis.enqueue_job('sync_portfolio_task', request.force_reingest)
+    # streaq: enqueue returns a Task; `await task` publishes to Redis. The
+    # `force_reingest` arg name must match the worker task signature
+    # (app/worker.py:sync_portfolio_task).
+    task = await sync_portfolio_task.enqueue(force_reingest=request.force_reingest)
     logger.info("Askfer portfolio sync enqueued", force_reingest=request.force_reingest)
-    return {"message": "Portfolio sync enqueued", "job_id": job.job_id if job else None}
+    return {"message": "Portfolio sync enqueued", "job_id": task.id}

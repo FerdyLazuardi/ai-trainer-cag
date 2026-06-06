@@ -2,13 +2,13 @@
 POST /ingest endpoint — accepts raw text and triggers the ingestion pipeline.
 POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync.
 """
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from arq import create_pool
-from arq.connections import RedisSettings, ArqRedis
-from arq.jobs import Job
+from streaq import TaskStatus
 
 from app.api.schemas import IngestRequest, IngestEnqueuedResponse, IngestStatusResponse
 from app.database.postgres import get_db, AsyncSessionLocal
@@ -17,29 +17,28 @@ from app.ingestion.moodle_sync import sync_moodle_knowledge_base
 from app.config.settings import get_settings
 import httpx
 from app.api.auth import get_current_user, User
+from app.worker import (
+    worker as _api_worker,  # shared Worker instance for status_by_id (read-only)
+    ingest_text_task,
+    sync_moodle_task,
+    dummy_task,
+)
 
 router = APIRouter()
 settings = get_settings()
 
-# ── ARQ Singleton Pool ────────────────────────────────────────────────────────
-# A single, long-lived pool shared across all requests instead of creating a
-# new TCP connection per enqueue call (prevents Redis connection exhaustion).
-_arq_pool: ArqRedis | None = None
-
-async def get_arq_redis() -> ArqRedis:
-    """Return the shared singleton ARQ Redis pool, creating it on first call."""
-    global _arq_pool
-    if _arq_pool is None:
-        _arq_pool = await create_pool(RedisSettings(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            database=settings.redis_db,
-            password=settings.redis_password if settings.redis_password else None,
-        ))
-        logger.info("ARQ Redis pool created (singleton)")
-    return _arq_pool
-
-# ... (keep existing ingest endpoint) ...
+# ── streaq note ──────────────────────────────────────────────────────────────
+# streaq Task objects MUST be awaited for the enqueue to actually publish to
+# Redis (Task.__await__ → _chain → publish_task). Unlike arq's enqueue_job()
+# which is fire-and-forget, you need:
+#     task = some_task.enqueue(...)
+#     await task   # ← this is what writes to Redis
+#
+# For status polling, the shared `worker` instance is opened in the FastAPI
+# lifespan (`app/main.py:lifespan`) so `worker.status_by_id()` /
+# `worker.result_by_id()` are safe to call from any request handler without
+# raising `StreaqError: Worker not initialized`. See
+# https://streaq.readthedocs.io/en/latest/worker.html#task-related-functions.
 @router.post(
     "/ingest",
     response_model=IngestEnqueuedResponse,
@@ -53,8 +52,8 @@ async def ingest(
     """
     Enqueue raw text for background ingestion. Returns 202 with a job_id
     that can be polled via GET /ingest/{job_id}. The job is processed by
-    the arq worker so a 200 KB body no longer ties up the API process or
-    a Postgres session.
+    the streaq worker so a 200 KB body no longer ties up the API process
+    or a Postgres session.
     """
     logger.info(
         "Ingestion request received",
@@ -64,16 +63,15 @@ async def ingest(
         user=current_user.username,
     )
 
-    redis = await get_arq_redis()
-    job = await redis.enqueue_job(
-        "ingest_text_task",
+    task = ingest_text_task.enqueue(
         text=request.text,
         title=request.title,
         source=request.source,
         metadata=request.metadata,
     )
-    logger.info("Ingestion enqueued", job_id=job.job_id, text_len=len(request.text))
-    return IngestEnqueuedResponse(job_id=job.job_id, status="queued")
+    await task
+    logger.info("Ingestion enqueued", job_id=task.id, text_len=len(request.text))
+    return IngestEnqueuedResponse(job_id=task.id, status="queued")
 
 
 @router.get(
@@ -86,40 +84,36 @@ async def ingest_status(
     current_user: User = Depends(get_current_user),
 ) -> IngestStatusResponse:
     """Poll an ingestion job's status. 'complete' carries the document_id."""
-    redis = await get_arq_redis()
-    job = Job(job_id, redis)
-    info = await job.info()
-
-    # arq 0.25 returns None while the job is queued (or has been GC'd).
-    # We can't distinguish the two with a single lookup, but neither is
-    # useful to the caller — report 'queued' optimistically.
-    if info is None:
-        return IngestStatusResponse(job_id=job_id, status="queued")
-
-    # arq 0.25 JobResult fields: success: bool|None, result: Any,
-    # finish_time: float|None. Map to the 4-state status the API contract
-    # promises.
-    if info.finish_time is None:
-        status_str = "in_progress"
-        result_dict: dict | None = None
-        error: str | None = None
-    elif info.success is True:
-        status_str = "complete"
-        result_dict = info.result if isinstance(info.result, dict) else None
-        error = None
-    else:
-        status_str = "failed"
-        result_dict = None
-        error = str(info.result) if info.result is not None else "unknown error"
-
-    return IngestStatusResponse(
-        job_id=job_id,
-        status=status_str,
-        document_id=result_dict.get("document_id") if result_dict else None,
-        chunks_count=result_dict.get("chunks_count") if result_dict else None,
-        total_tokens=result_dict.get("total_tokens") if result_dict else None,
-        error=error,
-    )
+    # The shared worker instance is initialized by the FastAPI lifespan
+    # (`async with worker:` in app/main.py), so status_by_id/result_by_id
+    # are safe to call here without a per-request async-context enter.
+    streaq_status = await _api_worker.status_by_id(job_id)
+    if streaq_status == TaskStatus.DONE:
+        # Result is already in Redis (DONE state proved it). timeout=0 skips
+        # the pubsub wait. If we hit a TTL race, fall through to "queued".
+        try:
+            result = await _api_worker.result_by_id(job_id, timeout=timedelta(0))
+        except TimeoutError:
+            return IngestStatusResponse(job_id=job_id, status="queued")
+        if result.success:
+            result_dict = result.result if isinstance(result.result, dict) else None
+            return IngestStatusResponse(
+                job_id=job_id,
+                status="complete",
+                document_id=result_dict.get("document_id") if result_dict else None,
+                chunks_count=result_dict.get("chunks_count") if result_dict else None,
+                total_tokens=result_dict.get("total_tokens") if result_dict else None,
+            )
+        return IngestStatusResponse(
+            job_id=job_id,
+            status="failed",
+            error=str(result.exception),
+        )
+    if streaq_status == TaskStatus.RUNNING:
+        return IngestStatusResponse(job_id=job_id, status="in_progress")
+    # QUEUED, SCHEDULED, or NOT_FOUND (TTL'd/never-existed) — same caller
+    # response as the arq path: report "queued" optimistically.
+    return IngestStatusResponse(job_id=job_id, status="queued")
 
 
 class MoodleSyncRequest(BaseModel):
@@ -152,7 +146,7 @@ async def moodle_sync(
     current_user: User = Depends(get_current_user),
 ) -> MoodleSyncResponse:
     """
-    Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base) via arq worker.
+    Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base) via streaq worker.
 
     **Quick Start:** Just click "Execute" to sync all markdown files from AI_Knowledge_Base course.
 
@@ -162,7 +156,7 @@ async def moodle_sync(
     - `force_reingest`: Set to `true` to re-process files even if unchanged
 
     **What it does:**
-    1. Enqueues a persistent job to the arq worker.
+    1. Enqueues a persistent job to the streaq worker.
     2. Downloads all `.md` files from the specified Moodle course
     3. Parses YAML frontmatter for metadata (department, topic, course_id, course_name)
     4. Splits content by markdown headers
@@ -171,14 +165,12 @@ async def moodle_sync(
     """
     logger.info(f"Moodle sync triggered by user: {current_user.username}")
 
-    redis = await get_arq_redis()
-    await redis.enqueue_job(
-        'sync_moodle_task',
+    task = sync_moodle_task.enqueue(
         course_id=request.course_id,
         target_sections=request.target_sections,
-        force_reingest=request.force_reingest
+        force_reingest=request.force_reingest,
     )
-    # Note: do NOT close the pool — it's a shared singleton
+    await task
 
     return MoodleSyncResponse(
         message="Moodle sync task has been successfully enqueued to the persistent background worker."
@@ -191,13 +183,12 @@ async def enqueue_dummy_task(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Enqueue a dummy task to verify that the arq worker is running correctly.
+    Enqueue a dummy task to verify that the streaq worker is running correctly.
     """
     logger.info(f"Dummy task enqueued by user: {current_user.username}")
-    redis = await get_arq_redis()
-    job = await redis.enqueue_job('dummy_task', name=name)
-    # Note: do NOT close the pool — it's a shared singleton
-    return {"message": f"Dummy task enqueued for {name}", "job_id": job.job_id}
+    task = dummy_task.enqueue(name=name)
+    await task
+    return {"message": f"Dummy task enqueued for {name}", "job_id": task.id}
 
 
 @router.get("/moodle/sections", summary="Get Moodle course sections")

@@ -20,7 +20,6 @@ from app.eval.judge import judge_faithfulness
 
 
 async def eval_turn_task(
-    ctx: dict,
     query: str,
     answer: str,
     retrieved_context: list[dict[str, Any]],
