@@ -680,6 +680,57 @@ async def _incr_parse_failure_metric() -> None:
         pass
 
 
+# Strong refs for fire-and-forget background metric tasks scheduled from sync
+# routers (otherwise the event loop may GC the task mid-flight).
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+async def _incr_sparse_only_passthrough_metric() -> None:
+    """Fire-and-forget counter for KNOWLEDGE queries that clear the relevance
+    gate on the SPARSE (BM25 lexical) signal ALONE (H9).
+
+    Dense cosine was below its floor but a raw term match rescued the query.
+    Bucketed by UTC date (7-day retention); mirrors _incr_parse_failure_metric.
+    This is the early-warning signal for the colloquial-ID false-pass risk:
+    terse / slangy Indonesian queries that dense embeddings rank off-topic but
+    happen to share a BM25 term with the KB. When `rag:metrics:gate_sparse_only_pass`
+    climbs, pull those queries and grow the eval sample to confirm the OR-gate
+    isn't waving through hallucination-prone misses. Never raises.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from app.database.redis_client import get_redis_client
+
+        redis = get_redis_client()
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        key = f"rag:metrics:gate_sparse_only_pass:{day}"
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 7 * 24 * 3600)
+        await pipe.execute()
+    except Exception:
+        pass
+
+
+def _emit_sparse_only_passthrough() -> None:
+    """Schedule the sparse-only-pass counter from a sync router without blocking.
+
+    `_route_after_rag` is a sync LangGraph router, so we can't await. Schedule
+    the Redis incr on the running loop and hold a strong ref so it isn't GC'd
+    mid-flight. If no loop is running (a unit test calling the router directly),
+    swallow the RuntimeError — the f-string log line above is the fallback
+    signal, and a metrics write must never break routing.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(_incr_sparse_only_passthrough_metric())
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+    except RuntimeError:
+        pass
+
+
 async def _pre_processor(state: RAGState, config: RunnableConfig):
     """Classify intent and rewrite query.
 
@@ -1470,6 +1521,19 @@ def _route_after_rag(state: RAGState) -> str:
             f"pool sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score})"
         )
         return "low_relevance"
+    # H9: dense cosine missed its floor but a raw BM25 term match rescued the
+    # query through the OR-gate. This is precisely the colloquial-ID false-pass
+    # window — terse / slangy Indonesian that embeddings rank off-topic but that
+    # shares a lexical token with the KB. Instrument it (day-bucketed counter +
+    # log) so ops can pull these queries and grow the eval sample if the rate
+    # climbs. Does NOT change routing — the gate decision is unchanged.
+    if not dense_ok and sparse_ok:
+        logger.info(
+            f"Gate passed on SPARSE signal alone (H9 instrument) — "
+            f"dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
+            f"sparse={max_sparse:.4f} >= {_settings.kb_min_sparse_score}"
+        )
+        _emit_sparse_only_passthrough()
     return "generate"
 
 

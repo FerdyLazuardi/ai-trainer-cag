@@ -3,10 +3,12 @@ services:
   api:
     build: .
     container_name: peped-api
-    # Memory ceiling (cgroup). Idle RSS ~860MB (fastembed BM25 + embed config);
-    # 2G leaves room for request bursts. Prevents one runaway from OOM-ing the
-    # whole 8GB box and taking down sibling services.
-    mem_limit: 2g
+    # Memory ceiling (cgroup). Idle RSS ~860MB (fastembed BM25 + embed config).
+    # H3 trim 2g→1.75g: leaves ~890MB burst headroom for ~24 in-flight pipelines
+    # (~30-40MB each). WATCH ITEM — if api OOM/swaps under burst, revert to 2g and
+    # eat the +0.25g (total 6.52g still < old 6.77g); do NOT claw it back from
+    # Qdrant/Redis. Prevents one runaway from OOM-ing the whole 8GB box.
+    mem_limit: 1750m
     mem_reservation: 1g
     ports:
       - "8001:8000"
@@ -134,14 +136,27 @@ services:
     # baseline + ~200 COW ≈ 840MB) keeps ~180MB headroom under the 1g cgroup. At
     # the previous 768mb it peaked ~1008MB and risked an OOM-kill during BGSAVE
     # that would take down the streaq QUEUE + conversation history + cache
-    # together. Durability unchanged (RDB still on). Fast-follow: audit which
-    # keys are non-regenerable (esp. rag:conv_owner:*) — if all regenerable,
-    # switch to `save ""` (no fork) and restore 768mb cache headroom.
+    # together. Durability unchanged (RDB still on).
+    #
+    # FF 5.3 audit (resolved): RDB STAYS ON, maxmemory STAYS at 600mb. The
+    # non-regenerable data is the streaq job QUEUE (queued LTM-sync/eval jobs,
+    # no TTL) — NOT rag:conv_owner:*. Ownership keys are loss-tolerant: on a
+    # restart they die together with the rag:conv:* history HASH they gate (same
+    # instance), so there's no orphan-authz window. RDB is PER-INSTANCE not
+    # per-DB, so even though the queue now lives on its own logical DB
+    # (redis_queue_db=1), `save ""` would stop persisting it too and drop
+    # in-flight jobs across restarts. Hence the hoped-for "switch to save '' +
+    # restore 768mb" is REJECTED — the queue's durability requires the fork, and
+    # the fork requires the 600mb headroom. (Open security follow-up, out of
+    # scope here: rag:conv_owner:* has a 7d TTL so it is independently evictable
+    # under volatile-lru; an evicted owner + surviving history HASH allows a
+    # re-claim → cross-user read. Fix later by moving owner keys to the no-TTL
+    # queue DB or backing them with Postgres.)
     #
     # io-threads left at server default (1): the 2-vCPU box gains nothing from
     # threading I/O, and extra threads would eat into the cgroup's CPU share.
     mem_limit: 1g
-    mem_reservation: 256m
+    mem_reservation: 640m
     # volatile-lru (NOT allkeys-lru): this single Redis is shared by the query
     # cache, conversation history, the streaq job QUEUE, rate-limit counters, and
     # the agent_log buffer. allkeys-lru would evict ANY key under memory
@@ -164,10 +179,14 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.18.1
     container_name: peped-qdrant
-    # Idle ~120MB at 42 KB chunks. Ceiling sized for growth: ~300 KB chunks +
-    # up to ~650k LTM vectors (HNSW graph stays in RAM even with on_disk payload).
-    mem_limit: 1500m
-    mem_reservation: 256m
+    # Idle ~120MB at 42 KB chunks. H3 trim 1.5g→1.25g, justified by H4: base LTM
+    # dense vectors are on_disk=True and H4 moved the INT8 quantized mirror
+    # off-RAM too, so resident footprint is now dominated by the HNSW graph links
+    # (tens-to-low-hundreds MB even at ~650k vectors) + payload index. 1.25g holds
+    # growth comfortably. COUPLING: if quant always_ram flips back to True, this
+    # ceiling MUST go back up. mem_reservation protects the HNSW graph from swap.
+    mem_limit: 1280m
+    mem_reservation: 384m
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/6333 && echo -e 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 30s

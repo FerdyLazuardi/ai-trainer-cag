@@ -325,15 +325,17 @@ def get_generate_llm() -> ChatOpenAI:
     `get_llm()` (flash) so the safety benchmark stays comparable
     week-over-week.
 
-    Temperature=0.0 mirrors the main LLM config; max_tokens=600 leaves
-    room for the longest typical brainstorm answer.
+    Temperature=0.0 mirrors the main LLM config; max_tokens=1024 gives
+    headroom for longer procedural / multi-step answers that the old 600
+    cap was truncating mid-list (H1). Flash-lite output is cheap
+    ($0.30/1M), so the extra ceiling costs nothing when unused.
     """
     llm = ChatOpenAI(
         model=settings.cheap_llm_model,
         openai_api_key=settings.openrouter_api_key,
         openai_api_base=settings.openrouter_base_url,
         temperature=0.0,
-        max_tokens=600,
+        max_tokens=1024,
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),

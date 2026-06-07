@@ -281,7 +281,15 @@ class QdrantManager:
                 scalar=ScalarQuantizationConfig(
                     type=models.ScalarType.INT8,
                     quantile=0.99,
-                    always_ram=True,
+                    # H4: keep the INT8-quantized copy ON DISK (was always_ram=True).
+                    # The base dense vectors are already on_disk=True (above), so the
+                    # only RAM resident left here was the quantized mirror. At full
+                    # scale (~13k users x 50 episodes x 1536d INT8) that mirror is the
+                    # bulk of this collection's RSS; pushing it to disk frees the 8GB
+                    # box's headroom. HNSW graph stays in RAM, and LTM lookups are
+                    # always user_id pre-filtered (tiny candidate set per query), so
+                    # the extra disk reads on the quantized rescore are negligible.
+                    always_ram=False,
                 ),
             ),
             on_disk_payload=True,

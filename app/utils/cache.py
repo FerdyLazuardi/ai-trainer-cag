@@ -33,6 +33,14 @@ _PREFIX = "rag:cache:"
 # for a cache — wrong answer is user-visible, missed cache just costs an
 # extra LLM call). Calibrate further with a 50-query paraphrase test
 # set; expect the true sweet spot to land in 0.55-0.65.
+#
+# H8 (DECOUPLED from D3): this is a SEMANTIC-SIMILARITY threshold for cache
+# paraphrase matching — it is NOT the faithfulness/hallucination judge
+# threshold τ=0.75 (D3). Different axis entirely: τ scores whether a generated
+# answer is grounded in retrieved context; this scores whether two QUERIES are
+# close enough to reuse a cached answer. Raising this to 0.75 to "match D3"
+# would only make the cache STRICTER (fewer hits, more LLM calls) for an
+# unrelated reason. Tune it on its own paraphrase test-set, NOT against τ.
 _SEMANTIC_THRESHOLD = 0.60
 _semantic_collection_ready = False
 _semantic_collection_lock: asyncio.Lock | None = None
@@ -156,7 +164,7 @@ async def _log_cache_event(
         hit: True for Redis exact or Qdrant semantic match, False for miss.
         course_id: LMS course id, or None/0 for non-course-scoped queries.
         query: The user query text (PII-redacted by BatchLogger).
-        namespace: Cache namespace ('rag', 'rag:user:<id>', 'portfolio', etc).
+        namespace: Cache namespace ('rag', 'rag_user_<id>', 'portfolio', etc).
         score: Cosine similarity (Qdrant semantic hit) or 1.0 (Redis exact),
             or None (miss).
     """
@@ -822,24 +830,39 @@ async def flush_cache_by_namespace(namespace: str) -> None:
 async def flush_cache_by_course(course_id: int) -> None:
     """
     Delete Qdrant points and Redis keys for a specific course_id.
+
+    H2 (correctness): the Redis EXACT layer is keyed `{namespace}:cache:{cid}:{hash}`
+    and is checked FIRST (short-circuits before the semantic layer). Sweeping only
+    the global `rag:cache:{cid}:*` prefix left every PER-USER entry
+    (`rag_user_{uid}:cache:{cid}:*`, written by chat.py's private_ns path) alive
+    after a Moodle re-ingest → those users kept getting the STALE pre-ingest
+    answer from the exact layer even though the semantic layer (course_id filter,
+    namespace-agnostic) had already been purged. We now sweep BOTH the global and
+    all user namespaces for this course. (Cross-dep C1.)
     """
-    # 1. Clear Redis cache keys for this course
+    # 1. Clear Redis cache keys for this course — global + all user namespaces.
     redis = get_redis_client()
-    try:
-        # 5000 is the new sweet spot for 8.x with I/O threading + batched
-        # prefetch (8.8); ~3-4× faster on large key sets than the old 1000.
-        cursor = 0
-        prefix = f"{_PREFIX}{course_id}:"
-        while True:
-            cursor, keys = await redis.scan(cursor, match=f"{prefix}*", count=5000)
-            if keys:
-                # UNLINK is non-blocking; background reclamation.
-                await redis.unlink(*keys)
-            if cursor == 0:
-                break
-        logger.info("Redis course cache flushed", course_id=course_id)
-    except Exception as exc:
-        logger.warning("Redis course cache flush failed", error=str(exc))
+    # `rag:cache:{cid}:*` (global) and `rag_user_*:cache:{cid}:*` (per-user) do
+    # not overlap: after "rag" the global key has ":" and the user key has "_".
+    patterns = [
+        f"{_PREFIX}{course_id}:*",          # rag:cache:{cid}:*
+        f"rag_user_*:cache:{course_id}:*",  # rag_user_{uid}:cache:{cid}:*
+    ]
+    for match in patterns:
+        try:
+            # 5000 is the new sweet spot for 8.x with I/O threading + batched
+            # prefetch (8.8); ~3-4× faster on large key sets than the old 1000.
+            cursor = 0
+            while True:
+                cursor, keys = await redis.scan(cursor, match=match, count=5000)
+                if keys:
+                    # UNLINK is non-blocking; background reclamation.
+                    await redis.unlink(*keys)
+                if cursor == 0:
+                    break
+            logger.info("Redis course cache flushed", course_id=course_id, pattern=match)
+        except Exception as exc:
+            logger.warning("Redis course cache flush failed", error=str(exc), pattern=match)
         
     # 2. Clear Qdrant semantic cache for this course
     qdrant = get_qdrant_client()
