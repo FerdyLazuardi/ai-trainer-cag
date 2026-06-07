@@ -48,6 +48,7 @@ async def get_current_user(
             )
 
     if not user:
+        assert credentials is not None  # narrowing: non-dev path guarantees non-None (raised 401 above)
         token = credentials.credentials
 
         # Brute-force throttle: count failed JWT decodes per client IP

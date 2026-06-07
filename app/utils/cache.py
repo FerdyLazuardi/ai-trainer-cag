@@ -8,6 +8,7 @@ import hashlib
 import json
 import time
 import uuid
+from typing import Any
 
 from loguru import logger
 from qdrant_client import models as qdrant_models
@@ -385,7 +386,7 @@ async def get_cached_response_multi_ns(
         query_filter = qdrant_models.Filter(
             must=must_clauses,
             should=ns_clauses,
-            min_should=qdrant_models.MinShould(min_count=1),
+            min_should=qdrant_models.MinShould(min_count=1),  # type: ignore[call-arg]  # qdrant-client stub version gap
         )
 
         try:
@@ -406,7 +407,7 @@ async def get_cached_response_multi_ns(
 
         if search_result is not None and search_result.points:
             best_hit = search_result.points[0]
-            hit_ns = best_hit.payload.get("namespace", "unknown")
+            hit_ns = (best_hit.payload or {}).get("namespace", "unknown")
             logger.info(
                 "Qdrant Semantic Cache HIT (multi-ns)",
                 query=query[:60],
@@ -472,7 +473,7 @@ async def set_cached_response(
     ttl_ = ttl or settings.cache_query_ttl_seconds
 
     # Base payload
-    payload = {"answer": answer, "sources": sources, "namespace": cache_namespace}
+    payload: dict[str, Any] = {"answer": answer, "sources": sources, "namespace": cache_namespace}
     if course_id:  # This correctly handles both None and 0
         payload["course_id"] = int(course_id)
 
@@ -761,7 +762,7 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
             if old_ids:
                 await qdrant.client.delete(
                     collection_name="semantic_cache",
-                    points_selector=qdrant_models.PointIdsListSelector(
+                    points_selector=qdrant_models.PointIdsListSelector(  # type: ignore[attr-defined]  # qdrant stub version gap
                         points=old_ids,
                     ),
                     wait=False,

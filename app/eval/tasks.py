@@ -106,7 +106,7 @@ async def _persist_faithfulness(turn_id: str, score: float) -> bool:
                     .values(faithfulness_score=score)
                 )
                 await session.commit()
-                if res.rowcount and res.rowcount > 0:
+                if res.rowcount and res.rowcount > 0:  # type: ignore[attr-defined]  # CursorResult at runtime
                     return True
         except Exception as exc:
             logger.warning(f"eval_turn_task: faithfulness persist failed (attempt {attempt + 1}): {exc}")

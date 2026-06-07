@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 # Moved inline imports to file-level
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 from app.agents import conversation_state as _cs
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
@@ -531,7 +531,7 @@ async def _prepare_rag_context(
     # (slow) rolling-summary LLM call off this request path.
     asyncio.create_task(_schedule_summary_refresh(conversation_id))
 
-    messages = []
+    messages: list[BaseMessage] = []
     for turn in recent_history:
         if turn["role"] == "user":
             messages.append(HumanMessage(content=turn["content"]))

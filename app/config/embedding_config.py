@@ -5,6 +5,8 @@ Call `ensure_llamaindex_configured()` once before any LlamaIndex operation.
 This replaces the duplicate init functions that were in hybrid_retriever.py,
 ingestion/pipeline.py, and ingestion/moodle_sync.py.
 """
+from typing import Any
+
 from llama_index.core import Settings
 from llama_index.core.node_parser import TokenTextSplitter
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
@@ -39,7 +41,7 @@ def ensure_llamaindex_configured(
         if not emb_api_key:
             raise ValueError("Neither OPENROUTER_EMBEDDING_KEY nor OPENROUTER_API_KEY is set in environment variables")
         
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model_name": settings.embedding_model,
             "api_key": emb_api_key,
         }

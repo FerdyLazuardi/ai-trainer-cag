@@ -19,6 +19,7 @@ documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
 """
 import asyncio
 from functools import lru_cache
+from typing import Any
 
 from loguru import logger
 from qdrant_client import models as rest
@@ -190,6 +191,8 @@ async def hybrid_search(
             return query_embedding
         return await _embed_query_resilient(query)
 
+    dense_vec: list[float] | BaseException | None = None
+    sparse_encoded: Any = None
     dense_vec, sparse_encoded = await asyncio.gather(
         _dense(),
         _encode_sparse(),
@@ -222,9 +225,10 @@ async def hybrid_search(
 
     # 2. One batched round-trip: dense KNN + sparse BM25 KNN over a `pool`-sized
     #    candidate set per modality. Only include the arms that are available.
-    requests = []
+    requests: list[rest.QueryRequest] = []
     _dense_req_idx = _sparse_req_idx = None
     if dense_available:
+        assert isinstance(dense_vec, list)  # narrowed by dense_available check above
         _dense_req_idx = len(requests)
         requests.append(
             rest.QueryRequest(
@@ -241,6 +245,7 @@ async def hybrid_search(
             )
         )
     if sparse_available:
+        assert sparse_idx is not None and sparse_val is not None  # narrowed by sparse_available
         _sparse_req_idx = len(requests)
         requests.append(
             rest.QueryRequest(
@@ -260,13 +265,13 @@ async def hybrid_search(
     sparse_points = responses[_sparse_req_idx].points if _sparse_req_idx is not None else []
 
     # 3. Raw scores per modality + first-seen payload per node.
-    dense_raw: dict[str, float] = {p.id: float(p.score) for p in dense_points}
-    sparse_raw: dict[str, float] = {p.id: float(p.score) for p in sparse_points}
+    dense_raw: dict[str, float] = {str(p.id): float(p.score) for p in dense_points}
+    sparse_raw: dict[str, float] = {str(p.id): float(p.score) for p in sparse_points}
     payloads: dict[str, dict] = {}
     for p in dense_points:
-        payloads.setdefault(p.id, p.payload)
+        payloads.setdefault(str(p.id), p.payload or {})
     for p in sparse_points:
-        payloads.setdefault(p.id, p.payload)
+        payloads.setdefault(str(p.id), p.payload or {})
 
     # C4: pool-level maxes over the FULL fetch_k candidate set, computed BEFORE
     # the top-k slice below. The NOT-FOUND gate must read these — a chunk with
@@ -313,7 +318,7 @@ async def hybrid_search(
         try:
             node = metadata_dict_to_node(payload)
             meta = node.metadata or {}
-            text = node.text or ""
+            text = node.text or ""  # type: ignore[attr-defined]  # TextNode at runtime
         except Exception:
             meta = payload
             text = payload.get("text", "")

@@ -13,7 +13,7 @@ Topology:
         └─ KNOWLEDGE  → rag_node → generate_node → END
 """
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -112,7 +112,7 @@ class AskferPreProcessorResult(BaseModel):
 async def _pre_processor(state: RAGState, config: RunnableConfig):
     """Classify intent. No history rewrite (stateless)."""
     user_msg = state["messages"][-1].content
-    low_msg = user_msg.lower().strip()
+    low_msg = user_msg.lower().strip()  # type: ignore[union-attr]  # langchain message.content is str at runtime
 
     GREETING_PREFIXES = (
         "halo", "hai", "hi", "hey", "hello",
@@ -134,6 +134,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             ],
             config=config,
         )
+        result = cast(AskferPreProcessorResult, result)  # structured output returns model at runtime
         intent = result.intent
         rewritten = result.rewritten_query.strip() or user_msg
     except Exception as exc:
@@ -192,7 +193,7 @@ async def _handle_off_scope(state: RAGState, config: RunnableConfig):
     Bahasa picked from heuristic on the user's last message.
     """
     user_msg = state["messages"][-1].content if state["messages"] else ""
-    lang = _detect_user_language(user_msg)
+    lang = _detect_user_language(user_msg)  # type: ignore[arg-type]  # langchain message.content is str at runtime
     if lang == "Indonesian":
         msg = (
             "Aku fokus bahas kerjaan profesional aja di sini — proyek, tech "
@@ -212,7 +213,7 @@ async def _handle_malicious(state: RAGState, config: RunnableConfig):
     """Hard refusal — bilingual fixed responses, no LLM call."""
     user_msg = state["messages"][-1].content if state["messages"] else ""
     # Crude language detect — Indonesian common words
-    is_id = any(t in user_msg.lower() for t in ("kamu", "saya", "aku", "siapa", "apa", "bagaimana"))
+    is_id = any(t in user_msg.lower() for t in ("kamu", "saya", "aku", "siapa", "apa", "bagaimana"))  # type: ignore[union-attr]  # langchain message.content is str at runtime
     if is_id:
         msg = "Maaf, aku gak bisa bantu permintaan itu. Aku khusus jawab pertanyaan tentang project, skill, dan pengalaman profesional aku."
     else:
@@ -236,7 +237,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     query_to_search = state.get("rewritten_query") or state["messages"][-1].content
     try:
         result = await hybrid_search(
-            query=query_to_search,
+            query=query_to_search,  # type: ignore[arg-type]  # langchain message.content is str at runtime
             top_k=_settings.askfer_final_top_k,
             fetch_k=_settings.askfer_retrieval_top_k,
             collection=_settings.qdrant_personal_collection,
@@ -342,7 +343,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # the persona prompt's STRICT MIRROR rule isn't reliably honored when the
     # retrieved context mixes ID/EN, so we pin the language deterministically.
     user_msg = state["messages"][-1].content if state["messages"] else ""
-    lang = _detect_user_language(user_msg)
+    lang = _detect_user_language(user_msg)  # type: ignore[arg-type]  # langchain message.content is str at runtime
     full_system += (
         f"\n\n<language_directive>\n"
         f"The user's message is in {lang}. Respond in {lang} ONLY. "
@@ -359,7 +360,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 # ─── Routing & assembly ─────────────────────────────────────────────────────
 
 def _route_by_intent(state: RAGState) -> str:
-    return state.get("intent", "KNOWLEDGE")
+    return state.get("intent") or "KNOWLEDGE"
 
 
 def _build_askfer_graph():

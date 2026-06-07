@@ -178,10 +178,10 @@ async def _compute_centroids() -> dict[str, list[float]]:
     centroids: dict[str, list[float]] = {}
     
     # 1. Gather all unique examples across all intents
-    all_examples = set()
+    _examples_set: set[str] = set()
     for examples in seed.values():
-        all_examples.update(examples)
-    all_examples = list(all_examples)
+        _examples_set.update(examples)
+    all_examples: list[str] = list(_examples_set)
     
     if not all_examples:
         return centroids
@@ -205,7 +205,7 @@ async def _compute_centroids() -> dict[str, list[float]]:
     for intent, examples in seed.items():
         if not examples:
             continue
-        vectors = [_embed_cache.get(ex) for ex in examples]
+        vectors: list[list[float]] = [v for ex in examples if (v := _embed_cache.get(ex)) is not None]
         dim = len(vectors[0])
         mean = [0.0] * dim
         for vec in vectors:

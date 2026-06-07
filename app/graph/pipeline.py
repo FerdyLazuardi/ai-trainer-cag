@@ -748,7 +748,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     user_msg = state["messages"][-1].content
 
     # ── Tier 1: deterministic rules ─────────────────────────────────────
-    rule_intent = rule_classify(user_msg)
+    rule_intent = rule_classify(user_msg)  # type: ignore[arg-type]  # langchain message.content is str at runtime
     if rule_intent is not None:
         logger.info(f"Pre-processor: rule-classified intent={rule_intent}")
         return {
@@ -855,7 +855,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             )
 
     if result is not None:
-        intent = result.intent
+        intent: str = result.intent
         rewritten = result.rewritten_query.strip() or user_msg
         intent_scores = {
             "needs_lookup": float(result.needs_lookup or 0.0),
@@ -890,7 +890,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         }
 
     intent, intent_scores, retrieval_override = _apply_safety_overrides(
-        user_msg=user_msg,
+        user_msg=user_msg,  # type: ignore[arg-type]  # langchain message.content is str at runtime
         intent=intent,
         intent_scores=intent_scores,
         safety_preserved_query=safety_preserved_query,
@@ -930,7 +930,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     from app.graph.intent_rules import _is_greeting as _is_pure_greeting, _is_identity_question
     from langchain_core.messages import AIMessage
     user_msg = state["messages"][-1].content
-    low = user_msg.lower().strip()
+    low = user_msg.lower().strip()  # type: ignore[union-attr]  # langchain message.content is str at runtime
 
     if _is_pure_greeting(low):
         # Mirror the user's language register for warmth.
@@ -962,7 +962,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     logger.warning(f"_handle_greeting: LLM fallback triggered for user_msg={user_msg!r} low={low!r}")
     llm = get_generate_llm()
     greet_sys = f"{PERSONA}\n" + GREETING_MODE_RULES
-    response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)
+    response = await llm.ainvoke([SystemMessage(content=greet_sys)] + state["messages"], config=config)  # type: ignore[operator]  # langchain message-list concat
     return {"messages": [response]}
 
 
@@ -984,10 +984,10 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
     from app.graph.intent_rules import _is_pure_filler
     from langchain_core.messages import AIMessage
     user_msg = state["messages"][-1].content
-    low = user_msg.lower().strip()
+    low = user_msg.lower().strip()  # type: ignore[union-attr]  # langchain message.content is str at runtime
 
     if _is_pure_filler(low):
-        if any(ord(c) > 127 for c in user_msg):
+        if any(ord(c) > 127 for c in user_msg):  # type: ignore[arg-type]  # langchain message.content is str at runtime
             reply = "Ada yang bisa aku bantu? Boleh sebut topiknya ya."
         else:
             reply = "Anything I can help with? Feel free to name a topic."
@@ -1024,7 +1024,7 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
         + AMBIGUITY_MODE_RULES.replace("{topics_rule}", topics_rule)
         + topics_block
     )
-    response = await llm.ainvoke([SystemMessage(content=ambiguity_sys)] + state["messages"], config=config)
+    response = await llm.ainvoke([SystemMessage(content=ambiguity_sys)] + state["messages"], config=config)  # type: ignore[operator]  # langchain message-list concat
     return {"messages": [response]}
 
 
@@ -1143,7 +1143,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
 
     try:
         result = await hybrid_search(
-            query=query_to_search,
+            query=query_to_search,  # type: ignore[arg-type]  # langchain message.content is str at runtime
             top_k=_settings.final_top_k,
             query_embedding=reuse_embedding,
         )
@@ -1445,7 +1445,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 # ─── Routing ─────────────────────────────────────────────────────────────────
 
 def _route_by_intent(state: RAGState) -> str:
-    return state.get("intent", "KNOWLEDGE")
+    return state.get("intent") or "KNOWLEDGE"
 
 
 def _route_after_rag(state: RAGState) -> str:
@@ -1490,8 +1490,8 @@ def _route_after_rag(state: RAGState) -> str:
     pool_max_dense = state.get("pool_max_dense")
     pool_max_sparse = state.get("pool_max_sparse")
     if pool_max_dense is None and pool_max_sparse is None:
-        dense_scores = [c.get("dense_score") for c in chunks if isinstance(c.get("dense_score"), (int, float))]
-        sparse_scores = [c.get("sparse_score") for c in chunks if isinstance(c.get("sparse_score"), (int, float))]
+        dense_scores = [v for c in chunks if isinstance((v := c.get("dense_score")), (int, float))]
+        sparse_scores = [v for c in chunks if isinstance((v := c.get("sparse_score")), (int, float))]
         if not dense_scores and not sparse_scores:
             return "low_relevance"
         max_dense = max(dense_scores) if dense_scores else 0.0

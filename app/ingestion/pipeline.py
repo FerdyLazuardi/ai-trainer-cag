@@ -87,13 +87,13 @@ async def ingest_document(
             # Defense-in-depth: re-split any oversized (>600 token) header section.
             nodes = []
             for n in header_nodes:
-                if count_tokens(n.text) > 600:
-                    sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
+                if count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
+                    sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
                     sub_nodes = Settings.text_splitter.get_nodes_from_documents([sub_doc])
                     logger.info(
                         "Oversized header section re-split via TokenTextSplitter",
                         document_id=document_id,
-                        original_tokens=count_tokens(n.text),
+                        original_tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
                         sub_chunks=len(sub_nodes),
                     )
                     nodes.extend(sub_nodes)
@@ -132,7 +132,7 @@ async def ingest_document(
         # ── 5. Store Chunk metadata in PostgreSQL ─────────────────────────
         total_tokens = 0
         for i, node in enumerate(nodes):
-            tokens = count_tokens(node.text)
+            tokens = count_tokens(node.text)  # type: ignore[attr-defined]  # TextNode at runtime
             total_tokens += tokens
             
             session.add(
@@ -140,7 +140,7 @@ async def ingest_document(
                     id=node.node_id,
                     document_id=document_id,
                     chunk_index=i,
-                    text=node.text,
+                    text=node.text,  # type: ignore[attr-defined]  # TextNode at runtime
                     token_count=tokens,
                     qdrant_point_id=node.node_id,
                     metadata_={**meta, "source": source},

@@ -287,13 +287,13 @@ async def _ingest_markdown(
     from llama_index.core import Settings as LISettings
     nodes = []
     for n in header_nodes:
-        if count_tokens(n.text) > 600:
-            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
+        if count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
+            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
             sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
             logger.info(
                 "Oversized header section re-split via TokenTextSplitter",
                 source=filename,
-                original_tokens=count_tokens(n.text),
+                original_tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
                 sub_chunks=len(sub_nodes),
             )
             nodes.extend(sub_nodes)
@@ -302,7 +302,7 @@ async def _ingest_markdown(
 
     # Filter out empty or whitespace-only nodes
     original_node_count = len(nodes)
-    nodes = [n for n in nodes if n.text and n.text.strip()]
+    nodes = [n for n in nodes if n.text and n.text.strip()]  # type: ignore[attr-defined]  # TextNode at runtime
     if len(nodes) < original_node_count:
         logger.info(f"Filtered out {original_node_count - len(nodes)} empty nodes", source=filename)
 
@@ -361,14 +361,14 @@ async def _ingest_markdown(
     # ── 5. Update PostgreSQL chunks ──────────────────────────────────────
     total_tokens = 0
     for i, node in enumerate(nodes):
-        tokens = count_tokens(node.text)
+        tokens = count_tokens(node.text)  # type: ignore[attr-defined]  # TextNode at runtime
         total_tokens += tokens
         session.add(
             Chunk(
                 id=node.node_id,
                 document_id=document_id,
                 chunk_index=i,
-                text=node.text,
+                text=node.text,  # type: ignore[attr-defined]  # TextNode at runtime
                 token_count=tokens,
                 qdrant_point_id=node.node_id,
                 metadata_={**metadata, "header_path": node.metadata.get("Header_1", "")},
@@ -419,7 +419,7 @@ async def sync_moodle_knowledge_base(
     Returns summary dict with counts.
     """
     logger.info("Starting Moodle Knowledge Base sync", course_id=course_id, target_sections=target_sections, force_reingest=force_reingest)
-    summary = {"files_processed": 0, "chunks_ingested": 0, "files_skipped": 0, "errors": []}
+    summary: dict[str, Any] = {"files_processed": 0, "chunks_ingested": 0, "files_skipped": 0, "errors": []}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. Find the course ID(s)

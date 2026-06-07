@@ -15,7 +15,7 @@ import datetime
 import hashlib
 import re
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from loguru import logger
@@ -31,6 +31,7 @@ from app.database.qdrant_client import get_qdrant_client
 from app.utils.token_counter import count_tokens
 
 from llama_index.core import Document as LlamaDocument, VectorStoreIndex, StorageContext
+from llama_index.core.schema import BaseNode
 from llama_index.core.node_parser import MarkdownNodeParser
 from llama_index.core import Settings as LISettings
 
@@ -209,7 +210,7 @@ async def _fetch_sitemap_urls(client: httpx.AsyncClient) -> dict:
     homepage = settings.portfolio_homepage_url.rstrip("/") + "/"
     project_pattern = re.compile(settings.portfolio_project_url_pattern)
 
-    result = {"homepage": homepage, "projects": [], "cv": settings.portfolio_cv_url}
+    result: dict[str, Any] = {"homepage": homepage, "projects": [], "cv": settings.portfolio_cv_url}
     seen_projects: set[str] = set()
     for u in urls:
         u_norm = u.strip()
@@ -410,7 +411,7 @@ async def _summarize_project_for_overview(markdown: str, project_url: str, title
     )
     llm = get_cheap_llm()
     structured = llm.with_structured_output(ProjectSummary)
-    result = await structured.ainvoke([HumanMessage(content=prompt)])
+    result = cast(ProjectSummary, await structured.ainvoke([HumanMessage(content=prompt)]))
 
     slug = _slugify_project_url(project_url)
     org_from_map = PROJECT_ORG_OVERRIDES.get(slug)
@@ -608,7 +609,7 @@ async def _ingest_portfolio_doc(
         # multi-section knowledge files (H2/H3) into many chunks. Single-chunk
         # doc types are kept whole regardless of internal headings.
         from llama_index.core.schema import TextNode
-        header_nodes = [
+        header_nodes: list[BaseNode] = [
             TextNode(text=raw_markdown, metadata=dict(llama_doc.metadata or {}))
         ]
     else:
@@ -617,20 +618,20 @@ async def _ingest_portfolio_doc(
 
     nodes = []
     for n in header_nodes:
-        if not is_single_chunk and count_tokens(n.text) > 600:
-            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))
+        if not is_single_chunk and count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
+            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
             sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
             logger.info(
                 "Oversized portfolio section re-split",
                 source=source_id,
-                tokens=count_tokens(n.text),
+                tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
                 sub_chunks=len(sub_nodes),
             )
             nodes.extend(sub_nodes)
         else:
             nodes.append(n)
 
-    nodes = [n for n in nodes if n.text and n.text.strip()]
+    nodes = [n for n in nodes if n.text and n.text.strip()]  # type: ignore[attr-defined]  # TextNode at runtime
     if not nodes:
         logger.warning("No nodes produced for portfolio doc", source=source_id)
         return 0
@@ -653,14 +654,14 @@ async def _ingest_portfolio_doc(
 
     total_tokens = 0
     for i, node in enumerate(nodes):
-        tokens = count_tokens(node.text)
+        tokens = count_tokens(node.text)  # type: ignore[attr-defined]  # TextNode at runtime
         total_tokens += tokens
         session.add(
             Chunk(
                 id=node.node_id,
                 document_id=document_id,
                 chunk_index=i,
-                text=node.text,
+                text=node.text,  # type: ignore[attr-defined]  # TextNode at runtime
                 token_count=tokens,
                 qdrant_point_id=node.node_id,
                 metadata_={**metadata, "header_path": node.metadata.get("Header_1", "")},

@@ -24,6 +24,7 @@ Update strategy (AFK 10-second worker):
 import math
 import time
 import uuid
+from typing import Any
 
 from loguru import logger
 from qdrant_client.models import Filter, FieldCondition, MatchValue, PointIdsList
@@ -146,7 +147,7 @@ class QdrantLTMService:
 
         # Time-decay re-rank: cosine * exp(-age_days / decay_days)
         now = time.time()
-        scored: list[tuple[float, object]] = []
+        scored: list[tuple[float, Any]] = []
         for hit in results:
             payload = hit.payload or {}
             raw_created = payload.get("created_at")

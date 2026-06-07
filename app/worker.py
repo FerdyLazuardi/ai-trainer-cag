@@ -2,7 +2,7 @@ import asyncio
 import zoneinfo
 from contextlib import asynccontextmanager
 from datetime import timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from streaq import StreaqRetry, Worker
@@ -565,10 +565,10 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     unanswered_questions: list[str] = []
     try:
         structured = cheap_llm.with_structured_output(LTMSummaryResult)
-        result = await structured.ainvoke(
+        result = cast(LTMSummaryResult, await structured.ainvoke(
             [HumanMessage(content=prompt)],
             config={"run_name": "a-pedi-ltm-sync-summarize"}
-        )
+        ))
         session_summary = result.summary or ""
         unanswered_questions = (result.unanswered_questions or [])[:3]
         prefs_data = {
@@ -608,13 +608,13 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
                 # we check if the key is present in prefs_data — present+None means
                 # explicit clear; missing key means no signal (leave unchanged).
                 if "role" in prefs_data:
-                    user_profile.role = prefs_data["role"]
+                    user_profile.role = prefs_data["role"]  # type: ignore[assignment]  # column accepts None at runtime
                 if "preferred_tone" in prefs_data:
-                    user_profile.preferred_tone = prefs_data["preferred_tone"]
+                    user_profile.preferred_tone = prefs_data["preferred_tone"]  # type: ignore[assignment]  # column accepts None at runtime
                 if "formatting_pref" in prefs_data:
-                    user_profile.formatting_pref = prefs_data["formatting_pref"]
+                    user_profile.formatting_pref = prefs_data["formatting_pref"]  # type: ignore[assignment]  # column accepts None at runtime
                 if "custom_instructions" in prefs_data:
-                    user_profile.custom_instructions = prefs_data["custom_instructions"]
+                    user_profile.custom_instructions = prefs_data["custom_instructions"]  # type: ignore[assignment]  # column accepts None at runtime
 
                 # Touch updated_at so the stale-prefs filter knows when this was last confirmed.
                 user_profile.updated_at = datetime.now(timezone.utc)
@@ -689,4 +689,4 @@ async def _run_ltm_prune():
 # occur — plain exceptions are marked done by streaq). timeout=120 is the
 # meaningful guard: it bounds a hung LLM judge call so a stuck eval can't pin
 # one of the worker's 2 concurrency slots indefinitely.
-eval_turn_task = worker.task(_eval_turn_task_fn, max_tries=2, timeout=120)
+eval_turn_task = worker.task(_eval_turn_task_fn, max_tries=2, timeout=120)  # type: ignore[call-overload]  # streaq stub version gap

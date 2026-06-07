@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -292,7 +292,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "env": settings.app_env}
 
     @app.get("/readyz", summary="Readiness Check (verifies Postgres + Qdrant + Redis)")
-    async def readyz() -> dict:
+    async def readyz() -> JSONResponse:
         """Readiness probe — pings every downstream the API depends on.
 
         Returns 200 with a per-component status dict when all three
