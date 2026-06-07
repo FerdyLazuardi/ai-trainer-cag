@@ -12,15 +12,25 @@ a slow LTM worker can fire after the HASH expires.
 HASH schema (`rag:conv:{conversation_id}`) — per-field TTL via HSETEX:
     history      JSON list       24h
     summary      str             24h
-    owner        str (user_id)   7d   (set via HSETNX + HEXPIRE)
     last_active  str (epoch)     afk + 3600s
     scheduled    "1"             afk + 600s
     courses      JSON list       afk + 3600s
 
+Ownership is NOT stored here. It lives in a separate STRING key
+`rag:conv_owner:{id}` (written by the chat route's ownership check). The
+former `owner` HASH field + its get_owner/set_owner helpers were dead code
+(no caller) and have been removed (4.3).
+
 Note: HSETEX `EX seconds` sets PER-FIELD TTLs, NOT a top-level key TTL.
-The HASH key itself has no EXPIRE — fields expire individually, and the
-empty HASH keyspace entry lingers (negligible memory). Re-HSETEX'ing a
-field that previously expired creates a fresh entry with a fresh TTL.
+A HASH carrying ONLY field-level (HEXPIRE) TTLs has no key-level EXPIRE, and
+`volatile-lru` (our maxmemory-policy) only evicts keys that have a key-level
+expire set — so such a HASH would be NON-evictable and could drive the
+instance OOM on write under pressure (C6). To keep every conversation HASH
+eviction-eligible, every write path also sets a KEY-LEVEL EXPIRE of
+`conversation_ttl_seconds` (24h = the longest field TTL, so it never kills a
+still-live field early). The key dies wholesale at 24h; individual fields may
+expire sooner via their own HEXPIRE. Re-writing a field refreshes both the
+field TTL and the key-level EXPIRE.
 """
 from __future__ import annotations
 
@@ -39,7 +49,8 @@ settings = get_settings()
 # ── Constants ────────────────────────────────────────────────────────────────
 _CONV_KEY_PREFIX = "rag:conv:"
 _LTM_LOCK_PREFIX = "rag:ltm:syncing:"
-_OWNER_TTL_SECONDS = 86400 * 7   # 7 days
+_SUMMARY_REFRESH_PREFIX = "rag:sumref:"   # NX dedup lock for async summary refresh
+_MAX_WATCH_RETRIES = 5
 
 
 def _conv_key(conv_id: str) -> str:
@@ -48,6 +59,40 @@ def _conv_key(conv_id: str) -> str:
 
 def _ltm_lock_key(conv_id: str) -> str:
     return f"{_LTM_LOCK_PREFIX}{conv_id}"
+
+
+def _key_ttl() -> int:
+    """Key-level EXPIRE applied on EVERY write (C6).
+
+    Always the longest field TTL (`conversation_ttl_seconds`, 24h) regardless
+    of which field is being written, so the key-level EXPIRE never truncates a
+    still-live longer field (e.g. a `set_last_active` write with an 11h field
+    TTL must NOT pull the 24h `history` field's key down to 11h). This makes
+    the HASH eviction-eligible under `volatile-lru` without ever shortening a
+    field's effective lifetime.
+    """
+    return settings.conversation_ttl_seconds
+
+
+async def _incr_stm_append_failure_metric(redis: Redis) -> None:
+    """Fire-and-forget counter for append_to_history failures (C6).
+
+    Mirrors pipeline._incr_parse_failure_metric: UTC-day-bucketed, self-
+    expiring, never raises. A rising count means turns are being silently
+    dropped from STM (WRONGTYPE legacy keys, WATCH exhaustion, or Redis
+    errors) — i.e. users losing conversation memory.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        key = f"rag:metrics:stm_append_failure:{day}"
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 7 * 24 * 3600)
+        await pipe.execute()
+    except Exception:
+        pass
 
 
 # ── Read ─────────────────────────────────────────────────────────────────────
@@ -94,16 +139,6 @@ async def get_history_and_summary(
         return [], ""
     except Exception:
         return [], ""
-
-
-async def get_owner(redis: Redis, conv_id: str) -> str | None:
-    if not conv_id:
-        return None
-    try:
-        val = await redis.hget(_conv_key(conv_id), "owner")
-        return val if val else None
-    except Exception:
-        return None
 
 
 async def get_last_active(redis: Redis, conv_id: str) -> float | None:
@@ -180,8 +215,9 @@ async def append_to_history(
     # failures strongly suggest a bug elsewhere, not transient contention.
     # Returning 0 on exhaustion matches the existing `except Exception: return 0`
     # contract — the caller treats it as "history not stored" and the request
-    # still returns a valid answer; we just lose one turn of memory.
-    _MAX_WATCH_RETRIES = 5
+    # still returns a valid answer; we just lose one turn of memory. The
+    # failure is now also surfaced via a metric (C6) so silent turn-loss is
+    # observable rather than invisible.
     for _attempt in range(_MAX_WATCH_RETRIES):
         try:
             async with redis.pipeline(transaction=True) as pipe:
@@ -212,82 +248,121 @@ async def append_to_history(
                     mapping={"history": json.dumps(history)},
                     ex=ttl,
                 )
+                # C6: key-level EXPIRE so the HASH is evictable under
+                # volatile-lru. Queued in the SAME MULTI as the HSETEX so the
+                # field write + key EXPIRE commit atomically.
+                pipe.expire(key, _key_ttl())
                 await pipe.execute()
                 return len(history)
         except WatchError:
             # Another writer raced us. Retry with fresh state.
             continue
         except Exception:
+            await _incr_stm_append_failure_metric(redis)
             return 0
-    # Exhausted retries — log and bail rather than spin forever.
+    # Exhausted retries — log + metric and bail rather than spin forever.
     logger.warning(
         "STM append_turn exhausted WATCH retries; dropping turn",
         conv_id=conv_id,
         attempts=_MAX_WATCH_RETRIES,
     )
+    await _incr_stm_append_failure_metric(redis)
     return 0
 
 
 async def set_summary(redis: Redis, conv_id: str, summary: str) -> None:
+    """Single-field summary write + key-level EXPIRE (C6). Safe to call
+    concurrently with append_to_history — it touches only the `summary`
+    field, never `history`, so there is no read-modify-write race on the
+    turn list."""
     if not conv_id:
         return
-    try:
-        await redis.hsetex(
-            _conv_key(conv_id),
-            mapping={"summary": summary},
-            ex=settings.conversation_ttl_seconds,
-        )
-    except Exception:
-        pass
-
-
-async def trim_history(
-    redis: Redis, conv_id: str, fresh_turns: list[dict]
-) -> None:
-    """Called after rolling-batch summarization. HSETEX the trimmed history."""
-    if not conv_id:
-        return
-    try:
-        await redis.hsetex(
-            _conv_key(conv_id),
-            mapping={"history": json.dumps(fresh_turns)},
-            ex=settings.conversation_ttl_seconds,
-        )
-    except Exception:
-        pass
-
-
-async def set_owner(
-    redis: Redis, conv_id: str, user_id: str, *, nx: bool = False
-) -> bool:
-    """If nx=True, uses HSETNX (atomic claim). Returns True if claimed.
-    If nx=False, unconditional HSETEX with 7d TTL (used by dev-bypass reclaim)."""
-    if not conv_id:
-        return False
     key = _conv_key(conv_id)
     try:
-        if nx:
-            if await redis.hsetnx(key, "owner", user_id):
-                await redis.hexpire(key, _OWNER_TTL_SECONDS, "owner")
-                return True
-            return False
-        await redis.hsetex(
-            key, mapping={"owner": user_id}, ex=_OWNER_TTL_SECONDS
-        )
-        return True
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(
+                key,
+                mapping={"summary": summary},
+                ex=settings.conversation_ttl_seconds,
+            )
+            pipe.expire(key, _key_ttl())
+            await pipe.execute()
     except Exception:
-        return False
+        pass
+
+
+async def _persist_summary_and_trim(
+    redis: Redis,
+    conv_id: str,
+    *,
+    new_summary: str,
+    summarized_head: list[dict],
+    head_len: int,
+) -> None:
+    """Atomically persist the refreshed summary AND trim the summarized head
+    off `history`, under WATCH/MULTI so a concurrent append_to_history is
+    never clobbered (C7).
+
+    Concurrent-append merge: append_to_history only ever pushes to the END of
+    `history`. So if the head we summarized is still the current prefix,
+    dropping exactly `head_len` messages from the RE-READ history preserves
+    both the fresh tail AND any turns appended during the (slow) LLM call:
+    trimmed == cur[head_len:].
+
+    If the prefix no longer matches (append's max-turns cap evicted some of
+    the summarized messages, or the conv was cleared/rewritten), index-
+    trimming would drop NEWER turns — so we persist the summary ONLY and let
+    the next refresh re-trim. No data loss either way.
+    """
+    if not conv_id:
+        return
+    key = _conv_key(conv_id)
+    ttl = settings.conversation_ttl_seconds
+    for _attempt in range(_MAX_WATCH_RETRIES):
+        try:
+            async with redis.pipeline(transaction=True) as pipe:
+                await pipe.watch(key)
+                raw = await pipe.hget(key, "history")
+                try:
+                    cur = json.loads(raw) if raw else []
+                    if not isinstance(cur, list):
+                        cur = []
+                except (json.JSONDecodeError, TypeError):
+                    cur = []
+
+                do_trim = len(cur) >= head_len and cur[:head_len] == summarized_head
+                mapping: dict[str, str] = {"summary": new_summary}
+                if do_trim:
+                    mapping["history"] = json.dumps(cur[head_len:])
+
+                pipe.multi()
+                pipe.hsetex(key, mapping=mapping, ex=ttl)
+                pipe.expire(key, _key_ttl())  # C6 key-level EXPIRE
+                await pipe.execute()
+                return
+        except WatchError:
+            # append_to_history raced us between read and EXEC; retry.
+            continue
+        except Exception:
+            return
+    logger.warning(
+        "STM summary persist exhausted WATCH retries", conv_id=conv_id
+    )
 
 
 async def set_last_active(redis: Redis, conv_id: str) -> None:
     if not conv_id:
         return
+    key = _conv_key(conv_id)
     try:
-        await redis.hsetex(
-            _conv_key(conv_id),
-            mapping={"last_active": str(time.time())},
-            ex=settings.ltm_afk_threshold_seconds + 3600,
-        )
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(
+                key,
+                mapping={"last_active": str(time.time())},
+                ex=settings.ltm_afk_threshold_seconds + 3600,
+            )
+            pipe.expire(key, _key_ttl())  # C6 key-level EXPIRE
+            await pipe.execute()
     except Exception:
         pass
 
@@ -295,12 +370,16 @@ async def set_last_active(redis: Redis, conv_id: str) -> None:
 async def set_scheduled(redis: Redis, conv_id: str) -> None:
     if not conv_id:
         return
+    key = _conv_key(conv_id)
     try:
-        await redis.hsetex(
-            _conv_key(conv_id),
-            mapping={"scheduled": "1"},
-            ex=settings.ltm_afk_threshold_seconds + 600,
-        )
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(
+                key,
+                mapping={"scheduled": "1"},
+                ex=settings.ltm_afk_threshold_seconds + 600,
+            )
+            pipe.expire(key, _key_ttl())  # C6 key-level EXPIRE
+            await pipe.execute()
     except Exception:
         pass
 
@@ -329,7 +408,10 @@ async def add_courses(
             existing = set()
         existing = {n for n in existing if isinstance(n, str) and n.strip()}
         merged = sorted(existing | names)
-        await redis.hsetex(key, mapping={"courses": json.dumps(merged)}, ex=ttl)
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(key, mapping={"courses": json.dumps(merged)}, ex=ttl)
+            pipe.expire(key, _key_ttl())  # C6 key-level EXPIRE
+            await pipe.execute()
     except Exception:
         pass
 
@@ -459,14 +541,26 @@ async def get_or_summarize_history(
     conv_id: str,
     llm,
     max_fresh_turns: int = 5,
+    *,
+    persist: bool = True,
 ) -> tuple[str, list[dict]]:
     """Return (summary_str, recent_turns_list) using Rolling Batch Summarization.
 
     HASH-schema port of the legacy memory.py implementation. Reads history +
-    summary in a single HMGET round-trip. When the conversation exceeds the
-    fresh-turn window, summarizes the oldest `max_fresh_turns*2` messages into
-    the persistent summary field and trims the history HASH field to the
-    remaining fresh turns.
+    summary in a single HMGET round-trip.
+
+    Two modes (C7):
+      persist=False (READ-ONLY — request hot path + AFK worker): never calls
+        the LLM and never writes. When the conversation exceeds the fresh-turn
+        window, returns the CACHED summary + the in-memory fresh slice. This
+        keeps the user-facing request off the (slow) summarization LLM call
+        and removes the racy write entirely. The summary itself is refreshed
+        out-of-band by `summarize_refresh_task` (see schedule_summary_refresh).
+      persist=True (REFRESH TASK only): summarizes the oldest
+        `max_fresh_turns*2` messages into the persistent summary field and
+        atomically trims history to the remaining fresh turns via
+        `_persist_summary_and_trim` (WATCH/MULTI — never clobbers a concurrent
+        append_to_history).
     """
     history, cached_summary = await get_history_and_summary(redis, conv_id)
 
@@ -474,10 +568,15 @@ async def get_or_summarize_history(
     if len(history) // 2 <= max_fresh_turns:
         return cached_summary or "", history
 
-    # 2. Window exceeded: batch-summarize the oldest turns.
+    # 2. Window exceeded.
     turns_to_summarize = history[:(max_fresh_turns * 2)]
     fresh_turns = history[(max_fresh_turns * 2):]
     old_summary = cached_summary or ""
+
+    # 2a. READ-ONLY caller: return cached summary + fresh slice, no LLM/write.
+    #     The async refresh task owns the refine+persist.
+    if not persist:
+        return old_summary, fresh_turns
 
     # 3. Recursive refinement: merge existing summary with overflowing turns.
     from langchain_core.messages import HumanMessage as HM
@@ -504,14 +603,54 @@ async def get_or_summarize_history(
         logger.warning(f"Failed to generate batch summary: {exc}")
         new_summary = old_summary
 
-    # 4. Persist updated summary + trimmed history (HASH fields, shared 24h TTL).
-    await set_summary(redis, conv_id, new_summary)
-    await trim_history(redis, conv_id, fresh_turns)
+    # 4. Atomically persist updated summary + trimmed history. WATCH/MULTI
+    #    merge preserves any turns appended during the LLM call (C7).
+    await _persist_summary_and_trim(
+        redis,
+        conv_id,
+        new_summary=new_summary,
+        summarized_head=turns_to_summarize,
+        head_len=max_fresh_turns * 2,
+    )
 
     logger.info(
         "Conversation rolling batch summary updated", conversation_id=conv_id
     )
     return new_summary, fresh_turns
+
+
+async def schedule_summary_refresh(
+    redis: Redis, conv_id: str, *, max_fresh_turns: int = 5
+) -> bool:
+    """Enqueue an out-of-band summary refresh IF the conversation has overflowed
+    the fresh-turn window (C7). Fire-and-forget; deduped via a short NX lock so
+    rapid-fire turns don't pile up redundant refresh jobs.
+
+    Returns True if a refresh was enqueued, False otherwise (within window,
+    already in flight, or enqueue failed). Never raises — scheduling must never
+    break the request path.
+    """
+    if not conv_id:
+        return False
+    try:
+        raw = await redis.hget(_conv_key(conv_id), "history")
+        try:
+            n = len(json.loads(raw)) if raw else 0
+        except (json.JSONDecodeError, TypeError):
+            n = 0
+        if n // 2 <= max_fresh_turns:
+            return False
+        # NX dedup: 30s window covers the enqueue→consume→persist round-trip.
+        lock_key = f"{_SUMMARY_REFRESH_PREFIX}{conv_id}"
+        if not await redis.set(lock_key, "1", nx=True, ex=30):
+            return False
+        from app.worker import summarize_refresh_task
+
+        await summarize_refresh_task.enqueue(conv_id)
+        return True
+    except Exception as exc:
+        logger.warning(f"Failed to schedule summary refresh: {exc}")
+        return False
 
 
 # ── LTM sync lock (kept as separate STRING key, NOT in the HASH) ────────────

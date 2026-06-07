@@ -57,7 +57,11 @@ async def _worker_lifespan():
 
 
 worker = Worker(
-    redis_url=settings.redis_url,
+    # Isolated queue DB (C6): streaq's task streams live on `redis_queue_db`
+    # (DB 1), separate from the app's data DB (DB 0) where the evictable
+    # `rag:conv:*` HASHes live. Both enqueue (API) and consume (worker) sides
+    # import this same `worker` object, so both move onto the queue DB.
+    redis_url=settings.streaq_redis_url,
     concurrency=2,  # was arq's max_jobs=2
     lifespan=_worker_lifespan,
     tz=JakartaTz,  # cron schedules evaluate in WIB (UTC+7); see comment above
@@ -136,6 +140,41 @@ async def dummy_task(name: str) -> str:
     logger.info(f"Running dummy task for {name}")
     await asyncio.sleep(1)
     return f"Hello, {name}! Task completed."
+
+
+@worker.task(max_tries=2, timeout=60)
+async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
+    """Out-of-band STM summary refresh (C7).
+
+    Enqueued by `conversation_state.schedule_summary_refresh` when a live
+    conversation overflows the fresh-turn window. Runs the (slow) rolling
+    summary LLM call OFF the user-facing request path and persists the result
+    atomically via `_persist_summary_and_trim` (WATCH/MULTI — never clobbers a
+    concurrent append_to_history). Idempotent: the NX dedup lock set at
+    schedule time is released in `finally` so the next overflow can re-enqueue.
+    """
+    from app.agents.conversation_state import (
+        _SUMMARY_REFRESH_PREFIX,
+        get_or_summarize_history,
+    )
+    from app.database.redis_client import get_redis_client
+    from app.llm.client import get_cheap_llm
+
+    redis = get_redis_client()
+    try:
+        await get_or_summarize_history(
+            redis,
+            conversation_id,
+            llm=get_cheap_llm(),
+            max_fresh_turns=5,
+            persist=True,  # LLM refine + atomic WATCH/MULTI persist
+        )
+        return {"status": "refreshed", "conversation_id": conversation_id}
+    finally:
+        try:
+            await redis.delete(f"{_SUMMARY_REFRESH_PREFIX}{conversation_id}")
+        except Exception:
+            pass
 
 
 @worker.task(max_tries=3, timeout=600)
@@ -323,11 +362,18 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     from app.agents.long_term_memory_qdrant import qdrant_ltm
 
     cheap_llm = get_cheap_llm()
+    # persist=False (C7): the AFK task only READS the STM summary to fold into
+    # the durable LTM episode, then `clear_conversation` DELETEs the whole HASH
+    # below (worker.py cleanup step). Any summary the old persist=True path
+    # wrote here would be destroyed moments later — pure wasted LLM cost + a
+    # needless racy write. We read the cached summary + retained history and
+    # build the definitive LTM summary from those.
     summary, recent_history = await get_or_summarize_history(
         redis,
         conversation_id,
         llm=cheap_llm,
         max_fresh_turns=10,
+        persist=False,
     )
 
     if not summary and not recent_history:
@@ -505,10 +551,11 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
     # One DEL on the HASH drops all 5 ephemeral fields (history, summary,
-    # last_active, scheduled, courses) atomically. The owner field is left
-    # intact — it has its own 7d TTL and a real user reclaiming the same
-    # conversation_id should not have their ownership erased by a worker
-    # that just synced their LTM.
+    # last_active, scheduled, courses) atomically. Ownership is NOT in this
+    # HASH — it lives in the separate STRING key `rag:conv_owner:{id}` (written
+    # by the chat route's ownership check) with its own 7d TTL, so clearing the
+    # conversation HASH never erases ownership. A real user reclaiming the same
+    # conversation_id keeps their claim.
     await clear_conversation(redis, conversation_id)
     await release_ltm_lock(redis, conversation_id)
 

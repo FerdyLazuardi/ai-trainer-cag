@@ -88,6 +88,17 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_password: str = ""
     redis_max_connections: int = 100
+    # Logical DB for the streaq task queue, kept SEPARATE from the app's data
+    # DB (`redis_db`=0). Rationale (C6): the conversation HASHes carry a 24h
+    # key-level TTL and are deliberately evictable under `volatile-lru`; the
+    # streaq queue keys are durable (no TTL) and must never be co-mingled with
+    # evictable app keys. A separate logical DB also lets ops FLUSHDB the app
+    # data at cutover (e.g. clearing legacy `rag:conv:*`) without nuking
+    # in-flight jobs. NOTE: maxmemory is per-INSTANCE, not per-DB — the
+    # eviction *safety* comes from volatile-lru only evicting TTL-bearing keys
+    # (queue keys have none); the DB split is operational isolation, not a
+    # memory partition.
+    redis_queue_db: int = 1
 
     @computed_field  # type: ignore[misc]
     @property
@@ -95,6 +106,17 @@ class Settings(BaseSettings):
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def streaq_redis_url(self) -> str:
+        """Redis URL for the streaq worker/enqueue side — points at the
+        isolated queue DB (`redis_queue_db`). Both the API (enqueue) and the
+        worker (consume) import the same `worker` object, so pointing the
+        Worker here moves BOTH sides onto the queue DB automatically."""
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
 
     # ─── Qdrant ─────────────────────────────────────────────────────────────
     qdrant_host: str = "localhost"

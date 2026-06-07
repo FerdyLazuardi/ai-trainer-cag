@@ -124,14 +124,27 @@ async def resolve_numeric_query(query: str, conversation_id: str) -> str:
 
 
 async def get_or_summarize_history(
-    conversation_id: str, llm, max_fresh_turns: int = 5
+    conversation_id: str, llm, max_fresh_turns: int = 5, *, persist: bool = True
 ) -> tuple[str, list[dict]]:
     return await _cs.get_or_summarize_history(
         get_redis_client(),
         conversation_id,
         llm,
         max_fresh_turns=max_fresh_turns,
+        persist=persist,
     )
+
+
+async def _schedule_summary_refresh(conv_id: str) -> None:
+    """Fire-and-forget out-of-band STM summary refresh (C7). Enqueues a streaq
+    task IFF the conversation overflowed the fresh window; deduped via NX lock.
+    Wrapped so the hot path can `create_task` it without awaiting."""
+    try:
+        await _cs.schedule_summary_refresh(
+            get_redis_client(), conv_id, max_fresh_turns=5
+        )
+    except Exception:
+        pass
 
 
 async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
@@ -474,11 +487,17 @@ async def _prepare_rag_context(
             conversation_id=conversation_id,
             llm=get_cheap_llm(),
             max_fresh_turns=5,
+            persist=False,  # C7: no LLM, no write on the hot path
         ),
         _load_ltm_if_eligible(),
         _load_user_profile_if_eligible(),
     )
     logger.debug(f"[TIMING] gather(history+ltm+profile): {_time.perf_counter()-_t_gather_start:.2f}s, total_so_far: {_time.perf_counter()-_t0:.2f}s")
+
+    # C7: kick the out-of-band summary refresh (fire-and-forget). Only enqueues
+    # if the conversation overflowed the fresh window; NX-deduped. Keeps the
+    # (slow) rolling-summary LLM call off this request path.
+    asyncio.create_task(_schedule_summary_refresh(conversation_id))
 
     messages = []
     for turn in recent_history:
