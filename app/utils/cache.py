@@ -24,25 +24,36 @@ settings = get_settings()
 
 _PREFIX = "rag:cache:"
 # Cosine threshold for paraphrase match on the Qdrant semantic cache.
-# History: 0.82 was the text-embedding-3-small stopgap. After the
-# bge-m3 migration the same threshold gave a near-zero hit rate because
-# bge-m3 puts close Bahasa Indonesia paraphrases in a 0.55-0.75 cosine
-# band (flatter distribution than text-embedding-3-small's 0.80-0.90).
-# 0.60 is a conservative compromise: catches paraphrases the legacy
-# threshold missed, low enough to be useful, high enough to keep the
-# false-positive rate acceptable (precision > recall is the right trade
-# for a cache — wrong answer is user-visible, missed cache just costs an
-# extra LLM call). Calibrate further with a 50-query paraphrase test
-# set; expect the true sweet spot to land in 0.55-0.65.
+#
+# CALIBRATED (pre-launch, bge-m3 on real LMS-domain queries): the old 0.60
+# was far too loose. A live diagnostic on the dev cache showed different-intent
+# queries that merely SHARE AN ENTITY collide hard — e.g. "produk amartha apa
+# saja" scored 0.74-0.78 against a cached "apa itu amartha" company-overview
+# answer and was wrongly served it (the reported bug). A 30-query / 6-intent
+# sweep put the worst cross-intent collision at ~0.84 and showed false-positives
+# only vanish at >=0.85, while legitimate paraphrases stay well above it
+# (re-asks of the same intent cluster 0.85-0.91). The earlier comment claiming
+# bge-m3 paraphrases sit in a flat 0.55-0.75 band was WRONG — measured live,
+# genuine paraphrases land 0.88-0.91.
+#
+# 0.88 is chosen DELIBERATELY ABOVE the 0.85 dev-measured false-positive floor:
+# the dev cache is only a handful of points and the real corpus is 13k users
+# with far more varied phrasing, so the production score distribution will be
+# WIDER in both directions. Until we have real traffic, bias hard toward
+# precision — a wrong cached answer is user-visible to 13k people, a miss just
+# costs one extra LLM call (and the Redis exact layer still catches verbatim
+# repeats). POST-LAUNCH: recalibrate from agent_logs (cache_hit / cache_score /
+# query_hash are already logged, and the query text is now stored in the cache
+# payload) by histogramming real cache_score values, then lower toward the true
+# precision/recall knee. Do NOT trust this number from dev data alone.
 #
 # H8 (DECOUPLED from D3): this is a SEMANTIC-SIMILARITY threshold for cache
 # paraphrase matching — it is NOT the faithfulness/hallucination judge
 # threshold τ=0.75 (D3). Different axis entirely: τ scores whether a generated
 # answer is grounded in retrieved context; this scores whether two QUERIES are
-# close enough to reuse a cached answer. Raising this to 0.75 to "match D3"
-# would only make the cache STRICTER (fewer hits, more LLM calls) for an
-# unrelated reason. Tune it on its own paraphrase test-set, NOT against τ.
-_SEMANTIC_THRESHOLD = 0.60
+# close enough to reuse a cached answer. The two numbers are unrelated; tune
+# this on its own paraphrase test-set, NOT against τ.
+_SEMANTIC_THRESHOLD = 0.88
 _semantic_collection_ready = False
 _semantic_collection_lock: asyncio.Lock | None = None
 
@@ -494,7 +505,13 @@ async def set_cached_response(
 
         # Stamp with epoch so the read-time TTL filter + lazy prune can age it
         # out. Redis has native TTL; Qdrant does not, so we carry it explicitly.
-        qdrant_payload = {**payload, "created_at": time.time()}
+        # Also stamp the originating query text (capped) so a semantic HIT can be
+        # audited post-launch: "query X was served the answer cached for query Y
+        # — was that reuse correct?". This is the data the threshold recalibration
+        # needs and was previously impossible (only the answer was stored, so the
+        # cached point's source query had to be guessed). Not used on the read
+        # path; pure observability.
+        qdrant_payload = {**payload, "created_at": time.time(), "query": query[:500]}
         point_id = str(uuid.uuid4())
         await qdrant.client.upsert(
             collection_name="semantic_cache",

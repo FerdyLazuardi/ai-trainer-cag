@@ -373,10 +373,16 @@ class Settings(BaseSettings):
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).
-    # 24h: KB is stable and Moodle sync auto-invalidates affected entries, so a
-    # long TTL maximizes hit rate (fewer LLM calls). Expired semantic-cache
-    # points are pruned lazily; mem_limit caps worst-case RAM.
-    cache_query_ttl_seconds: int = 86400
+    # 7d: the KB is near-static (updates ~yearly) so a long TTL maximizes hit
+    # rate, but we cap at 7 days NOT a year on purpose: (1) if any KB-update path
+    # ever skips flush_cache_by_course, a stale answer's blast radius is bounded
+    # to a week, not a year; (2) the semantic cache's real retention is
+    # min(TTL, time-to-fill _SEMANTIC_CACHE_MAX_POINTS) — at 13k users the 50k
+    # size cap evicts oldest-first long before a year, so a year-long TTL would
+    # be fictional unless the cap is raised too. Revisit to 30d + a larger cap
+    # once post-launch traffic is understood. Expired semantic-cache points are
+    # pruned lazily; mem_limit caps worst-case RAM.
+    cache_query_ttl_seconds: int = 604800
     # 12h: must outlive `ltm_afk_threshold_seconds` (10h) so STM history+summary
     # survive long enough for the AFK LTM worker to consume them, with a 2h
     # margin for the worker's Guard-2 defer/retry. Trimmed from 24h: in the
