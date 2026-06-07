@@ -263,7 +263,7 @@ async def _enqueue_eval(
             intent=intent,
             intent_scores=intent_scores or {},
             turn_id=turn_id,
-        )
+        ).start(priority="high")
     except Exception as e:
         logger.warning(f"Failed to enqueue eval task: {e}")
 
@@ -945,9 +945,14 @@ async def chat_stream(
         return StreamingResponse(_stream_greeting_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     # ── Tier-1 fast-path: bypass LangGraph entirely for GREETING/AMBIGUOUS ──
-    # LangGraph astream_events has significant overhead (~15-50s) even for
-    # hardcoded responses. For Tier-1 intents we already know the response —
-    # stream it directly without touching the graph.
+    # Entering the graph via astream_events adds ~300ms of framework + routing
+    # overhead before the first token (measured: canned-via-graph TTFT ~350ms
+    # vs this direct bypass ~50ms; full graph traversal also pays a ~2s one-time
+    # cold-start on first request). For Tier-1 intents we already know the
+    # response, so we stream it directly and skip that ~300ms entirely.
+    # (Historical note: an earlier pipeline made this overhead ~15-50s; that is
+    # NO LONGER the case on the current build — the win here is ~300ms, but it's
+    # the cheapest possible path for the most trivial queries so we keep it.)
     from app.graph.intent_rules import classify as _t1_classify, _is_greeting as _is_pure_greeting, _is_identity_question
     _t1_intent = _t1_classify(resolved_query)
     if _t1_intent in ("GREETING", "AMBIGUOUS"):

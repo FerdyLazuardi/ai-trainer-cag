@@ -63,6 +63,15 @@ worker = Worker(
     # import this same `worker` object, so both move onto the queue DB.
     redis_url=settings.streaq_redis_url,
     concurrency=2,  # was arq's max_jobs=2
+    # H7: priority lanes. streaq's `priorities` list is LOWEST-first — it is
+    # reversed internally (worker reads the LAST element's stream first), so
+    # ["low", "high"] means "high" is drained before "low". Fast user-facing
+    # jobs (LTM-sync / summary-refresh / eval) enqueue at priority="high";
+    # heavy background jobs (ingest / Moodle / portfolio) at "low". A task
+    # enqueued WITHOUT an explicit priority defaults to priorities[-1] = "low".
+    # Priority alone can't reserve a slot (it only reorders the QUEUE, never
+    # preempts a RUNNING task), so it is paired with the heavy-slot lock below.
+    priorities=["low", "high"],
     lifespan=_worker_lifespan,
     tz=JakartaTz,  # cron schedules evaluate in WIB (UTC+7); see comment above
     # HMAC-sign the pickled task payloads. streaq's default serializer is
@@ -77,6 +86,46 @@ worker = Worker(
 )
 
 
+# ── H7: heavy-job concurrency gate ───────────────────────────────────────────
+# On a 2-vCPU / 8GB box a single worker runs concurrency=2. Two simultaneous
+# HEAVY jobs (ingest / Moodle / portfolio — each does LLM + Qdrant upsert +
+# bge-m3 encoder) spike ~1.1GB and were the documented OOM-kill trigger. Rather
+# than SPLIT into two worker processes (a second ~370MB bge-m3 copy that fights
+# the H3 memory trim, and 2 vCPUs can't cash in the isolation anyway), we keep
+# ONE worker and serialise heavy jobs to ONE-at-a-time via a Redis lock. A heavy
+# job that can't take the lock RE-ENQUEUES itself at low priority with a jittered
+# delay and returns IMMEDIATELY — so it never squats a concurrency slot that a
+# high-priority fast job needs. Net: heavy work owns ≤1 slot, fast work always
+# has the other. Peak RSS also drops (two heavies can no longer co-run).
+_HEAVY_LOCK_KEY = "rag:lock:heavy"
+# TTL is a backstop ONLY for a hard process kill (SIGKILL) that skips `finally`.
+# streaq's own timeout=600 raises into the coroutine, so the normal release path
+# runs on timeout; 1000s just guarantees a crashed holder can't wedge every
+# heavy job forever. Lives on DB 0 (app data) alongside the other rag:* locks
+# (rag:ltm:syncing, rag:conv_owner) for API consistency.
+_HEAVY_LOCK_TTL_MS = 1_000_000
+
+
+async def _acquire_heavy_slot(redis: Any) -> bool:
+    """Non-blocking attempt to take the single heavy-job slot. True = acquired."""
+    return bool(await redis.set(_HEAVY_LOCK_KEY, "1", nx=True, px=_HEAVY_LOCK_TTL_MS))
+
+
+async def _release_heavy_slot(redis: Any) -> None:
+    """Release the heavy slot. Never raises — release must not mask the job result."""
+    try:
+        await redis.delete(_HEAVY_LOCK_KEY)
+    except Exception:
+        pass
+
+
+def _heavy_defer_delay() -> int:
+    """Jittered re-enqueue delay (seconds) so deferred heavies don't thunder back
+    in lockstep when the slot frees."""
+    import random
+    return int(20 + random.random() * 20)  # 20-40s
+
+
 @worker.task(max_tries=3, timeout=600)
 async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
     """streaq task: ingest a single document off the API request path.
@@ -86,6 +135,19 @@ async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -
     task opens its own AsyncSession (the API process no longer holds one
     for the duration of the embedding pipeline).
     """
+    from app.database.redis_client import get_redis_client
+    _redis = get_redis_client()
+    # H7 heavy-slot gate: at most ONE heavy job runs at a time. On miss, re-enqueue
+    # a fresh copy (low priority, jittered delay) and return so this concurrency
+    # slot frees instantly for a high-priority fast job. Re-enqueue (not StreaqRetry)
+    # is deliberate: StreaqRetry burns the max_tries counter, so lock contention
+    # could permanently drop the job.
+    if not await _acquire_heavy_slot(_redis):
+        await ingest_text_task.enqueue(
+            text=text, title=title, source=source, metadata=metadata
+        ).start(delay=_heavy_defer_delay(), priority="low")
+        logger.info("ingest_text_task deferred (heavy slot busy)", title=title)
+        return {"status": "deferred", "reason": "heavy_slot_busy"}
     logger.info("streaq ingest_text_task starting", title=title, source=source, text_len=len(text))
     try:
         async with AsyncSessionLocal() as session:
@@ -111,11 +173,22 @@ async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -
     except Exception as exc:
         logger.error("streaq ingest_text_task failed", error=str(exc))
         raise
+    finally:
+        await _release_heavy_slot(_redis)
 
 
 @worker.task(max_tries=3, timeout=600)
 async def sync_moodle_task(course_id: int | None, target_sections: list[str] | None, force_reingest: bool) -> dict[str, Any]:
     """streaq task to run the moodle sync."""
+    from app.database.redis_client import get_redis_client
+    _redis = get_redis_client()
+    # H7 heavy-slot gate (see ingest_text_task for rationale).
+    if not await _acquire_heavy_slot(_redis):
+        await sync_moodle_task.enqueue(
+            course_id=course_id, target_sections=target_sections, force_reingest=force_reingest
+        ).start(delay=_heavy_defer_delay(), priority="low")
+        logger.info(f"sync_moodle_task deferred (heavy slot busy) course_id={course_id}")
+        return {"status": "deferred", "reason": "heavy_slot_busy"}
     logger.info(f"Starting background Moodle sync task via streaq for course_id={course_id}", force_reingest=force_reingest)
     try:
         async with AsyncSessionLocal() as session:
@@ -133,6 +206,8 @@ async def sync_moodle_task(course_id: int | None, target_sections: list[str] | N
     except Exception as exc:
         logger.error(f"streaq Moodle sync failed: {exc}")
         raise
+    finally:
+        await _release_heavy_slot(_redis)
 
 @worker.task
 async def dummy_task(name: str) -> str:
@@ -180,6 +255,15 @@ async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
 @worker.task(max_tries=3, timeout=600)
 async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
     """streaq task to scrape ferdy-fadhil-lazuardi.my.id + CV into Personal_Portfolio."""
+    from app.database.redis_client import get_redis_client
+    _redis = get_redis_client()
+    # H7 heavy-slot gate (see ingest_text_task for rationale).
+    if not await _acquire_heavy_slot(_redis):
+        await sync_portfolio_task.enqueue(
+            force_reingest=force_reingest
+        ).start(delay=_heavy_defer_delay(), priority="low")
+        logger.info("sync_portfolio_task deferred (heavy slot busy)")
+        return {"status": "deferred", "reason": "heavy_slot_busy"}
     logger.info("Starting Askfer portfolio sync via streaq", force_reingest=force_reingest)
     try:
         async with AsyncSessionLocal() as session:
@@ -193,6 +277,8 @@ async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"streaq portfolio sync failed: {exc}")
         raise
+    finally:
+        await _release_heavy_slot(_redis)
 
 async def _profile_watcher_task():
     """Watch `data/personal/profile.md` and auto-refresh on save.

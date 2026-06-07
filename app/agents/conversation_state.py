@@ -436,7 +436,7 @@ async def schedule_afk_sync(
     from app.worker import sync_ltm_task
 
     try:
-        await sync_ltm_task.enqueue(conv_id, user_id).start(delay=afk_seconds)
+        await sync_ltm_task.enqueue(conv_id, user_id).start(delay=afk_seconds, priority="high")
     except Exception as e:
         from loguru import logger
         logger.warning(f"Failed to enqueue AFK LTM sync: {e}")
@@ -646,7 +646,7 @@ async def schedule_summary_refresh(
             return False
         from app.worker import summarize_refresh_task
 
-        await summarize_refresh_task.enqueue(conv_id)
+        await summarize_refresh_task.enqueue(conv_id).start(priority="high")
         return True
     except Exception as exc:
         logger.warning(f"Failed to schedule summary refresh: {exc}")
