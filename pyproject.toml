@@ -40,6 +40,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "hypothesis>=6.98.0",
     "pytest-mock>=3.15.1",
+    "types-pyyaml>=6.0.12.20260518",
+    "types-cachetools>=7.0.0.20260518",
 ]
 
 [tool.pytest.ini_options]
@@ -47,3 +49,26 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+
+[tool.mypy]
+# Gate fix: previously mypy aborted with "Source file found twice under
+# different module names: agents.x vs app.agents.x". Cause: `app/` had no
+# __init__.py while its subpackages did, so mypy rooted packages at `app/`
+# (module `agents.x`) even though the codebase imports `app.agents.x`.
+# explicit_package_bases + mypy_path="." pin the base to the repo root, so
+# every file resolves to its `app.*` name unambiguously. namespace_packages
+# supports the PEP 420 `app` namespace (no __init__.py at runtime).
+python_version = "3.12"
+mypy_path = "."
+explicit_package_bases = true
+namespace_packages = true
+files = ["app"]
+# pydantic.mypy teaches mypy that BaseSettings fields are populated from the
+# environment, so `Settings()` with no kwargs is valid (was 4 false-positive
+# "Missing named argument" errors at settings.py call sites).
+plugins = ["pydantic.mypy"]
+# Third-party surfaces without complete stubs (streaq, qdrant_client,
+# langchain_openai, llama_index) would otherwise drown the gate in stub-gap
+# noise unrelated to our code. Keep the signal on our own type errors.
+ignore_missing_imports = true
+follow_imports = "silent"
