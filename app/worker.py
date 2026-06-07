@@ -636,12 +636,14 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     )
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
-    # One DEL on the HASH drops all 5 ephemeral fields (history, summary,
-    # last_active, scheduled, courses) atomically. Ownership is NOT in this
-    # HASH — it lives in the separate STRING key `rag:conv_owner:{id}` (written
-    # by the chat route's ownership check) with its own 7d TTL, so clearing the
-    # conversation HASH never erases ownership. A real user reclaiming the same
-    # conversation_id keeps their claim.
+    # One DEL on the HASH drops all ephemeral fields (history, summary,
+    # last_active, scheduled, courses) AND the `owner` field (B1) atomically.
+    # Ownership now rides this HASH's lifecycle instead of a separate STRING:
+    # clearing the conversation also drops the claim, which is correct — once
+    # the history is gone there is nothing private left to gate, and it makes
+    # owner growth self-bounding (no orphaned owner keys accumulating). A user
+    # who returns and reuses the same conversation_id simply re-claims a fresh,
+    # empty conversation.
     await clear_conversation(redis, conversation_id)
     await release_ltm_lock(redis, conversation_id)
 

@@ -295,22 +295,50 @@ def _quality_log_fields(
 
 async def _verify_conversation_ownership(conversation_id: str, current_user: User):
     """Ensure the user owns this conversation before accessing history.
-    
-    Migration note: if the stored owner is the dev bypass user (dev_user_123),
-    the real authenticated user is allowed to take over ownership seamlessly.
-    This handles the shift from no-JWT to JWT-authenticated requests.
+
+    B1: ownership is the `owner` field of the conversation HASH `rag:conv:{id}`
+    itself — no separate STRING, written with NO per-field TTL. Owner and
+    history therefore share one Redis key and are evicted TOGETHER under
+    volatile-lru (eviction is atomic per key, never field-by-field). This closes
+    the prior fail-open window where an LRU-evicted `rag:conv_owner:{id}` STRING
+    left a surviving history HASH re-claimable by a different user.
+
+    Migration (dual-read): conversations created before B1 still carry their
+    owner in the legacy `rag:conv_owner:{id}` STRING with no `owner` HASH field.
+    When the field is absent we fall back to the legacy STRING; if present we
+    adopt it into the HASH and honor it, so an active pre-B1 conversation can't
+    be re-claimed during cutover. The legacy fallback (and the old keys) can be
+    dropped one full `conversation_ttl_seconds` cycle after deploy.
+
+    Dev-bypass migration: a conversation owned by the dev bypass user is handed
+    over to the first real authenticated user seamlessly.
     """
     redis = get_redis_client()
-    owner_key = f"rag:conv_owner:{conversation_id}"
-    stored_owner = await redis.get(owner_key)
-    
+    conv_key = _cs._conv_key(conversation_id)
+    ttl = settings.conversation_ttl_seconds
+
+    stored_owner = await redis.hget(conv_key, "owner")
+
+    # ── Migration dual-read: fall back to the legacy STRING if no HASH field ──
+    if not stored_owner:
+        legacy_owner = await redis.get(f"rag:conv_owner:{conversation_id}")
+        if legacy_owner:
+            # Adopt the legacy claim into the HASH (idempotent under a race —
+            # concurrent adopters write the same value). key-level EXPIRE keeps
+            # the HASH evictable/bounded.
+            async with redis.pipeline(transaction=True) as pipe:
+                pipe.hset(conv_key, "owner", legacy_owner)
+                pipe.expire(conv_key, ttl)
+                await pipe.execute()
+            stored_owner = legacy_owner
+
     logger.info(
-        "Checking ownership", 
-        conversation_id=conversation_id, 
-        current_user_id=current_user.user_id, 
-        stored_owner=stored_owner
+        "Checking ownership",
+        conversation_id=conversation_id,
+        current_user_id=current_user.user_id,
+        stored_owner=stored_owner,
     )
-    
+
     if stored_owner:
         # Allow real user to reclaim a conversation previously owned by dev bypass
         if stored_owner == DEV_BYPASS_USER_ID and current_user.user_id != DEV_BYPASS_USER_ID:
@@ -319,23 +347,27 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
                 conversation_id=conversation_id,
                 new_owner=current_user.user_id,
             )
-            await redis.set(owner_key, current_user.user_id, ex=86400 * 7)
+            await redis.hset(conv_key, "owner", current_user.user_id)
         elif stored_owner != current_user.user_id:
             logger.error(
                 "Ownership mismatch 403",
                 conversation_id=conversation_id,
                 current_user_id=current_user.user_id,
-                stored_owner=stored_owner
+                stored_owner=stored_owner,
             )
             raise HTTPException(status_code=403, detail="Not authorized to access this conversation")
     else:
-        # No owner yet — claim atomically with SET NX to prevent TOCTOU race.
-        # Two concurrent requests for the same new conversation_id could both
-        # see stored_owner=None and both "claim" it; NX ensures only one wins.
-        claimed = await redis.set(owner_key, current_user.user_id, nx=True, ex=86400 * 7)
-        if not claimed:
-            # Another request claimed it between our GET and SET — re-read to verify
-            actual_owner = await redis.get(owner_key)
+        # No owner anywhere — claim atomically. HSETNX can't double-claim a new
+        # conversation_id under concurrent first-turn requests; EXPIRE in the
+        # same pipeline guarantees a key-level TTL so a claim-then-crash can't
+        # leave an unevictable, unbounded HASH.
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetnx(conv_key, "owner", current_user.user_id)
+            pipe.expire(conv_key, ttl)
+            results = await pipe.execute()
+        if not results[0]:
+            # Another request claimed it between our HGET and HSETNX — re-read to verify
+            actual_owner = await redis.hget(conv_key, "owner")
             if actual_owner and actual_owner != current_user.user_id:
                 logger.error(
                     "Ownership race lost — another user claimed this conversation_id",

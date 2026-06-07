@@ -10,16 +10,22 @@ key (not a HASH field) because it must outlive the conversation HASH —
 a slow LTM worker can fire after the HASH expires.
 
 HASH schema (`rag:conv:{conversation_id}`) — per-field TTL via HSETEX:
-    history      JSON list       24h
-    summary      str             24h
+    history      JSON list       12h (conversation_ttl_seconds)
+    summary      str             12h (conversation_ttl_seconds)
     last_active  str (epoch)     afk + 3600s
     scheduled    "1"             afk + 600s
     courses      JSON list       afk + 3600s
+    owner        str             no field TTL — gated by key-level EXPIRE only
 
-Ownership is NOT stored here. It lives in a separate STRING key
-`rag:conv_owner:{id}` (written by the chat route's ownership check). The
-former `owner` HASH field + its get_owner/set_owner helpers were dead code
-(no caller) and have been removed (4.3).
+Ownership (B1): the `owner` field stores the authenticated user_id allowed to
+read this conversation. It is written WITHOUT a per-field TTL, so within the
+HASH it can only ever outlive the history fields, never the reverse. Because
+Redis eviction is atomic at the key level (never field-by-field), owner and
+history are evicted TOGETHER — closing the prior fail-open window where a
+separate `rag:conv_owner:{id}` STRING could be LRU-evicted while the history
+HASH survived, letting the next requester re-claim and read it. This reverses
+4.3 (which had moved owner OUT to a STRING); the get/set_owner helpers stay
+removed — the chat route reads/writes the field inline via HGET/HSETNX.
 
 Note: HSETEX `EX seconds` sets PER-FIELD TTLs, NOT a top-level key TTL.
 A HASH carrying ONLY field-level (HEXPIRE) TTLs has no key-level EXPIRE, and

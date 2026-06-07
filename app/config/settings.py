@@ -377,9 +377,14 @@ class Settings(BaseSettings):
     # long TTL maximizes hit rate (fewer LLM calls). Expired semantic-cache
     # points are pruned lazily; mem_limit caps worst-case RAM.
     cache_query_ttl_seconds: int = 86400
-    # 24h: must outlive `ltm_afk_threshold_seconds` so STM history+summary
-    # survive long enough for the AFK LTM worker to consume them.
-    conversation_ttl_seconds: int = 86400
+    # 12h: must outlive `ltm_afk_threshold_seconds` (10h) so STM history+summary
+    # survive long enough for the AFK LTM worker to consume them, with a 2h
+    # margin for the worker's Guard-2 defer/retry. Trimmed from 24h: in the
+    # happy path the AFK worker's `clear_conversation` DELs the HASH at ~10h
+    # anyway, so 24h only ever benefited the orphan-job failure case; 12h bounds
+    # worst-case RAM tighter while keeping the ordering invariant intact. Owner
+    # now rides this same HASH (B1), so it inherits this lifetime too.
+    conversation_ttl_seconds: int = 43200
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
     # Max fresh (un-summarized) conversation turns fed to generate_node. 2
     # (was 3): the rolling summary captures everything older, and the 3rd
