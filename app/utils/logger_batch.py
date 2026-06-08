@@ -191,7 +191,7 @@ class BatchLogger:
                         {k: v for k, v in row.items() if k in valid_cols}
                         for row in logs_to_insert
                     ]
-                    all_keys = set()
+                    all_keys: set[str] = set()
                     for row in cleaned:
                         all_keys.update(row.keys())
                     normalized = [

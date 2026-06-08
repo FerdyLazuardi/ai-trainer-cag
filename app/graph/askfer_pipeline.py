@@ -1,7 +1,7 @@
 """
 Askfer pipeline — public portfolio chat assistant.
 
-Parallel to A-Pedi's app/graph/pipeline.py. Stateless: no conversation history,
+Parallel to Ava's app/graph/pipeline.py. Stateless: no conversation history,
 no LTM, no rolling summary, no user preferences. Hits Qdrant collection
 `Personal_Portfolio` (homepage + project pages + CV chunks).
 

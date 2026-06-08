@@ -1,4 +1,4 @@
-"""Faithfulness judge for A-Pedi answers.
+"""Faithfulness judge for Ava answers.
 
 Uses a DEDICATED judge model (`get_judge_llm` = deepseek/deepseek-v4-pro) —
 a different model family than BOTH the generator (`get_generate_llm`) and the
@@ -226,7 +226,7 @@ async def judge_faithfulness(
         for attempt in range(2):
             reply = await judge_llm.ainvoke(
                 messages,
-                config={"run_name": "a-pedi-eval-faithfulness"},
+                config={"run_name": "ava-eval-faithfulness"},
             )
             raw = _coerce_content_to_text(getattr(reply, "content", ""))
             parsed = _parse_judge_json(raw)

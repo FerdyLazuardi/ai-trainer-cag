@@ -16,7 +16,7 @@
                 <div class="header-info">
                     <div class="online-dot"></div>
                     <div style="display:flex; flex-direction:column;">
-                        <span>A-Pedi AI Trainer</span>
+                        <span>Ava AI Trainer</span>
                         <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
                     </div>
                 </div>
@@ -143,7 +143,7 @@ function showIntro() {
         : 'A-Team';
 
     addAIResponse(
-        `Hi **${nama}**! Aku **A-Pedi**. ` +
+        `Hi **${nama}**! Aku **Ava**. ` +
         `Ada yang bisa aku bantu hari ini terkait materi Amarthapedia? 😊`
     );
 }
@@ -286,16 +286,16 @@ function getSessionId() {
             : "general";
         return `${nama}_${MOODLE_USER_ID}_${dept}`;
     }
-    let sid = sessionStorage.getItem("peped_sid");
+    let sid = sessionStorage.getItem("ava_sid");
     if (!sid) {
         sid = "sid-" + Math.random().toString(36).substring(2, 9);
-        sessionStorage.setItem("peped_sid", sid);
+        sessionStorage.setItem("ava_sid", sid);
     }
     return sid;
 }
 
 function resetChat() {
-    sessionStorage.removeItem("peped_sid");
+    sessionStorage.removeItem("ava_sid");
     window.location.reload();
 }
 
@@ -469,7 +469,7 @@ async function send() {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, A-Pedi bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
+                finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
             }
         }
 
@@ -584,7 +584,7 @@ async function send() {
             const data = await fallbackRes.json();
             removeTyping(); // hapus dots SETELAH response tiba
 
-            const reply = data?.answer || "Wah, A-Pedi bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
+            const reply = data?.answer || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
             streamMessageFallback(reply, "ai");
 
         } catch (fallbackErr) {

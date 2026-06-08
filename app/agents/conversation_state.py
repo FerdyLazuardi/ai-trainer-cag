@@ -33,8 +33,8 @@ A HASH carrying ONLY field-level (HEXPIRE) TTLs has no key-level EXPIRE, and
 expire set — so such a HASH would be NON-evictable and could drive the
 instance OOM on write under pressure (C6). To keep every conversation HASH
 eviction-eligible, every write path also sets a KEY-LEVEL EXPIRE of
-`conversation_ttl_seconds` (24h = the longest field TTL, so it never kills a
-still-live field early). The key dies wholesale at 24h; individual fields may
+`conversation_ttl_seconds` (12h = the longest field TTL, so it never kills a
+still-live field early). The key dies wholesale at 12h; individual fields may
 expire sooner via their own HEXPIRE. Re-writing a field refreshes both the
 field TTL and the key-level EXPIRE.
 """
@@ -608,7 +608,7 @@ async def get_or_summarize_history(
     try:
         resp = await llm.ainvoke(
             [HM(content=prompt)],
-            config={"run_name": "a-pedi-rolling-summarization"},
+            config={"run_name": "ava-rolling-summarization"},
         )
         new_summary = resp.content.strip()
     except Exception as exc:

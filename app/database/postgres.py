@@ -65,7 +65,7 @@ async def init_db() -> None:
             # _log_cache_event in app/utils/cache.py). Populated for
             # `endpoint='cache_lookup'` rows only; NULL for chat turns.
             # cache_score: 1.0 exact, qdrant cosine for semantic, NULL miss.
-            # cache_namespace: 'rag' (A-Pedi) / 'rag_user_<id>' / 'portfolio'.
+            # cache_namespace: 'rag' (Ava) / 'rag_user_<id>' / 'portfolio'.
             # query_hash: sha256(query.strip().lower())[:16], same scheme as
             #   the Redis cache key (cache.py:_cache_key) so dashboard
             #   joins to live cache state don't re-hash user text.

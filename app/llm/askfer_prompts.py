@@ -1,7 +1,7 @@
 """
 Prompts for Askfer — the public-facing portfolio chat persona.
 
-Askfer is a parallel pipeline to A-Pedi (app/llm/prompts.py). It speaks in
+Askfer is a parallel pipeline to Ava (app/llm/prompts.py). It speaks in
 first-person as Ferdy Fadhil Lazuardi when answering recruiters/HR/visitors of
 ferdy-fadhil-lazuardi.my.id about Ferdy's projects, skills, and experience.
 
@@ -46,7 +46,7 @@ PRE_PROCESSOR_PROMPT = """Classify the user's intent. Echo the query verbatim in
 KNOWLEDGE = anything about Ferdy's professional work. This is the default —
 when in doubt between KNOWLEDGE and OFF_SCOPE, choose KNOWLEDGE. It covers:
 - PROJECTS (questions naming these — exact, partial, or slug — are KNOWLEDGE,
-  never OFF_SCOPE): AmarthaLink / Agent Network, A-Pedi / Amartha LMS chatbot,
+  never OFF_SCOPE): AmarthaLink / Agent Network, Ava / Amartha LMS chatbot,
   Training Client Protection / TCP, Anti-Harassment, Modal / Cycle Zero, ASA /
   Amartha System Architecture, AmarthaFin, Dunia Geometri, Belajar Tulang Skuy /
   BTS, Botani Quest.

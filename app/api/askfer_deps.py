@@ -2,7 +2,7 @@
 Public-facing dependencies for Askfer endpoints.
 
 `rate_limit_by_ip` is intentionally separate from `app.api.auth.get_current_user`
-so the Askfer route is fully decoupled from JWT auth flow used by A-Pedi.
+so the Askfer route is fully decoupled from JWT auth flow used by Ava.
 """
 from fastapi import HTTPException, Request, status
 from loguru import logger

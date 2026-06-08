@@ -4,7 +4,7 @@ Askfer routes — public portfolio chat endpoints.
 POST /askfer/stream   → SSE stream answering questions about Ferdy's portfolio.
 POST /askfer/sync     → admin-only re-sync of homepage + projects + CV.
 
-A-Pedi (`/chat`, `/chat/stream`) is untouched.
+Ava (`/chat`, `/chat/stream`) is untouched.
 """
 import asyncio
 import json
@@ -66,7 +66,7 @@ async def askfer_stream(
     query = request.query
     logger.info("Askfer request", query=query[:80], ip=client_ip)
 
-    # Cache lookup (askfer namespace — fully isolated from A-Pedi)
+    # Cache lookup (askfer namespace — fully isolated from Ava)
     from llama_index.core import Settings as LISettings
     from app.config.embedding_config import ensure_llamaindex_configured
 

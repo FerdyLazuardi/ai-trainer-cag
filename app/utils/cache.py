@@ -99,8 +99,8 @@ def _query_hash(query: str) -> str:
 def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
     """Generate a deterministic Redis key from the query string and course_id.
 
-    `namespace` lets parallel personas (a-pedi vs askfer) share the cache infra
-    without polluting each other. Default 'rag' preserves existing A-Pedi keys
+    `namespace` lets parallel personas (ava vs askfer) share the cache infra
+    without polluting each other. Default 'rag' preserves existing Ava keys
     byte-identically.
     """
     cid_str = str(course_id) if course_id and course_id > 0 else 'global'
@@ -213,9 +213,9 @@ async def get_cached_response(
     1. Checks Redis for an exact string match.
     2. Checks Qdrant for a semantic match (e.g. "what is X" vs "explain X").
 
-    `cache_namespace` isolates parallel personas (default 'rag' = A-Pedi).
+    `cache_namespace` isolates parallel personas (default 'rag' = Ava).
     Semantic matches are filtered by the same namespace, so Askfer queries
-    cannot pull A-Pedi answers and vice-versa.
+    cannot pull Ava answers and vice-versa.
 
     If `query_embedding` is supplied, the embedding API call for the semantic
     lookup is skipped — caller can reuse the same vector elsewhere.
@@ -459,7 +459,7 @@ async def set_cached_response(
     Store a RAG response in both Redis (with TTL) and Qdrant caches.
 
     `cache_namespace` isolates parallel personas. Default 'rag' preserves the
-    A-Pedi key/payload format byte-identically.
+    Ava key/payload format byte-identically.
 
     If `query_embedding` is supplied, the embedding API call is skipped.
     """
@@ -799,7 +799,7 @@ async def flush_cache_by_namespace(namespace: str) -> None:
     Delete Qdrant points and Redis keys for a specific cache namespace
     (e.g. 'askfer'). Used by the profile.md auto-refresh watcher and any
     lightweight refresh path that needs to invalidate one persona's cache
-    without touching A-Pedi's cache.
+    without touching Ava's cache.
     """
     if not namespace:
         return

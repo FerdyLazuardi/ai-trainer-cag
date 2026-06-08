@@ -60,6 +60,28 @@ _RETRYABLE_EXCEPTIONS = (
 _NON_RETRYABLE_5XX = (500, 501, 502, 503, 504)
 
 
+# Gemini 2.5 Flash Lite (LLM_MODEL / CHEAP_LLM_MODEL) is served by more than
+# one OpenRouter upstream (Google AI Studio and Google Vertex). We PREFER
+# Google AI Studio first via `order`, but keep allow_fallbacks=True so a
+# single-provider outage degrades to the other Google upstream instead of
+# failing the request — the opposite stance from the judge, which is
+# hard-pinned (only=["deepseek"], allow_fallbacks=False) for reproducibility.
+#
+# NB: require_parameters is deliberately NOT set on EITHER path. Live-verified
+# through the real langchain ChatOpenAI client (2026-06): adding it 404s every
+# request ("No endpoints found that can handle the requested parameters") on
+# BOTH Gemini AND the DeepSeek judge. ChatOpenAI emits a wider param set than a
+# hand-rolled body (n, stream, etc.), and OpenRouter's support registry doesn't
+# advertise all of them for these upstreams, so require_parameters filters out
+# every candidate. (A raw minimal-body httpx call passes — which is why it
+# looked safe at first — but that is NOT the path the app uses.) JSON-mode for
+# the judge is enforced by response_format alone, which works without it.
+_GEMINI_PROVIDER = {
+    "order": ["google-ai-studio"],
+    "allow_fallbacks": True,
+}
+
+
 def _should_retry(exc: BaseException) -> bool:
     """Decide whether a given exception is worth retrying.
 
@@ -142,6 +164,7 @@ def get_llm() -> ChatOpenAI:
         request_timeout=60,
         max_retries=1,
         http_async_client=_make_http_client(),
+        extra_body={"provider": _GEMINI_PROVIDER},
         # OpenRouter-specific headers for app attribution (ignored by Ollama)
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
@@ -172,6 +195,7 @@ def get_cheap_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
+        extra_body={"provider": _GEMINI_PROVIDER},
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Background Worker)",
@@ -294,6 +318,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
+        extra_body={"provider": _GEMINI_PROVIDER},
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Pre-Processor)",
@@ -339,6 +364,7 @@ def get_generate_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
+        extra_body={"provider": _GEMINI_PROVIDER},
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Generate)",

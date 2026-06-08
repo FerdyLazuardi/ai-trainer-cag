@@ -77,7 +77,7 @@ async def run_one_query(
         start = time.perf_counter()
         result = await rag_graph.ainvoke(
             initial_state,
-            config={"run_name": f"a-pedi-eval-offline-turn{i + 1}"},
+            config={"run_name": f"ava-eval-offline-turn{i + 1}"},
         )
         latency_ms = (time.perf_counter() - start) * 1000
 

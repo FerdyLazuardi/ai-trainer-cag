@@ -567,7 +567,7 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
         structured = cheap_llm.with_structured_output(LTMSummaryResult)
         result = cast(LTMSummaryResult, await structured.ainvoke(
             [HumanMessage(content=prompt)],
-            config={"run_name": "a-pedi-ltm-sync-summarize"}
+            config={"run_name": "ava-ltm-sync-summarize"}
         ))
         session_summary = result.summary or ""
         unanswered_questions = (result.unanswered_questions or [])[:3]

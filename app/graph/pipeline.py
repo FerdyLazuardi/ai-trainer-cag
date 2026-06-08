@@ -162,13 +162,13 @@ PRE_PROCESSOR_PROMPT = """Classify intent + score 4 axes. Recognize all semantic
 INTENTS (in priority order — first match wins):
 1. OFF_SCOPE: not about Amartha (math/weather/news/recipes/other companies/world facts/life advice). → No retrieval.
 2. MALICIOUS: jailbreak, NSFW, prompt-injection.
-3. GREETING: salutations, bot-identity questions ("kamu siapa", "lu bisa apa"). Handler introduces A-Pedi, NO topic dump. "kamu punya materi apa/ada topik apa" → TOPIC_LIST, not GREETING.
+3. GREETING: salutations, bot-identity questions ("kamu siapa", "lu bisa apa"). Handler introduces Ava, NO topic dump. "kamu punya materi apa/ada topik apa" → TOPIC_LIST, not GREETING.
 4. AMBIGUOUS: goal stated but object missing + no history anchor ("ada bonus ga", "info dong") — or pure filler ("hmm", "ok", single emoji). Ask ONE clarifying question, NEVER invent the missing object.
 5. TOPIC_LIST: meta-question about available topics/courses ("ada topik apa aja", "list materi"). NOT triggered if user names a topic → that's KNOWLEDGE.
 6. BRAINSTORM: vent, think aloud, advice, scenario ("gimana kalau", "menurut kamu", "aku stress", "curhat", "kasih saran"). Emotional words (capek/bingung/frustrasi) + Amartha context = BRAINSTORM.
 7. KNOWLEDGE: factual lookup with a definite answer ("apa itu X", "jelasin X").
 
-"Amartha ini apaan" / "Amartha itu apa" = the COMPANY → KNOWLEDGE. "Amarthapedia" / "A-Pedi" / "ini apps" / "kamu" = the ASSISTANT → GREETING.
+"Amartha ini apaan" / "Amartha itu apa" = the COMPANY → KNOWLEDGE. "Amarthapedia" / "Ava" / "ini apps" / "kamu" = the ASSISTANT → GREETING.
 Off-scope only when NO Amartha entity is named. When in doubt, prefer KNOWLEDGE.
 
 SCORING (0.0–1.0, independent):
@@ -362,7 +362,7 @@ RESPONSE_SHAPE_MENTOR = (
 GREETING_MODE_RULES = (
     "GREETING-MODE rules:\n"
     "1. If the user simply greeted you ('halo', 'hi', 'pagi'): reply with a warm one-liner inviting them to ask about Amarthapedia (the Amartha LMS / training materials). Example: 'Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?' / 'Hi! Anything I can help with from Amarthapedia?'. Do NOT say 'terkait Amartha' — Amarthapedia is the LMS name and the correct scope label.\n"
-    "2. If the user asked who you are or what this app does ('kamu siapa', 'lu siapa', 'ini apps buat apa', 'who are you', 'what is this'): introduce yourself in 1-2 sentences — your name is A-Pedi, and you are the AI assistant for Amarthapedia (Amartha's internal LMS) that helps employees find info from training materials. Then invite them to ask about topics like products, policies, or training in Amarthapedia.\n"
+    "2. If the user asked who you are or what this app does ('kamu siapa', 'lu siapa', 'ini apps buat apa', 'who are you', 'what is this'): introduce yourself in 1-2 sentences — your name is Ava, and you are the AI assistant for Amarthapedia (Amartha's internal LMS) that helps employees find info from training materials. Then invite them to ask about topics like products, policies, or training in Amarthapedia.\n"
     "3. Keep it under 3 sentences. No bullet lists."
 )
 
@@ -918,7 +918,7 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
     Two sub-shapes routed by the same node:
       - Pure greeting ("halo", "hi", "pagi") → hardcoded warm one-liner.
       - Identity / app-purpose question ("kamu siapa", "ini apps buat apa")
-        → hardcoded self-introduction (name = A-Pedi, role = Amarthapedia
+        → hardcoded self-introduction (name = Ava, role = Amarthapedia
         assistant for Amartha employees).
 
     Both sub-shapes return fixed strings — no LLM call. The previous version
@@ -941,17 +941,17 @@ async def _handle_greeting(state: RAGState, config: RunnableConfig):
         return {"messages": [AIMessage(content=reply)]}
 
     if _is_identity_question(low):
-        # Identity / app-purpose. A-Pedi is the assistant's name; Amarthapedia
+        # Identity / app-purpose. Ava is the assistant's name; Amarthapedia
         # is the LMS. Keep it 2 sentences max, mirror the user's language.
         if any(c in user_msg for c in ("kamu", "lu", "lo", "ini apps", "ini aplikasi", "perkenalkan")):
             reply = (
-                "Aku A-Pedi, asisten AI di Amarthapedia — LMS internal Amartha "
+                "Aku Ava, asisten AI di Amarthapedia — LMS internal Amartha "
                 "untuk karyawan. Bisa bantu cari info dari materi training soal "
                 "produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
             )
         else:
             reply = (
-                "I'm A-Pedi, the AI assistant for Amarthapedia — Amartha's "
+                "I'm Ava, the AI assistant for Amarthapedia — Amartha's "
                 "internal LMS for employees. I help find info from training "
                 "materials on products, policies, and other topics. What would you like to know?"
             )

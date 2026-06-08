@@ -72,3 +72,9 @@ plugins = ["pydantic.mypy"]
 # noise unrelated to our code. Keep the signal on our own type errors.
 ignore_missing_imports = true
 follow_imports = "silent"
+# check_untyped_defs: type-check the body of functions even when they have no
+# annotated signature. WITHOUT this, mypy silently skips unannotated function
+# bodies entirely (emitting only [annotation-unchecked] notes) — so "0 errors"
+# was lenient, not strict. Turning it on surfaced 3 real errors (now fixed) and
+# stops new untyped-def bugs from hiding behind the gate.
+check_untyped_defs = true

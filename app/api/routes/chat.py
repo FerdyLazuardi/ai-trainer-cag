@@ -12,6 +12,7 @@ from loguru import logger
 
 # Moved inline imports to file-level
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.agents import conversation_state as _cs
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
@@ -543,7 +544,7 @@ async def _prepare_rag_context(
 
     # Skip LTM lookup entirely on the first turn of a brand-new session — there
     # is nothing in `recent_history` yet AND no prior summary, which means the
-    # user has never spoken to A-Pedi before in this conversation. Loading LTM
+    # user has never spoken to Ava before in this conversation. Loading LTM
     # here just bloats the prompt by ~200 tokens and is rarely useful for the
     # very first message ("hi", "halo", "apa itu X"). We still pay the fetch
     # cost (parallel gather above) but discard the payload so the prompt
@@ -724,7 +725,7 @@ async def _run_chat(
     try:
         result = await rag_graph.ainvoke(
             initial_state,
-            config={"run_name": "a-pedi-chat"},
+            config={"run_name": "ava-chat"},
         )
 
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -775,9 +776,20 @@ async def _run_chat(
     is_low_relevance = _route_after_rag(cast(RAGState, result)) == "low_relevance"
     # FIX 1: Personalized answers are now cached using a user-scoped namespace
     # so they can't leak to another user but still provide cache hits for this user.
+    #
+    # MENTOR-shape exclusion: the semantic cache is a FACT-LOOKUP FAQ — it stores
+    # only {query_embedding, answer, sources}, NOT the response shape. A MENTOR
+    # answer is a numbered step-by-step scaffolding (learning_context >= threshold,
+    # same gate as pipeline.py's MENTOR block), which is the SAME intent (KNOWLEDGE)
+    # as a flat fact lookup but a very different answer shape. Caching it would let
+    # a later plain "apa itu X" paraphrase (lc<threshold) get served a scaffolded
+    # answer it didn't ask for. So we skip the write when the turn was MENTOR-shaped
+    # and let it regenerate fresh — keeping the cache as pure fact FAQ.
+    _learning_context = float((result.get("intent_scores") or {}).get("learning_context", 0.0))
     if (
         intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
         and not is_low_relevance
+        and _learning_context < settings.learning_context_threshold
     ):
         ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
         background_tasks.add_task(
@@ -999,9 +1011,9 @@ async def chat_stream(
                     _fast_reply = "Hi! Anything I can help with from Amarthapedia?"
             elif _is_identity_question(low_q):
                 if any(c in low_q for c in ("kamu", "lu", "lo", "ini apps", "ini aplikasi", "perkenalkan")):
-                    _fast_reply = "Aku A-Pedi, asisten AI di Amarthapedia — LMS internal Amartha untuk karyawan. Bisa bantu cari info dari materi training soal produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
+                    _fast_reply = "Aku Ava, asisten AI di Amarthapedia — LMS internal Amartha untuk karyawan. Bisa bantu cari info dari materi training soal produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
                 else:
-                    _fast_reply = "I'm A-Pedi, the AI assistant for Amarthapedia — Amartha's internal LMS for employees. What would you like to know?"
+                    _fast_reply = "I'm Ava, the AI assistant for Amarthapedia — Amartha's internal LMS for employees. What would you like to know?"
             else:
                 _fast_reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
         else:  # AMBIGUOUS / pure filler
@@ -1037,7 +1049,7 @@ async def chat_stream(
         nonlocal resolved_query
         from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
-        retrieved_context = []
+        retrieved_context: list = []
         intent = "KNOWLEDGE"
         stream_intent_scores: dict = {}
         # C4/C5 pool-level gate signals captured from rag_node's on_chain_end
@@ -1050,7 +1062,7 @@ async def chat_stream(
         leak_guard = StreamLeakGuard()
 
         try:
-            config = {"run_name": "a-pedi-chat-stream"}
+            config: RunnableConfig = {"run_name": "ava-chat-stream"}
 
             if resolved_query != request.query:
                 yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
@@ -1084,7 +1096,7 @@ async def chat_stream(
                     output = event.get("data", {}).get("output", {})
                     if isinstance(output, dict):
                         if "intent" in output:
-                            intent = output.get("intent")
+                            intent = output["intent"]
                         if "intent_scores" in output:
                             stream_intent_scores = output.get("intent_scores") or {}
                         if "rewritten_query" in output:
@@ -1222,9 +1234,15 @@ async def chat_stream(
                 "dense_retrieval_ok": stream_dense_retrieval_ok,
             }
             is_low_relevance_stream = _route_after_rag(cast(RAGState, _gate_state)) == "low_relevance"
+            # MENTOR-shape exclusion — mirrors the non-stream path: skip the cache
+            # write when the answer was scaffolded step-by-step instruction
+            # (learning_context >= threshold) so the FACT-lookup FAQ cache never
+            # serves a MENTOR-shaped answer to a later plain fact paraphrase.
+            _stream_learning_context = float((stream_intent_scores or {}).get("learning_context", 0.0))
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
+                and _stream_learning_context < settings.learning_context_threshold
             ):
                 ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
                 await set_cached_response(

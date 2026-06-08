@@ -26,7 +26,62 @@ from __future__ import annotations
 import re
 from typing import Literal, Optional
 
-Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"]
+Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"]
+
+# ── Rule 0: prompt-injection / jailbreak / system-prompt extraction ──────────
+# Deterministic guard for ADVERSARIAL inputs that try to override the bot's
+# instructions, extract its system prompt, or activate a "no rules" persona.
+# Routes straight to MALICIOUS (canned refusal) BEFORE the LLM classifier.
+#
+# WHY deterministic: the LLM classifier (pipeline.py) has ZERO MALICIOUS
+# few-shots and a 3-word MALICIOUS definition, while BRAINSTORM explicitly
+# invites role-play ("anggap kamu X"). So "kamu sekarang DAN" was misrouting
+# to BRAINSTORM — the LOOSEST prompt — which then recited the system prompt.
+# A rule here fires before that path can be reached.
+#
+# PRECISION over recall: every pattern requires a verb/target co-occurrence or
+# a multi-word anchor that essentially never appears in a legitimate Amartha
+# materials question. Subtler paraphrases still fall through to the LLM.
+#
+# CRITICAL false-positive traps explicitly avoided:
+#  - "dan" = Indonesian "and" → DAN only matches as an ALL-CAPS standalone
+#    token co-occurring with "mode" (original-case), never the conjunction.
+#  - bare "instruksi"/"aturan"/"sistem" are common in real questions
+#    ("instruksi kerja FO", "sebutkan aturan main CP", "sistem grading") →
+#    each needs an override VERB or a bot-referring qualifier (kamu/mu/sistem)
+#    or a multi-word anchor ("system prompt") alongside it.
+_INJECTION_RES = (
+    # 1. instruction-override: (abaikan/lupakan/...) + (instruksi/aturan/prompt/...)
+    re.compile(
+        r"\b(abaikan|lupakan|hiraukan|acuhkan)\b.{0,30}\b(instruksi|aturan|perintah|arahan|prompt)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(ignore|forget|disregard|override|bypass)\b.{0,30}\b(instruction|instructions|rule|rules|prompt|previous|prior|above)\b",
+        re.IGNORECASE,
+    ),
+    # 2. system-prompt extraction — multi-word anchors that ~never occur in a
+    #    legit question (work instructions are "instruksi kerja"/"SOP", never
+    #    "system prompt"/"instruksi sistem").
+    re.compile(
+        r"\b(system\s+prompt|sistem\s+prompt|prompt\s+sistem|instruksi\s+sistem|system\s+instructions?)\b",
+        re.IGNORECASE,
+    ),
+    # 3. extraction of the bot's OWN prompt/persona via a bot-referring qualifier
+    re.compile(
+        r"\b(instruksi|prompt|persona)\s+(kamu|mu|lo|lu|asli|rahasia|sistem)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(instruksimu|promptmu|personamu|instruksinya)\b", re.IGNORECASE),
+    # 4. jailbreak personas / no-rules mode
+    re.compile(
+        r"\b(jailbreak|developer\s+mode|dev\s+mode|tanpa\s+aturan|tanpa\s+batasan|tanpa\s+filter|mode\s+tanpa)\b",
+        re.IGNORECASE,
+    ),
+    # 5. DAN persona — ALL-CAPS standalone token co-occurring with "mode" (so
+    #    the Indonesian conjunction "dan" never fires). NO IGNORECASE here.
+    re.compile(r"\bDAN\b.{0,20}\bmode\b|\bmode\b.{0,20}\bDAN\b"),
+)
 
 # ── Rule 1: pure punctuation / filler ────────────────────────────────────────
 # Matches messages that are ONLY punctuation, whitespace, or a single short
@@ -154,6 +209,19 @@ _GREETING_FLUFF = {
 }
 
 
+def _is_injection(text: str) -> bool:
+    """Adversarial prompt-injection / jailbreak / system-prompt extraction.
+
+    Matches on the ORIGINAL-case text (not lowercased) so the DAN rule can
+    require ALL-CAPS — `dan` (Indonesian "and") must never fire. All other
+    patterns are case-insensitive via their own re.IGNORECASE flag.
+
+    Length-bounded generously (attacks can be long); the patterns are precise
+    enough that length isn't the guard — co-occurrence is.
+    """
+    return any(rx.search(text) for rx in _INJECTION_RES)
+
+
 def _is_pure_filler(low: str) -> bool:
     """Filler = no semantic content. '??', '...', single emoji, single word
     that is not a topic name (we conservatively only fire on punctuation/
@@ -262,6 +330,12 @@ def classify(text: str) -> Optional[Intent]:
     if not text:
         return "AMBIGUOUS"
     low = text.lower().strip()
+
+    # Rule 0: adversarial injection/jailbreak — checked FIRST, on original-case
+    # text (the DAN rule needs ALL-CAPS). Hard-routes to the canned MALICIOUS
+    # refusal before any softer rule or the LLM classifier can mis-handle it.
+    if _is_injection(text):
+        return "MALICIOUS"
 
     if _is_pure_filler(low):
         return "AMBIGUOUS"
