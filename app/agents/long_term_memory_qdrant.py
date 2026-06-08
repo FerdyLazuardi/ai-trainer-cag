@@ -72,8 +72,8 @@ class QdrantLTMService:
 
     async def _embed(self, text: str) -> list[float]:
         """
-        Embed text using the same OpenAI embedding model as the KB pipeline.
-        Returns a flat list of floats (1536-dim for text-embedding-3-small).
+        Embed text using the same embedding model as the KB pipeline.
+        Returns a flat list of floats (1024-dim for baai/bge-m3).
         """
         ensure_llamaindex_configured()
         from llama_index.core import Settings as LISettings

@@ -60,7 +60,14 @@ services:
     # call + Qdrant upsert + Postgres + bge-m3 BM25 encoder) can hit ~1.1GB
     # transient — the previous 1G ceiling caused OOM-kills when 2 jobs ran
     # concurrently. 1.5G keeps two-burst headroom without overcommitting the
-    # 8GB host (api+worker+postgres+redis+qdrant = ~6.1G cgroup ceiling).
+    # 8GB host. Sum of hard mem_limits: api 1750 + worker 1536 + postgres 768 +
+    # redis 1024 + qdrant 1280 = ~6.36G committed ceiling, leaving ~1.64G for the
+    # guest OS + dockerd + sshd. mem_limit is a per-container cgroup cap, so a
+    # single container that balloons is OOM-killed in isolation — but if api
+    # (burst), a 2-job worker peak (~1.1G), and a Redis BGSAVE COW fork (~840MB)
+    # all peak together the HOST can exceed physical RAM. Margin is real but
+    # thin; no swap tuning, so an overage thrashes. Re-check this sum before
+    # raising any single limit.
     mem_limit: 1.5g
     mem_reservation: 768m
     depends_on:

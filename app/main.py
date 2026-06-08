@@ -19,6 +19,81 @@ from app.worker import worker  # shared streaq Worker instance for status_by_id 
 settings = get_settings()
 
 
+class _BodyTooLarge(Exception):
+    """Internal signal: streamed request body exceeded the cap mid-read."""
+
+
+class MaxBodySizeMiddleware:
+    """Reject oversized request bodies — including chunked requests that OMIT
+    Content-Length, which the previous header-only check let through.
+
+    The Content-Length header is a fast pre-filter (normal clients send it).
+    For a streaming/chunked body with no Content-Length, we count bytes as they
+    arrive and abort with 413 the instant the cap is crossed — so an attacker
+    can't OOM the single-worker API by trickling a multi-GB body past a missing
+    header. Pure ASGI (not BaseHTTPMiddleware) so the byte-counting wrapper sees
+    every `http.request` chunk regardless of how the body is framed.
+    """
+
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Fast path: a present, oversized Content-Length is rejected before we
+        # read a single body byte.
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    if int(value) > self.max_bytes:
+                        await self._send_413(send)
+                        return
+                except ValueError:
+                    pass
+                break
+
+        received = 0
+        response_started = False
+
+        async def counting_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message):
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counting_receive, tracking_send)
+        except _BodyTooLarge:
+            # Only safe to emit a response if the app hasn't already started one.
+            if not response_started:
+                await self._send_413(send)
+
+    async def _send_413(self, send) -> None:
+        body = b'{"detail":"Request body too large."}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: boot → yield → shutdown.
@@ -183,27 +258,14 @@ def create_app() -> FastAPI:
     )
 
     # ─── Request body size cap ─────────────────────────────────────────────
-    # Reject obviously oversized bodies before they reach the JSON parser.
-    # A 50 MB POST to /ingest would otherwise OOM the API process during
-    # the read of the request body, long before Pydantic's max_length on
-    # IngestRequest.text (200_000 chars) could fire. 256 KB is a small
-    # overhead above the 200 KB text cap to cover JSON envelope fields.
+    # Reject oversized bodies before they reach the JSON parser. A 50 MB POST
+    # to /ingest would otherwise OOM the single-worker API during the body read,
+    # long before Pydantic's max_length on IngestRequest.text (200_000 chars)
+    # could fire. 256 KB is a small overhead above the 200 KB text cap to cover
+    # JSON envelope fields. MaxBodySizeMiddleware also counts streamed bytes, so
+    # a chunked request with no Content-Length can't slip past the header check.
     MAX_REQUEST_BYTES = 256 * 1024  # 256 KB
-
-    @app.middleware("http")
-    async def enforce_max_body(request: Request, call_next):
-        cl = request.headers.get("content-length")
-        if cl is not None:
-            try:
-                if int(cl) > MAX_REQUEST_BYTES:
-                    return HTMLResponse(
-                        content=f'{{"detail":"Request body too large. Max {MAX_REQUEST_BYTES} bytes."}}',
-                        status_code=413,
-                        media_type="application/json",
-                    )
-            except ValueError:
-                pass
-        return await call_next(request)
+    app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
     # ─── CORS ───────────────────────────────────────────────────────────────
     app.add_middleware(
@@ -224,6 +286,27 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ─── Global exception handler ──────────────────────────────────────────
+    # Without this, an unhandled exception anywhere in a route surfaces as
+    # Starlette's bare 500 with no structured-log hook, so the failure never
+    # lands in logs/app.json and ops can't see it. This catch-all logs the
+    # exception with request context (loguru captures the traceback) and
+    # returns an opaque 500 — it deliberately does NOT leak the exception
+    # string to the client. HTTPException is handled by FastAPI's own handler
+    # and never reaches here, so intended 4xx/403/413 responses are unaffected.
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.opt(exception=exc).error(
+            "Unhandled exception",
+            method=request.method,
+            path=request.url.path,
+            client=request.client.host if request.client else None,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+        )
 
     # ─── Routes ─────────────────────────────────────────────────────────────
     from app.api.routes import admin

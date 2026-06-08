@@ -90,6 +90,27 @@ async def init_db() -> None:
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_query_hash ON agent_logs (query_hash)")
         )
 
+        # documents.source: the ingest dedup path (moodle_sync / portfolio_sync)
+        # looks documents up by `source` on every synced file. create_all won't
+        # add an index to a pre-existing table, so add it idempotently here.
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_documents_source ON documents (source)")
+        )
+        # Stale-doc cleanup filters documents by JSON metadata keys
+        # (metadata->>'course_id' in moodle_sync, metadata->>'doc_type' in
+        # portfolio_sync). B-tree expression indexes on the extracted text turn
+        # those seq-scans into index lookups. `->>` works on the json column as
+        # is, so no JSONB migration / table rewrite is needed for these
+        # equality filters (GIN would only help containment/key-existence).
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_documents_meta_course_id "
+                 "ON documents ((metadata->>'course_id'))")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_documents_meta_doc_type "
+                 "ON documents ((metadata->>'doc_type'))")
+        )
+
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

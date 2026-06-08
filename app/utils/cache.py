@@ -82,6 +82,19 @@ _CACHE_PRUNE_INTERVAL_SECONDS = 600
 # sweep so we never hit a cliff.
 _SEMANTIC_CACHE_MAX_POINTS = 50_000
 _SEMANTIC_CACHE_PRUNE_BATCH = 5_000
+# After a FAILED sweep, allow the next writer to retry this soon instead of
+# waiting the full _CACHE_PRUNE_INTERVAL_SECONDS. The original code claimed the
+# 600s slot BEFORE awaiting and never rolled it back on failure, so a single
+# Qdrant hiccup disabled pruning for a full 10 min while the collection kept
+# growing. 60s lets pruning resume promptly after a transient blip without
+# letting every concurrent writer hammer Qdrant (still gated, just shorter).
+_CACHE_PRUNE_RETRY_SECONDS = 60
+# Max size-cap delete batches per sweep. One 5k batch per 600s drains 8.3
+# points/s — fine at steady state (13k DAU ≈ 0.75 writes/s) but ~20 windows
+# (200 min) to recover from a 100k backlog left by a prune outage. Draining up
+# to 4 batches (20k) per sweep recovers a backlog in 1-2 windows while bounding
+# worst-case latency to 4 durable deletes on the once-per-window writer.
+_SEMANTIC_CACHE_MAX_DRAIN_ITERS = 4
 
 
 def _query_hash(query: str) -> str:
@@ -721,7 +734,10 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
          rest for the other 4 Qdrant collections + Postgres + Redis.
 
     Fire-and-forget: any failure is logged and swallowed so a prune
-    hiccup never breaks the cache-write path.
+    hiccup never breaks the cache-write path — BUT on failure the throttle
+    slot is rolled back so the next writer retries in _CACHE_PRUNE_RETRY_SECONDS
+    (not the full interval), and the failure is logged at ERROR so a silently
+    failing prune (which would let the collection grow unbounded) is visible.
     """
     global _last_cache_prune_ts
     now = time.time()
@@ -747,12 +763,17 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
         )
         logger.debug("semantic_cache TTL sweep issued", cutoff_epoch=round(cutoff))
 
-        # 2. Size cap: if the collection is over the hard ceiling,
-        # drop the oldest N points by created_at. count() is cheap
-        # (returns the Qdrant-side cached count, no scan).
-        info = await qdrant.client.get_collection("semantic_cache")
-        count = info.points_count or 0
-        if count > _SEMANTIC_CACHE_MAX_POINTS:
+        # 2. Size cap: if the collection is over the hard ceiling, drop the
+        # oldest points by created_at. Drain up to _SEMANTIC_CACHE_MAX_DRAIN_ITERS
+        # batches in this sweep so a backlog left by an earlier prune outage
+        # recovers in 1-2 windows instead of ~20. Each iteration re-checks the
+        # count so we stop the instant we're back under the cap.
+        for _drain_iter in range(_SEMANTIC_CACHE_MAX_DRAIN_ITERS):
+            # count() is cheap (returns the Qdrant-side cached count, no scan).
+            info = await qdrant.client.get_collection("semantic_cache")
+            count = info.points_count or 0
+            if count <= _SEMANTIC_CACHE_MAX_POINTS:
+                break
             # Fetch the oldest batch by ascending created_at, then
             # delete by id list. Two round-trips but bounded.
             scroll = await qdrant.client.scroll(
@@ -776,22 +797,38 @@ async def _maybe_prune_semantic_cache(qdrant) -> None:
                 with_vectors=False,
             )
             old_ids = [str(p.id) for p in (scroll[0] or [])]
-            if old_ids:
-                await qdrant.client.delete(
-                    collection_name="semantic_cache",
-                    points_selector=qdrant_models.PointIdsListSelector(  # type: ignore[attr-defined]  # qdrant stub version gap
-                        points=old_ids,
-                    ),
-                    wait=False,
-                )
-                logger.info(
-                    "semantic_cache size-cap prune",
-                    count_before=count,
-                    pruned=len(old_ids),
-                    cap=_SEMANTIC_CACHE_MAX_POINTS,
-                )
+            if not old_ids:
+                # Nothing eligible (all over-cap points are younger than 60s) —
+                # stop draining; the next sweep will catch them once aged.
+                break
+            # wait=True so the count() on the next drain iteration reflects this
+            # delete; otherwise an async delete would let the loop re-scroll the
+            # same not-yet-removed ids and waste iterations.
+            await qdrant.client.delete(
+                collection_name="semantic_cache",
+                points_selector=qdrant_models.PointIdsListSelector(  # type: ignore[attr-defined]  # qdrant stub version gap
+                    points=old_ids,
+                ),
+                wait=True,
+            )
+            logger.info(
+                "semantic_cache size-cap prune",
+                count_before=count,
+                pruned=len(old_ids),
+                cap=_SEMANTIC_CACHE_MAX_POINTS,
+                drain_iter=_drain_iter + 1,
+            )
+            if len(old_ids) < _SEMANTIC_CACHE_PRUNE_BATCH:
+                # Drained everything eligible in this batch — under cap now.
+                break
     except Exception as exc:
-        logger.warning("semantic_cache prune failed (non-fatal)", error=str(exc))
+        # Roll the throttle back so the next writer can retry SOON instead of
+        # being locked out for the full interval by a transient Qdrant blip.
+        # Escalate to ERROR: a persistently failing prune is the one path that
+        # lets semantic_cache grow unbounded and OOM Qdrant on the 8GB box, so
+        # it must be visible in logs, not swallowed at WARNING.
+        _last_cache_prune_ts = now - _CACHE_PRUNE_INTERVAL_SECONDS + _CACHE_PRUNE_RETRY_SECONDS
+        logger.error("semantic_cache prune failed — will retry sooner", error=str(exc))
 
 
 async def flush_cache_by_namespace(namespace: str) -> None:

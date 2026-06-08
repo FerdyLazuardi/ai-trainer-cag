@@ -95,6 +95,14 @@ async def acquire_pipeline_slot_or_503() -> Callable[[], None]:
                 sem_release()
 
     Raises HTTP 503 with `Retry-After: 5` on saturation.
+
+    The returned callable is IDEMPOTENT — it releases exactly one permit on
+    its first call and is a no-op thereafter. This matters because the stream
+    route releases the permit from BOTH a pre-stream `except` (when an await
+    between acquire and the StreamingResponse return raises — 403 ownership,
+    embedding/PG blip in _prepare_rag_context) AND the generator's `finally`.
+    Without per-acquire idempotency one of those paths would over-release the
+    plain semaphore and silently inflate capacity past max_concurrent_pipelines.
     """
     try:
         await asyncio.wait_for(
@@ -107,4 +115,13 @@ async def acquire_pipeline_slot_or_503() -> Callable[[], None]:
             detail="RAG pipeline is at capacity. Please retry shortly.",
             headers={"Retry-After": "5"},
         ) from exc
-    return _release_slot
+
+    released = False
+
+    def _release_once() -> None:
+        nonlocal released
+        if not released:
+            released = True
+            _pipeline_sem.release()
+
+    return _release_once

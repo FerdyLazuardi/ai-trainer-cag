@@ -13,7 +13,7 @@ round-trip) instead of going through LlamaIndex's `as_retriever`. Two reasons:
      normalized fusion score cannot provide.
 
 Embeddings stay on LlamaIndex: the query is embedded with the SAME model used
-at ingestion (`Settings.embed_model`, text-embedding-3-small @1536) and the
+at ingestion (`Settings.embed_model`, baai/bge-m3 @1024) and the
 sparse side uses the SAME fastembed BM25 encoder the vector store used to write
 documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
 """

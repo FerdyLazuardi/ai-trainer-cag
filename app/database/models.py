@@ -32,7 +32,7 @@ class Document(Base):
         default=lambda: str(uuid.uuid4()),
     )
     title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
-    source: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(1024), nullable=False, default="", index=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     ingestion_state: Mapped[str] = mapped_column(

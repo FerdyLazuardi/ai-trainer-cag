@@ -372,3 +372,36 @@ def get_generate_llm() -> ChatOpenAI:
     )
     _wrap_with_retry(llm)
     return llm
+
+
+@lru_cache(maxsize=1)
+def get_empathy_llm() -> ChatOpenAI:
+    """Vent/empathy-path LLM at a NON-ZERO temperature.
+
+    WHY: Gemini Flash Lite at temp 0.0 is deterministic and, on the vent path,
+    collapses onto the prior assistant turn in history — re-emitting it
+    byte-for-byte and ignoring both the new user message and the per-turn
+    anti-repetition signal (verified via DEBUG_GEN). Prompt-only variation can't
+    fix a model that ignores the prompt, so we break determinism with
+    temperature. Selected in _generate_node ONLY for pure vents (empathy high,
+    no KB lookup, no safety) — KB-grounded and safety turns keep temp 0.0 for
+    factual/channel fidelity. Same model/provider/cost as get_generate_llm();
+    only the temperature differs.
+    """
+    llm = ChatOpenAI(
+        model=settings.cheap_llm_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+        temperature=settings.empathy_llm_temperature,
+        max_tokens=1024,
+        request_timeout=30,
+        max_retries=1,
+        http_async_client=_make_http_client(),
+        extra_body={"provider": _GEMINI_PROVIDER},
+        default_headers={
+            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "X-Title": "AI LMS RAG Agent (Empathy)",
+        },
+    )
+    _wrap_with_retry(llm)
+    return llm

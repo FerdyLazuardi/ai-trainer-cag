@@ -1,12 +1,13 @@
 import asyncio
 import json
 import random
+import re
 import time
 import uuid
 from typing import Optional, cast
 from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
@@ -122,6 +123,37 @@ async def resolve_numeric_query(query: str, conversation_id: str) -> str:
     return await _cs.resolve_numeric_query(
         get_redis_client(), query, conversation_id
     )
+
+
+# Bare affirmation / continuation tokens — "iya", "boleh", "oke lanjut", etc.
+# A message made up ONLY of these has NO standalone meaning: its answer depends
+# entirely on what the AI just offered. Such turns must NEVER touch the semantic
+# cache (read OR write). WHY: the cache keys on the embedding of the RAW query.
+# A bare "iya boleh" embeds to a near-constant vector, so (a) writing an answer
+# under it POISONS the cache — every future "iya"/"boleh" then matches at
+# score ~1.0 and gets served that one stale answer regardless of context; and
+# (b) reading skips the graph, so the affirmation-to-offer rewrite (which lives
+# in the pre-processor and resolves "iya boleh" → the offered topic using
+# history) never runs. Skipping cache forces these through the graph every time.
+_AFFIRMATION_TOKENS = frozenset({
+    "iya", "ya", "yaa", "iyaa", "yoi", "yup", "yep", "yes", "yess",
+    "boleh", "bole", "oleh", "oke", "okay", "ok", "oce", "sip", "siap",
+    "mau", "lanjut", "lanjutkan", "lanjutin", "terus", "next", "gas", "gaskeun",
+    "sure", "yuk", "ayo", "ayok", "dong", "deh", "aja", "nih", "kuy",
+    "go", "ahead", "please", "tolong", "monggo", "silakan", "silahkan",
+})
+
+
+def _is_bare_affirmation(query: str) -> bool:
+    """True if the message is ONLY affirmation/continuation tokens (≤4 words).
+
+    "iya boleh" / "boleh" / "oke lanjut" → True (un-cacheable, context-dependent).
+    "iya mana prinsipnya" → False (carries the substantive token "prinsipnya").
+    """
+    toks = re.findall(r"[a-zA-Z]+", query.lower())
+    if not toks or len(toks) > 4:
+        return False
+    return all(t in _AFFIRMATION_TOKENS for t in toks)
 
 
 async def get_or_summarize_history(
@@ -424,13 +456,17 @@ async def _prepare_rag_context(
     _OPINION_REGEX = re.compile(
         r"\b(menurut|menurutmu|pendapat|opini|kasih saran|sarankan|advice|"
         r"what (?:do you|would you) think|"
-        r"capek|stress|bingung|pusing|frustrasi|nyerah|curhat|"
+        r"capek?|cape lah|lelah|males|stress|bingung|pusing|frustrasi|nyerah|curhat|"
         r"gimana kalau|kalau aku|what if|bantuin mikir|help me think|"
         r"mana yang|mana yg|paling penting|paling kritis|paling baik|"
         r"role[\s-]?play|anggap kamu)\b",
         re.IGNORECASE,
     )
-    skip_cache = _skip_embedding or bool(_OPINION_REGEX.search(resolved_query))
+    skip_cache = (
+        _skip_embedding
+        or _is_bare_affirmation(resolved_query)
+        or bool(_OPINION_REGEX.search(resolved_query))
+    )
     if skip_cache:
         logger.debug(
             "Cache lookup skipped — greeting/filler or opinion/synthesis pattern",
@@ -723,9 +759,12 @@ async def _run_chat(
     latency_ms = 0.0
 
     try:
-        result = await rag_graph.ainvoke(
-            initial_state,
-            config={"run_name": "ava-chat"},
+        result = await asyncio.wait_for(
+            rag_graph.ainvoke(
+                initial_state,
+                config={"run_name": "ava-chat"},
+            ),
+            timeout=settings.pipeline_total_timeout_s,
         )
 
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -734,6 +773,20 @@ async def _run_chat(
         llm_tokens_used = 0
         if hasattr(final_message, "response_metadata"):
             llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
+    except asyncio.TimeoutError as exc:
+        # An upstream black-hole pinned this slot to the wall-clock ceiling.
+        # Fail loud with 504 (NOT 500) so the client knows it's a timeout and
+        # the slot is freed by the outer `finally` instead of held for minutes.
+        logger.error(
+            "Chat pipeline timed out",
+            timeout_s=settings.pipeline_total_timeout_s,
+            query=request.query[:60],
+            conversation_id=conversation_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="The assistant took too long to respond. Please try again.",
+        ) from exc
     except Exception as exc:
         logger.error("RAG pipeline error", error=str(exc), query=request.query[:60])
         raise HTTPException(status_code=500, detail="RAG pipeline failed") from exc
@@ -777,19 +830,18 @@ async def _run_chat(
     # FIX 1: Personalized answers are now cached using a user-scoped namespace
     # so they can't leak to another user but still provide cache hits for this user.
     #
-    # MENTOR-shape exclusion: the semantic cache is a FACT-LOOKUP FAQ — it stores
-    # only {query_embedding, answer, sources}, NOT the response shape. A MENTOR
-    # answer is a numbered step-by-step scaffolding (learning_context >= threshold,
-    # same gate as pipeline.py's MENTOR block), which is the SAME intent (KNOWLEDGE)
-    # as a flat fact lookup but a very different answer shape. Caching it would let
-    # a later plain "apa itu X" paraphrase (lc<threshold) get served a scaffolded
-    # answer it didn't ask for. So we skip the write when the turn was MENTOR-shaped
-    # and let it regenerate fresh — keeping the cache as pure fact FAQ.
-    _learning_context = float((result.get("intent_scores") or {}).get("learning_context", 0.0))
+    # Cache only KNOWLEDGE-class answers (not greeting/ambiguous/malicious/
+    # brainstorm) that actually found relevant context and aren't a bare
+    # affirmation. NOTE: the former MENTOR-shape exclusion (skip-cache when
+    # learning_context >= threshold) was dropped when the pre-processor was
+    # slimmed to intent-only — step-by-step how-to answers are now cacheable
+    # too. Low collision risk: the semantic cache match threshold is 0.88, so a
+    # "gimana cara X" (steps) answer won't be served to an "apa itu X"
+    # (definition) paraphrase unless they're near-identical queries.
     if (
         intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
         and not is_low_relevance
-        and _learning_context < settings.learning_context_threshold
+        and not _is_bare_affirmation(request.query)
     ):
         ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
         background_tasks.add_task(
@@ -905,14 +957,25 @@ async def chat_stream(
     # so the permit returns when the stream ends or the client disconnects.
     # Raises HTTP 503 with Retry-After: 5 on saturation.
     sem_release = await acquire_pipeline_slot_or_503()
-    start_time = time.perf_counter()
-    conversation_id = request.conversation_id or str(uuid.uuid4())
-    await _verify_conversation_ownership(conversation_id, current_user)
+    # Everything between the permit acquire and the StreamingResponse return
+    # runs BEFORE either generator's `finally` exists, so a raise here (403
+    # ownership mismatch, or an embedding/Postgres/summary-LLM blip inside
+    # _prepare_rag_context) would otherwise leak the permit permanently —
+    # after 12 such raises the whole /chat/stream surface 503s until restart.
+    # Release on any pre-stream failure; sem_release is idempotent so the
+    # generator's own `finally` stays correct on the success path.
+    try:
+        start_time = time.perf_counter()
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        await _verify_conversation_ownership(conversation_id, current_user)
 
-    resolved_query = await resolve_numeric_query(request.query, conversation_id)
-    logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
+        resolved_query = await resolve_numeric_query(request.query, conversation_id)
+        logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+        context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    except BaseException:
+        sem_release()
+        raise
     cached = context.get("cached")
     query_embedding = context.get("query_embedding")
     was_personalized = context.get("was_personalized", False)
@@ -1045,7 +1108,7 @@ async def chat_stream(
     initial_state = context["initial_state"]
     rag_graph = get_rag_graph()
 
-    async def _stream_rag():
+    async def _stream_rag_body():
         nonlocal resolved_query
         from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
@@ -1077,7 +1140,41 @@ async def chat_stream(
             # (e.g. "hmm" routes through LLM in _handle_ambiguity).
             streamed_nodes: set[str] = set()
 
-            async for event in rag_graph.astream_events(initial_state, config=config, version="v2"):
+            # Manual iteration (not `async for`) so each event fetch is bounded
+            # by a STALL timeout that resets on every emission. astream_events
+            # itself has no timeout: if upstream hangs with zero tokens, an
+            # `async for` would block __anext__ forever, the generator would
+            # never exit, and the `finally` that releases the pipeline permit
+            # would never run — leaking a slot exactly like the pre-stream path
+            # did. wait_for bounds a SILENT graph to one stall window; a
+            # slow-but-streaming answer never trips it because every token is an
+            # event that resets the clock.
+            _events = rag_graph.astream_events(initial_state, config=config, version="v2")
+            _stall_s = settings.pipeline_stream_stall_timeout_s
+            while True:
+                try:
+                    event = await asyncio.wait_for(_events.__anext__(), timeout=_stall_s)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Stream stalled — no events within stall window; freeing slot",
+                        stall_s=_stall_s,
+                        conversation_id=conversation_id,
+                        tokens_so_far=token_count,
+                    )
+                    yield f"event: error\ndata: {json.dumps({'error': 'Response timed out'})}\n\n"
+                    if resolved_query:
+                        try:
+                            await append_to_history(
+                                conversation_id=conversation_id,
+                                user_message=resolved_query,
+                                assistant_message="[error: response timed out]",
+                            )
+                        except Exception:
+                            pass
+                    return
+
                 kind = event.get("event", "")
 
                 if kind == "on_chain_end" and event.get("name") == "rag_node":
@@ -1234,15 +1331,15 @@ async def chat_stream(
                 "dense_retrieval_ok": stream_dense_retrieval_ok,
             }
             is_low_relevance_stream = _route_after_rag(cast(RAGState, _gate_state)) == "low_relevance"
-            # MENTOR-shape exclusion — mirrors the non-stream path: skip the cache
-            # write when the answer was scaffolded step-by-step instruction
-            # (learning_context >= threshold) so the FACT-lookup FAQ cache never
-            # serves a MENTOR-shaped answer to a later plain fact paraphrase.
-            _stream_learning_context = float((stream_intent_scores or {}).get("learning_context", 0.0))
+            # Mirrors the non-stream cache gate. The former MENTOR-shape
+            # exclusion (learning_context >= threshold) was dropped with the
+            # pre-processor slim-down — how-to answers are cacheable now; the
+            # 0.88 semantic match threshold keeps step vs definition collisions
+            # unlikely.
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
-                and _stream_learning_context < settings.learning_context_threshold
+                and not _is_bare_affirmation(request.query)
             ):
                 ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
                 await set_cached_response(
@@ -1288,9 +1385,21 @@ async def chat_stream(
                 )
         except Exception as bg_err:
             logger.warning(f"Stream background task error: {bg_err}")
+
+    async def _stream_rag():
+        # Outer wrapper guarantees the pipeline permit is released on EVERY
+        # exit path of the inner generator: normal completion, early `return`
+        # (client disconnect mid-stream, pipeline error, stall timeout), an
+        # unhandled raise, OR GeneratorExit when the client closes the
+        # connection while we're blocked on a `yield`. The inner body has
+        # sequential (not nested) try blocks, so its own early returns exit
+        # before any single finally — only this outer finally sees them all.
+        # sem_release is idempotent, so a pre-stream release (ownership 403 /
+        # _prepare_rag_context blip) followed by this one is safe.
+        try:
+            async for _chunk in _stream_rag_body():
+                yield _chunk
         finally:
-            # Always release the pipeline permit at end of stream (normal
-            # completion OR client disconnect OR exception in the generator).
             sem_release()
 
     return StreamingResponse(_stream_rag(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

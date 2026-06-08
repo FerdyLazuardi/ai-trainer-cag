@@ -5,7 +5,7 @@ Handles collection creation/recreation and provides the shared async client.
 On startup, ensure_collection() checks whether the existing collection was built
 with a different embedding dimension than the one currently configured. If there
 is a mismatch it deletes the stale collection and creates a fresh one using the
-correct dimension (1536 for text-embedding-3-small).
+correct dimension (1024 for baai/bge-m3).
 
 WARNING: A dimension-mismatch rebuild will erase all existing vectors.
          Re-ingest your documents after any such rebuild.
@@ -262,7 +262,7 @@ class QdrantManager:
         - Payload indexed on created_at (float epoch) for time-based ordering.
         - on_disk_payload=True for memory efficiency at scale.
         - on_disk=True for dense vectors: at full scale (13k users x 50 episodes x
-          1536 dim x 4B) this collection alone would hold ~4GB of vectors. Keeping
+          1024 dim x 4B) this collection alone would hold ~2.6GB of vectors. Keeping
           them on disk (HNSW graph stays in RAM) is what keeps the 8GB box feasible;
           recall impact is negligible for per-user pre-filtered LTM lookups.
         """
@@ -284,7 +284,7 @@ class QdrantManager:
                     # H4: keep the INT8-quantized copy ON DISK (was always_ram=True).
                     # The base dense vectors are already on_disk=True (above), so the
                     # only RAM resident left here was the quantized mirror. At full
-                    # scale (~13k users x 50 episodes x 1536d INT8) that mirror is the
+                    # scale (~13k users x 50 episodes x 1024d INT8) that mirror is the
                     # bulk of this collection's RSS; pushing it to disk frees the 8GB
                     # box's headroom. HNSW graph stays in RAM, and LTM lookups are
                     # always user_id pre-filtered (tiny candidate set per query), so

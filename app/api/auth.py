@@ -111,10 +111,19 @@ async def get_current_user(
     limit = settings.rate_limit_per_minute
 
     try:
-        # Atomic pipeline: incr + expire in a single round-trip to avoid TOCTOU
+        # Atomic pipeline: incr + expire in a single round-trip to avoid TOCTOU.
+        # expire uses NX so the TTL is set ONLY on the first request of a window
+        # (when incr creates the key). Resetting expire on EVERY request — as the
+        # previous code did — turned this into a sliding lock-out: a continuously
+        # active user who tripped the limit kept pushing the TTL forward and
+        # stayed blocked for as long as they kept trying, instead of recovering
+        # after the window elapsed. NX makes it a true fixed 60s window: the key
+        # expires 60s after the FIRST hit and the counter resets, matching the
+        # advertised "{limit}/min". (Requires Redis >= 7 for EXPIRE NX; the app
+        # already mandates Redis >= 8 at boot in main.py.)
         pipe = redis.pipeline()
         pipe.incr(rate_limit_key)
-        pipe.expire(rate_limit_key, 60)
+        pipe.expire(rate_limit_key, 60, nx=True)
         results = await pipe.execute()
         request_count = results[0]
 

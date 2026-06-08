@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.config.settings import get_settings
 from app.graph.state import RAGState
-from app.llm.client import get_preprocessor_llm, get_generate_llm
+from app.llm.client import get_preprocessor_llm, get_generate_llm, get_empathy_llm
 from app.llm.prompts import PERSONA, OUTPUT_CONTRACT
 from app.utils.token_counter import truncate_to_tokens
 
@@ -29,69 +29,26 @@ _MOODLE_BASE = _settings.moodle_api_url.rstrip("/")
 
 
 class PreProcessorResult(BaseModel):
-    """Structured classification + query rewrite output for the pre-processor node."""
+    """Structured classification + query rewrite output for the pre-processor node.
+
+    SLIMMED (2026-06): the LLM now produces ONLY intent + rewritten_query. The
+    former 4-axis float scores (needs_lookup/reasoning/empathy/safety_escalation),
+    learning_context, and safety_preserved_query were removed — they bloated the
+    pre-processor prompt to ~3300 tok with calibration rubrics that had to be
+    re-tuned on every model/KB change. Response shape is now driven by `intent`
+    alone (see _generate_node). The internal intent_scores dict is still built
+    (derived from intent) so DB columns / admin dashboard / logging keep working
+    without a schema migration — but the model no longer scores anything.
+    """
     intent: Literal["GREETING", "AMBIGUOUS", "MALICIOUS", "KNOWLEDGE", "TOPIC_LIST", "BRAINSTORM", "OFF_SCOPE"] = Field(
         description=(
-            "See INTENT list in system prompt. "
             "GREETING=salutation/identity Q, AMBIGUOUS=needs clarification or filler, "
             "MALICIOUS=jailbreak, OFF_SCOPE=NOT about Amartha, TOPIC_LIST=asks what topics exist, "
-            "BRAINSTORM=vent/advice/scenario, KNOWLEDGE=factual lookup."
+            "BRAINSTORM=vent/advice/scenario/opinion, KNOWLEDGE=factual lookup or how-to/steps."
         )
     )
     rewritten_query: str = Field(
         description="Standalone rewrite using history. For KNOWLEDGE/BRAINSTORM: bind pronouns/anchor via history, but NEVER invent entities. For other intents: echo the user's query."
-    )
-    needs_lookup: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="0-1: how much the answer needs FACTS from Amartha materials. 1.0=pure lookup, 0.5=mixed, 0.0=venting/non-Amartha.",
-    )
-    needs_reasoning: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="0-1: how much synthesis/analysis/what-if reasoning. 1.0=pure reasoning, 0.5=mixed, 0.0=lookup or non-thinking turn.",
-    )
-    needs_empathy: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="0-1: user venting/emotional OR personal safety situation. 1.0=explicit emotion OR safety≥0.7, 0.5=subtle OR 3rd-party, 0.0=neutral. Role/tenure disclosure = neutral.",
-    )
-    needs_safety_escalation: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "0-1: user is reporting/experiencing a personal safety incident (physical harm, "
-            "harassment, threats, stalking, discrimination, unsafe conditions, mental health crisis, "
-            "bullying, retaliation). 1.0=currently the victim, 0.5=3rd-party/past, 0.0=none. "
-            "Recognize semantically — any language, register, formality, with typos/slang. "
-            "No keyword requirement."
-        ),
-    )
-    learning_context: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "0-1, INDEPENDENT of the other axes. Measures whether the user wants SCAFFOLDED "
-            "INSTRUCTION (numbered step-by-step) rather than a flat explanation. 0.9-1.0 = explicit "
-            "teach-me framing ('ajarin aku', 'tolong ajari', 'step by step', 'masih bingung', "
-            "'ga ngerti', 'gimana cara'); 0.5-0.7 = ambiguous with a hint of teach-me ('jelasin "
-            "dong', 'bantu aku paham', 'apa bedanya X vs Y'); 0.0-0.3 = pure info lookup ('apa "
-            "itu X', 'info tenor', 'gimana cara lapor'). Independent of intent: a BRAINSTORM "
-            "vent can still be lc=0.0; a procedural KNOWLEDGE query can be lc=0.9."
-        ),
-    )
-    safety_preserved_query: str = Field(
-        default="",
-        description=(
-            "Only when safety≥0.5. Standalone version of the user's message that retains ALL "
-            "safety context (what/who/when/need). Used for retrieval INSTEAD of rewritten_query. "
-            "User's own language/tone — do NOT sanitize/simplify/translate. Empty if safety<0.5."
-        ),
     )
 
 # ─── System Prompts ──────────────────────────────────────────────────────────
@@ -108,6 +65,7 @@ SYSTEM_PROMPT = f"""<role>
 1b. Opener (optional): a short generic acknowledgment like "Oke,", "Sip,", "Got it," is fine when it fits the user's tone. Skip it when it would feel forced. Never name the topic in the opener.
 2. Answer ONLY using <retrieved_context>. Never add outside facts.
 2a. VERBATIM NAMES — when listing items (principles, products, steps, modules, frameworks) from <retrieved_context>, copy names, numbers, and labels EXACTLY as written. Do NOT substitute with similar-sounding terms from your general knowledge (e.g. don't rewrite Amartha's "Mechanism of Complaints Resolution" as the global CGAP/Smart Campaign label "Grievance Redress and Dispute Resolution"). The context is the source-of-truth for naming — if you "remember" a more standard name from training data, suppress it.
+2b. COMPLETE-LIST GATE — when the user asks for an enumerated set ("8 prinsip", "list X", "breakdown N hal"), ONLY enumerate items that appear EXPLICITLY in <retrieved_context>. If the context does not contain the full set the user asked for, say so honestly — name the items that ARE there and note the rest isn't in your materials ("Yang ada di materiku cuma ini ya: ..."). NEVER complete, fill, or reconstruct the list from general knowledge (CGAP / Smart Campaign / any training-data list). A short honest partial beats a complete invented list — inventing company policy is the worst failure.
 3. NOT FOUND — apply this test BEFORE writing any answer:
    - Re-read the user's question literally. What is the actual answer?
    - Scan <retrieved_context>: does any chunk DIRECTLY state that answer?
@@ -115,6 +73,7 @@ SYSTEM_PROMPT = f"""<role>
    - Example: user asks "cara BP dapetin Mitra baru" but context only describes "BP mengunjungi Mitra existing untuk survei" — keywords overlap but topic differs → NOT FOUND.
    - When NOT FOUND, reply in the user's language: "Aku belum menemukan info soal itu. Coba pakai kata kunci lain ya." (ID) or English equivalent. Do NOT stitch tangentially-related chunks into a fake answer.
 4. Do NOT append canned follow-up question lists like "Penasaran tentang:", "Curious about:", or numbered question menus. But it IS fine — and encouraged — to close with ONE natural follow-up line when relevant ("Mau aku breakdown bagian X?", "Ada aspek lain yang mau di-eksplor?", "Want me to walk through an example?"). One line, not a list.
+5. HOW-TO / TEACH-ME — when the user asks how to do something or to be taught ("gimana cara X", "ajarin aku X", "langkah-langkah X", "masih bingung soal X"), format the answer as numbered, scannable steps (max {_settings.lms_scaffolding_max_steps}), one short sentence each, **bold** the action verb. Every step must be grounded in <retrieved_context> — if a step isn't covered, say so ("Untuk bagian ini aku belum punya info spesifik, coba cek sama supervisor/tim terkait ya") rather than inventing process. For a plain definition lookup ("apa itu X"), answer in prose, not steps.
 </rules>"""
 
 
@@ -127,10 +86,14 @@ BRAINSTORM_SYSTEM_PROMPT = f"""<role>
 <mode>
 You are now in BRAINSTORM mode. The user wants to think out loud, vent, get advice, role-play a scenario, or reason about Amartha topics — they are NOT asking for a literal lookup.
 
+DECIDE FIRST what kind of turn this is, because it controls whether you may touch <retrieved_context>:
+- PURE EMOTIONAL VENT (user is expressing a feeling — "capek", "stress", "bingung", "kesel", "jenuh" — with NO concrete Amartha topic and NO request for info/advice): respond ONLY to the feeling, in their words. Do NOT cite, quote, name, or reference <retrieved_context> AT ALL — no "[1]", no policy names, no "Melihat materi tentang…". Pulling KB facts into a vent is tone-deaf and is the single worst failure in this mode. 2-3 warm sentences, like a friend.
+- ADVICE / OPINION / SCENARIO / REASONING that names or implies an Amartha topic (e.g. "kasih saran soal Client Protection", "menurut kamu strategi akuisisi gimana"): NOW you may use <retrieved_context> as grounding — but as INSPIRATION, not a script.
+
 Your job:
-- Listen first. If the user vented (capek, stress, bingung, marah), acknowledge briefly before reasoning. One sentence of empathy max — no therapy theatre.
-- Use <retrieved_context> as INSPIRATION and grounding, not as a script. You may synthesise across chunks, draw implications, suggest options, and reason out loud.
-- You MAY use general reasoning and common sense alongside the context — but always stay anchored to Amartha's specific products, roles (BP, FO, BM, HO), and policies as found in the context.
+- Listen first. If the user vented, acknowledge briefly before anything else. One sentence of empathy max — no therapy theatre.
+- When grounding IS allowed (advice/opinion path), use <retrieved_context> as inspiration: synthesise across chunks, draw implications, suggest options, reason out loud — always anchored to Amartha's specific products, roles (BP, FO, BM, HO), and policies as found in the context.
+- You MAY use general reasoning and common sense alongside the context.
 - If the user asks for an opinion ("menurut kamu", "what do you think"), give one honestly. Pick a side. Note one tradeoff. Do not fence-sit.
 - If the user role-plays ("anggap kamu BP juga"), engage with the scenario.
 - If a fact in <retrieved_context> contradicts the user's premise, gently correct: "Sebenernya di materi Amarthapedia, X bukan Y, jadi..."
@@ -147,7 +110,9 @@ Your job:
 <reference_examples>
 These illustrate the BRAINSTORM mode — the user is thinking out loud, not asking a factual question. The model is expected to engage, empathise briefly, then reason.
 
-Example A: "aku stress banget akhir2 ini, gabisa tidur" → 1 short empathy clause, then practical 2-3 step suggestion (doc, talk to supervisor, rest). Don't ask the user to keep talking.
+Example A: "aku stress banget akhir2 ini, gabisa tidur" → acknowledge specifically and humanly (vary the wording, NOT a canned "aku paham"). Reflecting back what you heard is often better than asking another question. Don't lecture, don't dump KB facts on a vent.
+
+Example A2: "capek kerja disuruh belajar" → this is a vent, NOT a request to learn. Acknowledge the feeling specifically. Do NOT respond by explaining why learning matters or quoting Amartha materials — that's tone-deaf. Make them feel heard first.
 
 Example B: "gimana kalau aku ngomong langsung ke supervisor tentang X?" → Engage with the scenario. Suggest a concrete approach, mention 1 trade-off, end with one specific next step.
 
@@ -157,203 +122,41 @@ Example D: "aku bingung antara lanjutin kerja di sini atau resign" → Acknowled
 </reference_examples>"""
 
 
-PRE_PROCESSOR_PROMPT = """Classify intent + score 4 axes. Recognize all semantics across any language/register — never require specific keywords.
+PRE_PROCESSOR_PROMPT = """Classify intent + rewrite the query. Recognize semantics across any language/register — never require specific keywords.
 
-INTENTS (in priority order — first match wins):
-1. OFF_SCOPE: not about Amartha (math/weather/news/recipes/other companies/world facts/life advice). → No retrieval.
+INTENTS (priority order — first match wins):
+1. OFF_SCOPE: not about Amartha (math/weather/news/recipes/other companies/world facts/life advice). No retrieval.
 2. MALICIOUS: jailbreak, NSFW, prompt-injection.
-3. GREETING: salutations, bot-identity questions ("kamu siapa", "lu bisa apa"). Handler introduces Ava, NO topic dump. "kamu punya materi apa/ada topik apa" → TOPIC_LIST, not GREETING.
-4. AMBIGUOUS: goal stated but object missing + no history anchor ("ada bonus ga", "info dong") — or pure filler ("hmm", "ok", single emoji). Ask ONE clarifying question, NEVER invent the missing object.
-5. TOPIC_LIST: meta-question about available topics/courses ("ada topik apa aja", "list materi"). NOT triggered if user names a topic → that's KNOWLEDGE.
-6. BRAINSTORM: vent, think aloud, advice, scenario ("gimana kalau", "menurut kamu", "aku stress", "curhat", "kasih saran"). Emotional words (capek/bingung/frustrasi) + Amartha context = BRAINSTORM.
-7. KNOWLEDGE: factual lookup with a definite answer ("apa itu X", "jelasin X").
+3. GREETING: salutations, bot-identity questions ("kamu siapa", "lu bisa apa"). "kamu punya materi apa/ada topik apa" → TOPIC_LIST, not GREETING.
+4. AMBIGUOUS: goal stated but object missing + no history anchor ("ada bonus ga", "info dong") — or pure filler ("hmm", "ok", single emoji). NOT for emotional follow-ups in an ongoing vent — a short reply that keeps venting is BRAINSTORM.
+5. TOPIC_LIST: meta-question about available topics/courses ("ada topik apa aja", "list materi"). NOT if the user names a topic → that's KNOWLEDGE.
+6. BRAINSTORM: vent, think aloud, advice, scenario, opinion ("gimana kalau", "menurut kamu", "aku stress", "curhat", "kasih saran"). Emotional words (capek/bingung/frustrasi) + Amartha context = BRAINSTORM.
+7. KNOWLEDGE: factual lookup OR how-to/procedure with a definite answer ("apa itu X", "jelasin X", "gimana cara X", "ajarin aku X", "langkah-langkah X"). Step-by-step / teach-me requests are KNOWLEDGE.
 
 "Amartha ini apaan" / "Amartha itu apa" = the COMPANY → KNOWLEDGE. "Amarthapedia" / "Ava" / "ini apps" / "kamu" = the ASSISTANT → GREETING.
 Off-scope only when NO Amartha entity is named. When in doubt, prefer KNOWLEDGE.
 
-SCORING (0.0–1.0, independent):
-- needs_lookup: 1.0=pure lookup, 0.5=mixed, 0.0=venting/non-Amartha.
-- needs_reasoning: 1.0=pure reasoning, 0.5=mixed, 0.0=lookup or non-thinking turn.
-- needs_empathy: 1.0=explicit emotion OR safety≥0.7. 0.5=subtle OR 3rd-party. 0.0=neutral. Role/tenure disclosure = neutral.
-- needs_safety_escalation: 0.7-1.0=user reports being personally harmed/threatened/harassed NOW (any language, any formality, even when also asking a procedural question). 0.5=3rd-party OR past OR subtle phrasing. ≤0.3=procedural/general question ("how do I report X"). When in doubt, lean HIGHER safety.
-- learning_context: 0.0-1.0, INDEPENDENT of the 4 axes above. Measures whether the user wants SCAFFOLDED INSTRUCTION (numbered step-by-step) rather than a flat explanation.
-  * 0.8-1.0 = EXPLICIT teach-me verb, no ambiguity: "ajarin aku" / "tolong ajari" / "step by step" / "masih ga/ndak/belum ngerti" / "masih belum paham" / "masih bingung" + concept (not "bingung soal pilihan"). Target 0.85-0.95. User explicitly says they don't understand — they want to BE TAUGHT.
-  * 0.6-0.9 = STRONG teach-me + AMBIGUOUS/STRATEGY object OR "gimana cara" + CONCRETE MULTI-STEP PROCEDURE: "ajarin aku cara handle Mitra yang marah" (strategy object pulls down from 0.9 to ~0.75), "gimana cara naikin grade Mitra" (concrete procedure but no explicit teach-me verb), "ajarin aku paham complaint resolution". Target 0.7-0.85.
-  * 0.4-0.7 = MILD explain framing, NOT a step request: "bedanya X vs Y" / "apa bedanya X sama Y" / "kenapa X itu penting" / "gimana X bekerja" / "gimana X prosesnya" (process explanation, not step request). Target 0.5-0.65.
-  * 0.3-0.6 = soft explain: "jelasin dong konsep X" / "bantu aku paham X". Target 0.4-0.55.
-  * 0.0-0.3 = pure FACT lookup: "apa itu X" (definition) / "info X" / "X itu apa" / "gimana cara [lapor/report/proc dengan output CHANNEL]" — when the user wants the FACT (the contact channel, the policy as a fact) rather than a step sequence. Examples: "lapor pelecehan gimana?" (wants contact channel, not teaching), "info tenor AmarthaFin" (wants the number). Target 0.0-0.2.
-  * 0.0-0.2 = BRAINSTORM / vent / brainstorm request. "bantuin brainstorm strategi Q3" / "aku lagi suntuk" / "menurut kamu gimana".
-  * SUBJECTIVE FRAMING OVERRIDE: when the user asks for YOUR OPINION — "menurut kamu/lo/lu" / "kira-kira" / "apa yang terbaik" / "menurutmu" / "gimana menurut lo" / "lebih baik A atau B" / "gimana cara terbaik" — lc ≤ 0.4 regardless of any "ajarin" / "gimana cara" mid-sentence. The user wants a recommendation, not a teaching sequence. Example: "menurut kamu, gimana cara terbaik handle X?" = BRAINSTORM, lc=0.1, NOT a high-lc procedural.
-  * Independent of intent: a BRAINSTORM vent can still be lc=0.0; a procedural KNOWLEDGE query can be lc=0.9 if the user wants the procedure AS steps.
-
-DISAMBIGUATION (safety vs procedural, when in doubt lean HIGHER):
-- 1st-person harm report (any phrasing — slang, typos, with or without explicit safety keywords) → safety≥0.7, empathy≥0.8, REGARDLESS of intent.
-- Procedural question about reporting in general → safety≤0.3, intent=KNOWLEDGE, empathy=0.
-- 3rd-party report → safety≈0.5, intent=KNOWLEDGE, empathy≈0.5.
-
-SAFETY (when safety≥0.5): set `safety_preserved_query` to a standalone version of the user message that retains ALL safety context (what happened, to whom, when, what they need). Used for retrieval INSTEAD of rewritten_query. User's own language + tone — do NOT sanitize/simplify/translate. Empty if safety<0.5.
-
-REWRITE (KNOWLEDGE/BRAINSTORM only):
-- Use prior USER turns to resolve pronouns.
-- Use prior AI turns ONLY for literal entity names (course/product/principle names the AI listed). NEVER copy AI prose.
+REWRITE (KNOWLEDGE/BRAINSTORM only — other intents: echo the user's query verbatim):
+- Use prior USER turns to resolve pronouns. Use prior AI turns ONLY for literal entity names the AI listed (course/product/principle names) — NEVER copy AI prose.
+- AFFIRMATION TO OFFER: if the latest message is a bare yes/acceptance ("iya", "boleh", "ya", "oke", "mau", "lanjut", "gas", "yes", "sure") AND the immediately-preceding AI turn offered a specific topic ("Mau aku breakdown soal 8 Prinsip Client Protection?"), rewrite to that offered topic VERBATIM ("8 Prinsip Client Protection Amartha") and classify KNOWLEDGE. Do NOT retrieve on the bare "iya".
+- FOLLOW-UP ADVICE/ELABORATION: if the latest message asks for advice or more detail with NO new object ("apa sarannya", "terus gimana", "jelasin lebih", "contohnya") AND a concrete topic is active in recent turns, bind to that ACTIVE topic. Classify KNOWLEDGE (more facts) or BRAINSTORM (advice) — NEVER AMBIGUOUS, never offer a different topic.
 - Latest names a new concrete topic → echo verbatim (TOPIC SWITCH).
-- NEVER invent entities. "ada bonus ga" (no context) → classify as AMBIGUOUS, no rewrite. False bind > missed bind.
-- History binding ONLY for unresolved pronouns or underspecified follow-ups. New topic → echo verbatim.
+- NEVER invent entities. "ada bonus ga" (no context) → AMBIGUOUS, no rewrite. False bind > missed bind.
 
-# ENTITY GLOSSARY (Amartha-specific terms — use verbatim in rewrites/retrieval).
-# Compact term-name list only. Detailed definitions live in KB chunks; if KB lacks
-# coverage for a term, the LLM will answer "I don't have that info" rather than
-# hallucinate. Keep this list lean — only term names matter for recognition +
-# retrieval_query rewriting, not descriptions.
-
-- Products: Modal, Simpanan, Pinjaman, AmarthaPay
-- Teams/roles: People Care, People Operations, Risk, Branch Manager, Field Officer (FO), Branch Office (BO)
-- Policies/frameworks: Client Protection, Code of Conduct, Grievance Redress
-- Channels: peoplecare@amartha.com, Hotline 0800-1234-5678
-- Abbreviations: NPL, KYC, AML, UMKM, HC, HCMS
-
-# CLASSIFICATION EXAMPLES (each shows intent + safety + empathy reasoning)
-
-Example 1 — Procedural 3rd-person:
-Q: "Bagaimana cara melaporkan kasus X di Amartha?" (How to report case X at Amartha?)
-→ intent=KNOWLEDGE, safety≤0.3, empathy=0.0
-REASONING: "cara melaporkan" = "how to report" = procedural question. The user is asking ABOUT the reporting process, not reporting a personal experience. 3rd-person framing. → KNOWLEDGE, low safety.
-
-Example 2 — Procedural in English:
-Q: "What is the procedure for filing a workplace complaint?"
-→ intent=KNOWLEDGE, safety≤0.3, empathy=0.0
-REASONING: "procedure for filing" = procedural. The user is asking ABOUT the process, not filing one. → KNOWLEDGE, low safety.
-
-Example 3 — General knowledge query:
-Q: "Apa itu Client Protection?" (What is Client Protection?)
-→ intent=KNOWLEDGE, safety=0.0, empathy=0.0
-REASONING: factual lookup about an Amartha framework. No safety/emotion involved. → KNOWLEDGE, all zero.
-
-Example 4 — 1st-person harm report (in any language/register, with or without typos):
-Q: "[1st-person present-tense statement about being personally harmed/threatened/harassed by someone, in any language, with or without slang/typos — e.g. 'aku baru aja [HARM_TERM_IN_USER_LANGUAGE] sama [PERSON], tolong'"
-→ intent=BRAINSTORM, safety≥0.7, empathy≥0.8
-REASONING: 1st-person present-tense report of being personally harmed. Even with colloquial phrasing / typos / no explicit safety keywords, this is a personal experience, NOT a procedural question. The framing (1st-person + present-tense + direct address) is the signal, not specific words. → BRAINSTORM, high safety + high empathy.
-
-Example 5 — 3rd-party report:
-Q: "Rekan kerja saya mengalami [adverse event] sama supervisor, dia harus lapor kemana?" (My colleague experienced [adverse event] by supervisor, where should they report?)
-→ intent=KNOWLEDGE, safety=0.5, empathy=0.5
-REASONING: 3rd-person (orang lain = someone else). User is asking on behalf of someone. → KNOWLEDGE, mid safety + mid empathy.
-
-Example 6 — Brainstorm / vent:
-Q: "[1st-person expression of emotional distress, no concrete topic — e.g. 'aku [EMOTION_WORD] banget akhir2 ini, [RELATED_SYMPTOM]'"
-→ intent=BRAINSTORM, safety=0.0, empathy=1.0
-REASONING: explicit emotional content, no concrete topic. User wants empathy + practical help. The signal is the emotional language, not specific words. → BRAINSTORM, high empathy, no safety.
-
-Example 7 — Topical follow-up with pronoun reference:
-Q: "kalau yang itu prosedurnya gimana?" (how about the procedure for that one?)
-→ intent=KNOWLEDGE, safety depends on prior turn, empathy=0.0
-REASONING: follow-up using pronoun reference. History anchor resolves "yang itu" to a prior topic. → KNOWLEDGE with PROPER history binding.
-
-Example 8 — Topic switch:
-Q: "oke, trs soal [NEW_TOPIC] gimana?" (ok, what about [NEW_TOPIC]?)
-→ intent=KNOWLEDGE, rewrite=verbatim NEW_TOPIC (drop the prior anchor)
-REASONING: latest names a new concrete topic. Even if it echoes a word from prior context, the framing indicates a new question. → KNOWLEDGE, rewrite = NEW_TOPIC verbatim.
-
-# LEARNING_CONTEXT CALIBRATION EXAMPLES (calibrate the lc axis; intent/safety/empathy
-# reasoning mirrors the standard INTENT examples above). These pin the boundary
-# disagreements seen in the mentor eval — Examples 9, 10, 11, 12, 13.
-
-Example 9 — "masih ga/ndak/belum ngerti" anchor (push lc to 0.9-1.0):
-Q: "masih ga ngerti soal Product Knowledge"
-→ intent=KNOWLEDGE, learning_context=0.95
-REASONING: "ga/ndak/belum ngerti" = explicit non-understanding admission. Same signal as "ajarin aku" / "step by step" — user is asking to BE TAUGHT, not informed. Pushed to 0.8-1.0 tier despite no explicit "ajarin" word.
-
-Example 10 — "gimana cara" + concrete multi-step procedure (push lc to 0.7-0.8):
-Q: "gimana cara naikin grade Mitra?"
-→ intent=KNOWLEDGE, learning_context=0.75
-REASONING: "gimana cara" + concrete action verb (naikin/lapor/verifikasi/apply/isi form) + a known MULTI-STEP procedure = "how do I do X" for a defined process. User wants the action sequence as steps. 0.6-0.9 tier (target 0.7-0.85). The object must be a procedure; "gimana cara handle Mitra yang marah" stays at 0.5-0.7 (strategy).
-
-Example 11 — subjective "menurut kamu" + "gimana cara" mid-sentence (override lc DOWN to ≤0.4):
-Q: "menurut kamu, gimana cara terbaik handle X?"
-→ intent=BRAINSTORM, learning_context=0.1
-REASONING: outer frame is SUBJECTIVE — "menurut kamu" / "kira-kira" / "gimana menurut lo" / "apa yang terbaik" / "lebih baik A atau B" / "gimana cara terbaik" = user wants your OPINION, not a teaching sequence. The "gimana cara" in the middle does NOT override the subjective outer frame. SUBJECTIVE FRAMING OVERRIDE → lc ≤ 0.4 even though "gimana cara" appears. → BRAINSTORM, lc=0.1.
-
-Example 12 — "ajarin" + strategy object (lc 0.7-0.85, NOT 0.9-1.0):
-Q: "ajarin aku cara handle Mitra yang marah"
-→ intent=KNOWLEDGE, learning_context=0.8
-REASONING: "ajarin aku" anchor wants TEACHING, but the object "handle Mitra yang marah" is a STRATEGY (interpersonal, multi-option) rather than a single defined procedure like "naikin grade" or "verifikasi Mitra baru". "ajarin" pulls up to 0.6-0.9, the strategy object prevents hitting 0.9-1.0. → KNOWLEDGE, lc=0.8 (wants tactical teaching of an ambiguous process).
-
-Example 13 — "gimana cara" + channel/lapor lookup (lc 0.0-0.3):
-Q: "lapor pelecehan gimana?"
-→ intent=KNOWLEDGE, learning_context=0.15
-REASONING: "lapor" / "report" / "hubungi" verbs name a CHANNEL/OUTCOME, not a multi-step procedure. The user wants the FACT — the contact path, the hotline number, the policy reference — not a teaching sequence. This is the FACT-LOOKUP exclusion: "gimana cara [lapor/report/proc yang output-nya CHANNEL]" stays in the 0.0-0.3 tier. NOT 0.7-0.8 like "gimana cara naikin grade" (a true multi-step procedure). → KNOWLEDGE, lc=0.15.
-
-Example 14 — "bedanya X vs Y" (lc 0.4-0.7):
-Q: "bedanya Cycle Zero vs Cycle 1?"
-→ intent=KNOWLEDGE, learning_context=0.55
-REASONING: "bedanya X vs Y" / "apa bedanya X sama Y" = comparison question, mild explain framing. Wants explanation, not numbered steps. 0.4-0.7 tier (target 0.5-0.65). NOT 0.0-0.3 (it's not a definition lookup), NOT 0.8+ (no teach-me verb).
-
-Example 15 — "kenapa X itu penting? aku masih bingung" (lc 0.7-1.0):
-Q: "kenapa Cycle Zero itu penting? aku masih bingung"
-→ intent=KNOWLEDGE, learning_context=0.85
-REASONING: "masih bingung" = teach-me anchor. The leading "kenapa" + concept topic softens slightly (not pure step request), but "masih bingung" wins → 0.7-1.0 tier (target 0.8-0.95). User wants the concept EXPLAINED to them, scaffolded."""
+EXAMPLES:
+- "Apa itu Client Protection?" → KNOWLEDGE, rewrite verbatim.
+- "gimana cara naikin grade Mitra?" / "ajarin aku handle Mitra marah" → KNOWLEDGE (how-to/teach-me is KNOWLEDGE), rewrite verbatim.
+- "menurut kamu lebih baik A atau B?" → BRAINSTORM (opinion), rewrite verbatim.
+- "aku capek banget akhir2 ini" → BRAINSTORM (vent).
+- "kalau yang itu prosedurnya gimana?" → KNOWLEDGE, resolve "yang itu" from history.
+- "oke, trs soal [NEW_TOPIC] gimana?" → KNOWLEDGE, rewrite = verbatim NEW_TOPIC (drop prior anchor).
+- prior AI offered "8 Prinsip Client Protection"; "iya boleh" → KNOWLEDGE, rewrite="8 Prinsip Client Protection Amartha".
+- topic active = Client Protection; "apa sarannya" → BRAINSTORM, rewrite="saran terkait Client Protection Amartha"."""
 
 
 # ─── Score-driven response-shape blocks ──────────────────────────────────────
 # Appended to the base system prompt in _generate_node based on intent_scores.
 # Named here (instead of inline) so they're greppable; text is unchanged.
-RESPONSE_SHAPE_EMPATHY = (
-    "<response_shape>\n"
-    "Buka dengan satu kalimat singkat yang mengakui apa yang user rasakan "
-    "(capek/bingung/frustrasi). Jangan over-empathize, jangan jadi sesi terapi. "
-    "Setelah itu, fokus ke substansi.\n"
-    "</response_shape>"
-)
-
-RESPONSE_SHAPE_LOOKUP = (
-    "<response_shape>\n"
-    "Bagian utama jawabanmu HARUS berbasis fakta dari <retrieved_context>. "
-    "Sebut nama produk/prinsip/role persis seperti di context (verbatim). "
-    "Jangan kasih saran umum kalau context udah punya jawaban spesifik.\n"
-    "</response_shape>"
-)
-
-RESPONSE_SHAPE_REASONING_WITH_LOOKUP = (
-    "<response_shape>\n"
-    "User butuh fakta DAN saran. Pakai context sebagai pondasi, lalu "
-    "tambahkan reasoning/saran praktis di atasnya. Kalau saran kamu "
-    "melampaui context (misal context cuma list aturan, tapi user minta "
-    "tactics), tandai: 'Ini saran umum ya — cek lagi sama supervisor "
-    "kalau butuh detail spesifik.'\n"
-    "</response_shape>"
-)
-
-RESPONSE_SHAPE_REASONING_ONLY = (
-    "<response_shape>\n"
-    "User minta opini/synthesis. Pilih satu posisi, jelaskan alasannya "
-    "dalam 2-3 kalimat, sebutkan satu tradeoff. Jangan fence-sit.\n"
-    "</response_shape>"
-)
-
-RESPONSE_SHAPE_SAFETY = (
-    "<response_shape>\n"
-    "User is reporting or experiencing a personal safety incident (harassment, abuse, threats, "
-    "stalking, discrimination, unsafe working conditions, mental health crisis). Acknowledge first, "
-    "briefly, in their own tone — one sentence max. Do not be clinical, do not be theatrical, do not "
-    "play therapist. Then ground the response in <retrieved_context>: name the actual reporting "
-    "channels, escalation steps, and support resources as written in the KB. Use VERBATIM names for "
-    "teams, policies, contact paths. Do NOT invent phone numbers, hotlines, or email addresses — "
-    "if the KB does not name a specific channel, say so honestly. Close with one practical next step.\n"
-    "</response_shape>"
-)
-
-RESPONSE_SHAPE_MENTOR = (
-    "<response_shape>\n"
-    "User explicitly wants to LEARN (mentor mode). Format as numbered, scannable steps — max "
-    f"{_settings.lms_scaffolding_max_steps} steps.\n"
-    "Use bold for action verbs (e.g. **Stop**, **Tell**, **Document**). Use 1 sentence per step — no walls of text.\n"
-    "Each step must be DOABLE by a Field Officer in <2 minutes; concrete and tactical, not abstract policy.\n"
-    "Base each step in <retrieved_context> facts (or flag 'I don't have that info' for the gap). End with one short follow-up question: 'Ada bagian lain yang mau kamu tanyain soal ini?' (or English equivalent).\n"
-    "Do not invent policy/process not in the KB. If the KB has gaps, say 'Untuk bagian ini, aku belum punya info spesifik — coba hubungi {role/team} ya.'\n"
-    "</response_shape>"
-)
-
-
 # ─── Greeting / ambiguity handler rules ──────────────────────────────────────
 # Static rule bodies for the GREETING and AMBIGUOUS handlers. Prepended with
 # f"{PERSONA}\n" at call time. AMBIGUITY_MODE_RULES has a single {topics_rule}
@@ -368,11 +171,17 @@ GREETING_MODE_RULES = (
 
 AMBIGUITY_MODE_RULES = (
     "AMBIGUITY-MODE rules:\n"
-    "1. The user's last message is under-specified. Identify what's missing — usually it's the OBJECT of an action verb (daftar untuk APA, info tentang APA, bonus terkait APA).\n"
-    "2. Ask ONE focused clarifying question. {topics_rule}\n"
-    "3. Shape: 'Maksudnya soal <Topic A>, <Topic B>, atau <Topic C>?' — name 2-3 plausible topics from <available_topics> that the verb could plausibly relate to. Do NOT invent role names like 'BP', product names, or processes outside the list.\n"
-    "4. For pure filler ('hmm', 'iya', single emoji, '??'): just say 'Ada yang bisa aku bantu? Boleh sebut topiknya ya.' — no need to list options.\n"
-    "5. Keep it under 2 sentences. No bullet list."
+    "The user's message is under-specified. Help them move forward without feeling interrogated — "
+    "warm, human, and VARY your phrasing (never repeat the same question shape). Pick one:\n"
+    "- If the user is overwhelmed ('bingung semuanya', 'ga tau mulai dari mana'), OR you have already "
+    "asked a clarifying question earlier: don't ask again. Offer ONE concrete starting topic from "
+    "<available_topics> and ask for a light confirmation. Example: 'Pelan-pelan aja, biasanya enak "
+    "mulai dari <Topik> dulu — mau aku temenin dari situ?' Do NOT launch into a long explanation; "
+    "wait for the user to say yes first.\n"
+    "- If it's just a missing object (daftar untuk APA, info tentang APA) and you haven't asked yet: "
+    "ask casually while naming 2-3 topics from the list. {topics_rule}\n"
+    "- If pure filler ('hmm', 'iya', emoji): a warm, varied invitation.\n"
+    "Max 1-2 sentences, no bullet list. Always reply in Indonesian (unless the user writes in English)."
 )
 
 
@@ -384,13 +193,13 @@ AMBIGUITY_MODE_RULES = (
 # leading to giant <h1>-rendered context dumps in the UI. We catch that
 # server-side as a defensive net even after prompt-level guards.
 _LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|response_shape|capabilities|mode|output_contract|role|rules)>"
+    r"<(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules)>"
     r".*?"
     r"</\1>\s*",
     re.DOTALL | re.IGNORECASE,
 )
 _LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|response_shape|capabilities|mode|output_contract|role|rules)>",
+    r"</?(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules)>",
     re.IGNORECASE,
 )
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
@@ -417,75 +226,101 @@ def _strip_md_headings_for_context(text: str) -> str:
     return _MD_HEADING_RE.sub("", text)
 
 
-def _apply_safety_overrides(
-    *,
-    user_msg: str,
-    intent: str,
-    intent_scores: dict[str, float],
-    safety_preserved_query: str,
-) -> tuple[str, dict[str, float], str | None]:
-    """Post-LLM safety overrides — LLM-driven, NO regex / NO hardcoded phrases.
+def _last_ai_opener(messages: list, max_words: int = 8) -> str:
+    """First few words of Ava's most recent reply (for anti-repetition).
 
-    The pre-processor LLM already classified safety semantically via
-    `needs_safety_escalation` (0-1) and produced `safety_preserved_query` when
-    appropriate. This helper applies three deterministic corrections for the
-    failure modes that the LLM shows in practice (verified by smoke tests
-    against the live LLM at 13k-user scale):
-
-      1. SAFETY >= 0.7: force empathy to >= 0.8, lookup/reasoning to >= 0.5
-         (so the response_shape empathy + lookup blocks always fire and the
-         answer is grounded in the actual reporting path from the KB).
-      2. SAFETY >= 0.5: use `safety_preserved_query` for retrieval INSTEAD OF
-         `rewritten_query`. Prevents an over-eager rewrite from stripping
-         the safety context (e.g. a rewriter turning "aku habis dilecehkan,
-         laporinnya ke mana" into just "laporinnya ke mana" would otherwise
-         miss every KB chunk about harassment reporting).
-      3. SAFETY-AWARE INTENT ROUTING (deterministic, NOT regex on user text):
-         - If safety >= 0.7 AND the LLM set intent to MALICIOUS or OFF_SCOPE,
-           override to BRAINSTORM. Rationale: the LLM recognizes the user is
-           in a personal safety situation (safety=0.7+) but sometimes routes
-           to MALICIOUS because it sees a "scary" word (e.g. "falsify", "hurt",
-           "threatened") and misreads it as a jailbreak. If the LLM itself
-           gave safety a high score, the situation is real, not malicious.
-         - If safety >= 0.7 AND intent is KNOWLEDGE, override to BRAINSTORM.
-           Rationale: when the user is the victim AND asking a question, the
-           answer needs empathy + reasoning framing, not a flat list of
-           facts. BRAINSTORM prompt opens with empathy; KNOWLEDGE prompt
-           does not. Forcing BRAINSTORM routes to a softer response shape.
-         - The user-facing intent field is set to BRAINSTORM in both cases
-           so the dispatcher picks the empathy-aware generate prompt.
-
-    Returns (intent, adjusted_scores, retrieval_query_override_or_None).
-    When retrieval_query_override_or_None is None, the caller should use
-    `rewritten_query` as the retrieval query (default behavior).
+    Returns "" if there is no prior AI turn. Used to feed the model the exact
+    opener to avoid this turn — a per-turn-DIFFERING signal, which is what lets
+    a temp-0.0 model actually vary its phrasing (a static "vary it" instruction
+    is a no-op at temp 0 because the prompt content never changes).
     """
-    scores = dict(intent_scores or {})
-    safety = float(scores.get("needs_safety_escalation", 0.0))
+    for m in reversed(messages):
+        if isinstance(m, AIMessage):
+            text = m.content if isinstance(m.content, str) else str(m.content)
+            first_line = text.strip().split("\n", 1)[0]
+            return " ".join(first_line.split()[:max_words])
+    return ""
 
-    if safety >= 0.7:
-        scores["needs_empathy"] = max(float(scores.get("needs_empathy", 0.0)), 0.8)
-        scores["needs_lookup"] = max(float(scores.get("needs_lookup", 0.0)), 0.5)
-        scores["needs_reasoning"] = max(float(scores.get("needs_reasoning", 0.0)), 0.5)
 
-    retrieval_override: str | None = None
-    if safety >= 0.5 and safety_preserved_query and safety_preserved_query.strip():
-        retrieval_override = safety_preserved_query.strip()
-    elif safety >= 0.5 and not (safety_preserved_query and safety_preserved_query.strip()):
-        # Safety detected but LLM didn't fill preserved_query — fall back to
-        # the raw user message so the KB at least sees the original phrasing.
-        retrieval_override = (user_msg or "").strip() or None
+def _strip_ai_opener(text: str) -> str:
+    """Drop the first sentence/line of an AI reply, keep the topic-adapted body.
 
-    # Safety-aware intent routing — fires when LLM's own safety score says
-    # the user is the victim but the LLM mis-routed the intent. Without
-    # this, safety=0.7 + intent=MALICIOUS produces a canned refusal to a
-    # real victim (the worst possible UX).
-    # Override to BRAINSTORM for any intent when safety is high — the user is
-    # reporting a personal safety incident and needs empathy + resources,
-    # not a greeting, clarifying question, canned refusal, or flat KB lookup.
-    if safety >= 0.7 and intent != "BRAINSTORM":
-        intent = "BRAINSTORM"
+    ROOT-CAUSE fix for opener-copying on the vent path: a weak model at temp>0
+    copies the prior reply's OPENING SENTENCE verbatim because that text sits in
+    history, closer to the generation point than any anti-repetition instruction.
+    Removing the opener from prior AI turns (empathy path only) removes the
+    attractor entirely — the model can't copy what isn't there. The body (entity
+    names, topic in play) is retained for follow-up continuity.
 
-    return intent, scores, retrieval_override
+    Splits on the first sentence boundary (". " / "! " / "? ") or newline. If the
+    reply is a single sentence, returns "" (nothing but an opener to keep).
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    # earliest of: newline, or sentence-ender followed by space
+    cut = -1
+    nl = s.find("\n")
+    if nl != -1:
+        cut = nl
+    m = re.search(r"[.!?]\s", s)
+    if m and (cut == -1 or m.end() < cut):
+        cut = m.end()
+    if cut == -1:
+        return ""  # single sentence, no body left after removing the opener
+    return s[cut:].strip()
+
+
+
+def _interrogation_streak(messages: list) -> int:
+    """Consecutive most-recent AI turns whose reply ended in a question mark.
+
+    Direct proxy for the "acknowledge + ask, never progress" loop: when Ava
+    keeps ending every turn with a question, the conversation is stuck. Counts
+    only AI turns (Human turns are skipped, not stop the streak)."""
+    streak = 0
+    for m in reversed(messages):
+        if not isinstance(m, AIMessage):
+            continue
+        text = (m.content if isinstance(m.content, str) else str(m.content)).rstrip()
+        if text.endswith("?"):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _build_empathy_signals(messages: list) -> str:
+    """Per-turn dynamic block for the empathy path: anti-repetition +
+    anti-loop. Returns "" when there's nothing to say (first turn, no loop).
+
+    Derived purely from `state["messages"]` with cheap string ops — no extra
+    LLM call. Instructions in English; any literal phrase Ava speaks stays ID.
+    Goes into the NON-cached dynamic tail so it can differ every turn.
+    """
+    opener = _last_ai_opener(messages)
+    streak = _interrogation_streak(messages)
+    lines: list[str] = []
+    if opener:
+        lines.append(
+            f'- Your previous reply opened with: "{opener}". Open differently this '
+            f'turn. Do not reuse "Aku paham" / "Aku mengerti" if you used it before.'
+        )
+    if streak >= 2:
+        lines.append(
+            f"- You have ended your reply with a question for {streak} turns straight; "
+            "the conversation is looping. This turn do NOT ask another question. Either "
+            "reflect back what you heard in 1-2 sentences and sit with it, or offer ONE "
+            "small, optional next step and let the user decide."
+        )
+    elif streak == 1:
+        lines.append(
+            "- You asked a question last turn. Prefer reflecting or moving forward over "
+            "asking yet another question."
+        )
+    if not lines:
+        return ""
+    return "<conversation_signals>\n" + "\n".join(lines) + "\n</conversation_signals>"
 
 
 # ── Dynamic course-name loader ────────────────────────────────────────────────
@@ -758,6 +593,37 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "learning_context": 0.0},
         }
 
+    # ── Tier 1.5: semantic gate (OFF by default) ────────────────────────
+    # Embedding cosine vs intent centroids — catches greeting/off-scope
+    # variants the regex misses (religious greetings, slang, elongation
+    # typos) WITHOUT paying the ~4.4K-token LLM pre-processor. Gated behind
+    # intent_semantic_gate_enabled because the threshold is an uncalibrated
+    # stopgap (see settings); off → this block is skipped entirely and
+    # behaviour is byte-identical to the regex→LLM path. Even when ON it may
+    # ONLY commit the canned, score-free intents — KNOWLEDGE/BRAINSTORM need
+    # the LLM's 4-axis scores, and MALICIOUS stays on the regex+LLM path — so
+    # a mis-fire can never strip a safety/vent turn's escalation scores; the
+    # worst case is a mislabelled greeting, recoverable next turn.
+    if _settings.intent_semantic_gate_enabled:
+        _CANNED_GATE_INTENTS = {"GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"}
+        try:
+            # Import inside the try so even a missing optional dep (the gate's
+            # embedding/cache stack) fails SAFE — fall through to the LLM
+            # pre-processor instead of 500-ing the turn.
+            from app.graph.intent_classifier import classify_semantic
+            sem_intent = await classify_semantic(user_msg)  # type: ignore[arg-type]
+        except Exception as exc:
+            logger.warning(f"Semantic gate raised, falling through to LLM: {exc}")
+            sem_intent = None
+        if sem_intent in _CANNED_GATE_INTENTS:
+            logger.info(f"Pre-processor: semantic-gate intent={sem_intent}")
+            return {
+                "intent": sem_intent,
+                "rewritten_query": user_msg,
+                "retrieval_query": user_msg,
+                "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "learning_context": 0.0},
+            }
+
     llm = get_preprocessor_llm()
     # Note: with_structured_output uses OpenAI function calling which some
     # providers behind the local OpenRouter-compatible gateway don't
@@ -765,10 +631,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # Append JSON schema instruction to prompt so model returns raw JSON.
     _JSON_SUFFIX = (
         "\n\nRespond ONLY with a valid JSON object matching this schema (no markdown, no explanation):\n"
-        '{"intent": "<INTENT>", "rewritten_query": "<str>", "needs_lookup": <0.0-1.0>, '
-        '"needs_reasoning": <0.0-1.0>, "needs_empathy": <0.0-1.0>, '
-        '"needs_safety_escalation": <0.0-1.0>, "learning_context": <0.0-1.0>, '
-        '"safety_preserved_query": "<str>"}'
+        '{"intent": "<INTENT>", "rewritten_query": "<str>"}'
     )
 
     messages = state["messages"]
@@ -781,24 +644,33 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         for m in recent:
             role = "User" if isinstance(m, HumanMessage) else "AI"
             content = m.content if isinstance(m.content, str) else str(m.content)
-            if role == "AI" and len(content) > 300:
+            # Cap BOTH roles. AI was already capped at 300; user turns were sent
+            # whole — and this history lives in the NON-cached HumanMessage
+            # below, so a field officer pasting a long complaint into a prior
+            # turn inflated the pre-processor input (the single most expensive
+            # per-call system) at full price on every subsequent turn × 13k
+            # users. 300 chars keeps the gist + entity names needed for
+            # pronoun/reference resolution, which is all this history is for.
+            if len(content) > 300:
                 content = content[:300] + "..."
             hist_lines.append(f"{role}: {content}")
         history_str = "\n".join(hist_lines)
 
-    intent_scores = {
-        "needs_lookup": 0.0,
-        "needs_reasoning": 0.0,
-        "needs_empathy": 0.0,
-        "needs_safety_escalation": 0.0,
-        "learning_context": 0.0,
-    }
-    safety_preserved_query = ""
-
     import json as _json
 
     _preproc_msgs = [
-        SystemMessage(content=PRE_PROCESSOR_PROMPT + _JSON_SUFFIX),
+        # cache_control breakpoint: PRE_PROCESSOR_PROMPT + _JSON_SUFFIX is fully
+        # static (~4400 tok) and re-sent on EVERY turn — the single most expensive
+        # per-call system in the pipeline. Wrapping it in an ephemeral cache block
+        # lets the gateway serve it from the provider prefix-cache on the 2nd+ call
+        # at ~19% of input price (verified: cached_tokens=4424, cost $0.000455→
+        # $0.000078, ~81% saving). The dynamic history+query MUST stay in the
+        # separate HumanMessage below so the cached prefix is byte-identical turn
+        # to turn (the cache key is the prefix content).
+        SystemMessage(content=[
+            {"type": "text", "text": PRE_PROCESSOR_PROMPT + _JSON_SUFFIX,
+             "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+        ]),
         HumanMessage(content=f"Conversation history (for pronoun/reference resolution):\n{history_str}\n\nLatest Query: {user_msg}"),
     ]
 
@@ -857,45 +729,32 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     if result is not None:
         intent: str = result.intent
         rewritten = result.rewritten_query.strip() or user_msg
-        intent_scores = {
-            "needs_lookup": float(result.needs_lookup or 0.0),
-            "needs_reasoning": float(result.needs_reasoning or 0.0),
-            "needs_empathy": float(result.needs_empathy or 0.0),
-            "needs_safety_escalation": float(result.needs_safety_escalation or 0.0),
-            "learning_context": float(result.learning_context or 0.0),
-        }
-        safety_preserved_query = (result.safety_preserved_query or "").strip()
     else:
         # ── C2 fail-safe ──────────────────────────────────────────────────
-        # Both parse attempts failed. The OLD behavior defaulted to KNOWLEDGE,
-        # which routes to the cold, strict procedural prompt with ZERO empathy.
-        # If the un-parseable turn was a distressed / safety message, that's
-        # the worst possible UX — a victim gets a flat KB lookup. Since parsing
-        # failed we cannot know the intent, so we fail SAFE: route to
-        # BRAINSTORM (the empathy-aware generate prompt) and force empathy to
-        # 0.8 so RESPONSE_SHAPE_EMPATHY fires. A neutral factual turn merely
-        # gets a slightly warmer answer (still KB-grounded — BRAINSTORM still
-        # flows through rag_node); a distressed turn gets acknowledged instead
-        # of cold facts. Emit a counter so a rising parse-failure rate is
-        # observable instead of silently degrading quality.
+        # Both parse attempts failed. We can't know the intent, so fail SAFE to
+        # BRAINSTORM — the empathy-aware generate prompt — rather than the cold
+        # KNOWLEDGE procedural prompt. A neutral factual turn merely gets a
+        # slightly warmer answer (BRAINSTORM still flows through rag_node and
+        # stays KB-grounded); a distressed turn gets acknowledged instead of
+        # cold facts. Emit a counter so a rising parse-failure rate is visible.
         await _incr_parse_failure_metric()
         intent = "BRAINSTORM"
         rewritten = user_msg
-        intent_scores = {
-            "needs_lookup": 0.0,
-            "needs_reasoning": 0.0,
-            "needs_empathy": 0.8,
-            "needs_safety_escalation": 0.0,
-            "learning_context": 0.0,
-        }
 
-    intent, intent_scores, retrieval_override = _apply_safety_overrides(
-        user_msg=user_msg,  # type: ignore[arg-type]  # langchain message.content is str at runtime
-        intent=intent,
-        intent_scores=intent_scores,
-        safety_preserved_query=safety_preserved_query,
-    )
-    retrieval_query = retrieval_override or rewritten
+    # Vestigial intent_scores, derived from intent alone (the LLM no longer
+    # scores — see PreProcessorResult). Kept ONLY so the DB columns / admin
+    # dashboard / logging keep working without a schema migration. needs_lookup
+    # is the one still-meaningful signal (KNOWLEDGE looks things up); the rest
+    # are 0.0 placeholders. Response shape is driven by `intent` in _generate_node.
+    intent_scores = {
+        "needs_lookup": 1.0 if intent == "KNOWLEDGE" else 0.0,
+        "needs_reasoning": 0.0,
+        "needs_empathy": 0.0,
+        "needs_safety_escalation": 0.0,
+        "learning_context": 0.0,
+    }
+
+    retrieval_query = rewritten
 
     logger.info(
         f"Pre-processor: intent={intent} scores=L{intent_scores['needs_lookup']:.2f}/"
@@ -907,7 +766,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         "intent": intent,
         "rewritten_query": rewritten,
         "retrieval_query": retrieval_query,
-        "safety_preserved_query": safety_preserved_query,
         "intent_scores": intent_scores,
     }
 
@@ -999,7 +857,15 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
     # signal. Alphabetical truncation is fine; ambiguity replies don't need
     # ranking, just plausible options.
     AMBIGUITY_MAX_TOPICS = 20
-    suggestions = course_names[:AMBIGUITY_MAX_TOPICS]
+    # Backstop: if a genuinely-ambiguous turn still carries empathy, don't pivot
+    # a feeling-laden message to topic navigation. (Primary fix is the
+    # AMBIGUOUS+empathy→BRAINSTORM override in _pre_processor; this covers any
+    # turn that slips through.)
+    needs_empathy = float((state.get("intent_scores") or {}).get("needs_empathy", 0.0))
+    if needs_empathy >= 0.4:
+        suggestions = []
+    else:
+        suggestions = course_names[:AMBIGUITY_MAX_TOPICS]
     if suggestions:
         topics_block = (
             "\n\n<available_topics>\n"
@@ -1007,15 +873,14 @@ async def _handle_ambiguity(state: RAGState, config: RunnableConfig):
             + "\n</available_topics>"
         )
         topics_rule = (
-            "When you suggest options in your clarifying question, draw 2-3 "
-            "of them from the <available_topics> list above. NEVER invent "
-            "topics, products, or roles that aren't listed there."
+            "When you suggest options, draw 2-3 from the <available_topics> list above. "
+            "NEVER invent topics, products, or roles not in the list."
         )
     else:
         topics_block = ""
         topics_rule = (
-            "Ask a generic clarifying question — do not invent specific "
-            "topics, products, or roles."
+            "Ask a generic clarifying question — do not invent specific topics, "
+            "products, or roles."
         )
 
     llm = get_generate_llm()
@@ -1210,7 +1075,7 @@ async def _handle_low_relevance(state: RAGState, config: RunnableConfig):
     return {"messages": [AIMessage(content=msg)]}
 
 
-def _window_generate_history(messages: list, max_fresh_turns: int, max_ai_chars: int) -> list:
+def _window_generate_history(messages: list, max_fresh_turns: int, max_ai_chars: int, strip_ai_opener: bool = False) -> list:
     """Trim the message history fed to generate_node.
 
     chat.py hands generate_node the current query (always the LAST message)
@@ -1227,6 +1092,11 @@ def _window_generate_history(messages: list, max_fresh_turns: int, max_ai_chars:
          for follow-up resolution. User turns are left intact (short + carry the
          actual intent).
 
+    `strip_ai_opener` (empathy path only): also drop the FIRST sentence of each
+    prior AI reply. On the vent path the opener is the span the weak model copies
+    verbatim turn-to-turn; removing it from history kills the attractor while
+    keeping the topic-adapted body. Applied before the char-cap.
+
     Returns a NEW list with NEW capped AIMessage objects, so state["messages"]
     (consumed downstream for history/cache persistence) is never mutated.
     """
@@ -1241,8 +1111,17 @@ def _window_generate_history(messages: list, max_fresh_turns: int, max_ai_chars:
     for m in prior:
         if isinstance(m, AIMessage):
             content = m.content if isinstance(m.content, str) else str(m.content)
+            if strip_ai_opener:
+                stripped = _strip_ai_opener(content)
+                # Only replace if a body remains; if the reply was a single
+                # sentence (all opener), keep the original so we don't blank it.
+                if stripped:
+                    content = stripped
             if max_ai_chars and len(content) > max_ai_chars:
                 windowed.append(AIMessage(content=content[:max_ai_chars].rstrip() + "…"))
+                continue
+            if strip_ai_opener:
+                windowed.append(AIMessage(content=content))
                 continue
         windowed.append(m)
     windowed.append(current)
@@ -1261,46 +1140,24 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     summary = state.get("conversation_summary") or ""
     profile = state.get("user_profile") or {}
     intent = state.get("intent") or "KNOWLEDGE"
-    scores = state.get("intent_scores") or {}
     base_prompt = BRAINSTORM_SYSTEM_PROMPT if intent == "BRAINSTORM" else SYSTEM_PROMPT
 
-    # ── Score-driven prompt blocks (Coexist with intent enum) ─────────────────
-    # Each block fires only above a threshold to keep prompts lean. Multiple
-    # blocks can stack — they layer instructions, not replace.
-    score_blocks: list[str] = []
-    needs_lookup = float(scores.get("needs_lookup", 0.0))
-    needs_reasoning = float(scores.get("needs_reasoning", 0.0))
-    needs_empathy = float(scores.get("needs_empathy", 0.0))
-    needs_safety = float(scores.get("needs_safety_escalation", 0.0))
+    # ── Response shape: INTENT-DRIVEN (no float scores) ───────────────────────
+    # The pre-processor no longer emits 4-axis float scores (see
+    # PreProcessorResult). Response shape now follows `intent` alone:
+    #   - BRAINSTORM base prompt already carries vent/empathy/opinion/advice tone.
+    #   - KNOWLEDGE base prompt carries KB-grounding + verbatim names + how-to
+    #     numbered-steps guidance.
+    # No score-driven <response_shape> blocks are layered on top.
+    score_block_str = ""
 
-    # SAFETY block takes precedence over generic empathy/lookup/reasoning —
-    # it carries domain-specific instructions (acknowledge first, ground in KB
-    # reporting path, no invented contact info). Layered AFTER so the model
-    # still sees empathy/lookup guidance as supporting context.
-    if needs_safety >= 0.7:
-        score_blocks.append(RESPONSE_SHAPE_SAFETY)
-    if needs_empathy >= 0.4:
-        score_blocks.append(RESPONSE_SHAPE_EMPATHY)
-    if needs_lookup >= 0.5 and chunks:
-        score_blocks.append(RESPONSE_SHAPE_LOOKUP)
-    if needs_reasoning >= 0.5:
-        if needs_lookup >= 0.5:
-            score_blocks.append(RESPONSE_SHAPE_REASONING_WITH_LOOKUP)
-        else:
-            score_blocks.append(RESPONSE_SHAPE_REASONING_ONLY)
-
-    # ── MENTOR gate ────────────────────────────────────────────────────────
-    # Fires when the user wants SCAFFOLDED INSTRUCTION (numbered steps) AND
-    # none of the safety/empathy shapes are already winning. Independently
-    # orthogonal to intent — a BRAINSTORM vent + lc=0.85 still gets scaffolding.
-    learning_context = float(scores.get("learning_context", 0.0))
-    if (learning_context >= _settings.learning_context_threshold
-        and needs_empathy < 0.4
-        and needs_safety < 0.5
-        and chunks):
-        score_blocks.append(RESPONSE_SHAPE_MENTOR)
-
-    score_block_str = ("\n\n" + "\n\n".join(score_blocks)) if score_blocks else ""
+    # Anti-repetition / anti-loop signal for the vent path. Injected into the
+    # FINAL human message (recency) below so it out-competes the prior reply's
+    # opener. Only meaningful on BRAINSTORM (vent/opinion); empty for KNOWLEDGE.
+    _empathy_signals = (
+        _build_empathy_signals(list(state.get("messages") or []))
+        if intent == "BRAINSTORM" else ""
+    )
 
     # Format context for the LLM prompt
     if chunks:
@@ -1395,7 +1252,13 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"
     )
 
-    llm = get_generate_llm()
+    # LLM selection: BRAINSTORM turns (vent/advice/opinion) use a non-zero-temp
+    # LLM to break Gemini Flash Lite's temp-0 mode-collapse (it byte-copies the
+    # prior AI turn on vents, ignoring the new message + anti-repetition signal).
+    # KNOWLEDGE stays temp 0.0 for factual/channel fidelity. Now keyed on intent
+    # alone (the old needs_empathy/lookup/safety float gate was removed).
+    _use_empathy_temp = (intent == "BRAINSTORM")
+    llm = get_empathy_llm() if _use_empathy_temp else get_generate_llm()
     # Window the raw turn history fed to the LLM. Older turns are already
     # captured by <previous_context> (the rolling summary), so attaching the
     # full turn list on top is redundant tokens. Keep the last N completed
@@ -1404,6 +1267,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         list(state["messages"]),
         max_fresh_turns=_settings.max_fresh_turns,
         max_ai_chars=_settings.max_history_ai_chars,
+        strip_ai_opener=_use_empathy_temp,
     )
     # System message: static prefix wrapped in a content block with
     # cache_control so OpenRouter routes the 2nd+ call to the same
@@ -1411,19 +1275,70 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # returns to the same conversation within the hour. Per OpenRouter
     # docs, the dynamic tail MUST live in a later user message (Gemini
     # treats systemInstruction as immutable once cached).
-    system_msg = SystemMessage(content=[
-        {"type": "text", "text": static_prefix,
-         "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-    ])
+    # System message. Normal path: wrap the static prefix in a cache_control
+    # breakpoint so OpenRouter serves it from the provider prefix-cache on the
+    # 2nd+ call (~50% input cost cut). EMPATHY path: send the prefix as PLAIN
+    # text with NO cache breakpoint. Reason: the ephemeral prefix-cache is
+    # time-sensitive (populates ~seconds after the first call), and once warm it
+    # collapses Gemini Flash Lite onto a near-deterministic continuation —
+    # producing byte-identical vent replies despite temp>0 and a differing tail
+    # (verified: no-delay run varied 3/3, 4s-delay run was byte-identical). The
+    # vent path is a minority of turns (little cache saving) and its whole point
+    # is per-turn variation, so we trade the cache for genuine sampling here.
+    if _use_empathy_temp:
+        system_msg = SystemMessage(content=static_prefix)
+    else:
+        system_msg = SystemMessage(content=[
+            {"type": "text", "text": static_prefix,
+             "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+        ])
     # Inject the dynamic tail as the FIRST user message so the LLM sees it
     # right after the system prompt, but it's excluded from the cache.
     # The actual user query is the last message in windowed_messages.
-    dynamic_intro = HumanMessage(content=(
-        f"[Per-turn context — not cached, regenerated each turn]\n"
-        f"{dynamic_tail.strip()}"
-    ))
+    # NOTE: no human-readable label prefix here — Gemini Flash Lite has been
+    # observed echoing such a label ("[Per-turn context …]") verbatim into the
+    # user-facing answer. The dynamic content is self-describing via its own
+    # XML tags, so the label added leak risk for zero functional value.
+    dynamic_intro = HumanMessage(content=dynamic_tail.strip())
+    # Rank-2: on the empathy path, fold the anti-repetition/anti-loop signal into
+    # the FINAL human message (adjacent to the current query) instead of the
+    # pre-history dynamic_tail. This gives the "open differently" instruction
+    # recency — it's now the closest instruction to generation, no longer
+    # out-competed by the prior reply's opener sitting in history (which Rank-1
+    # already strips). Append to the human message (NOT a trailing SystemMessage:
+    # ChatOpenAI maps system→Gemini systemInstruction and a non-first system msg
+    # is repositioned unreliably).
+    if _use_empathy_temp and _empathy_signals and windowed_messages:
+        _last = windowed_messages[-1]
+        if isinstance(_last, HumanMessage):
+            _lc = _last.content if isinstance(_last.content, str) else str(_last.content)
+            windowed_messages = windowed_messages[:-1] + [
+                HumanMessage(content=f"{_lc}\n\n{_empathy_signals}")
+            ]
     messages = [system_msg, dynamic_intro] + windowed_messages
     response = await llm.ainvoke(messages, config=config)
+
+    # Rank-3 Phase-1: detect-and-log opener repetition (no regenerate yet). Lets
+    # us measure the residual repeat rate after Rank-1 (strip) + Rank-2 (reposition)
+    # before paying the cost of a regenerate. Compares this reply's opener to the
+    # prior AI opener; logs a counter when they collide on the empathy path.
+    if _use_empathy_temp:
+        try:
+            _resp_content = getattr(response, "content", "")
+            _raw_now = _resp_content if isinstance(_resp_content, str) else str(_resp_content)
+            _new_opener = " ".join(_raw_now.strip().split("\n", 1)[0].split()[:8]).casefold()
+            _prev_opener = _last_ai_opener(list(state.get("messages") or [])).casefold()
+            if _new_opener and _prev_opener:
+                # prefix-overlap similarity on the first 8 words
+                _a, _b = _new_opener.split(), _prev_opener.split()
+                _same = sum(1 for i in range(min(len(_a), len(_b))) if _a[i] == _b[i])
+                if _same >= 4:  # >=4 of first words identical = repeated opener
+                    logger.warning(
+                        "empathy opener repeat detected (residual) — new={!r} prev={!r} overlap={}",
+                        _new_opener, _prev_opener, _same,
+                    )
+        except Exception as _e:
+            logger.debug("opener-repeat check skipped: {}", _e)
 
     # Defensive net — strip any leaked <retrieved_context>/<user_history>/etc.
     # blocks the LLM may have echoed verbatim. Prompt-level guard handles the
@@ -1455,16 +1370,19 @@ def _route_after_rag(state: RAGState) -> str:
     (e.g. emotional vents) deserve a real response from the AI; the
     threshold guard is for KNOWLEDGE lookups only.
 
-    The gate passes if EITHER signal clears its floor:
+    The gate is a MANDATORY DENSE FLOOR (not an OR). bge-m3 dense cosine cleanly
+    separates scope on this KB — off-scope tops out ~0.36, in-scope floors ~0.50
+    — so dense alone is the discriminator:
       - `dense_score` — raw dense cosine [0, 1], an ABSOLUTE semantic signal.
-        Calibrated from production: answered ≈ 0.68 vs not-found ≈ 0.45.
-      - `sparse_score` — raw BM25, a LEXICAL signal. Terse 1-word entity
-        queries ("Modal", "CP") score low on dense but match a KB term exactly
-        (BM25 ≫ 0), while off-scope queries ("crypto", "cuaca") have BM25 = 0.0.
-    Using OR rescues real KB entities that dense alone wrongly rejected, without
-    letting off-scope through (it has neither signal). The fused
-    `score`/`hybrid_score` is min-max normalized per-query (top hit ≈ 1.0 on
-    every query), so it can't gate a global miss — these raw signals can.
+        Calibrated: off-scope ceiling ≈ 0.36, in-scope floor ≈ 0.50; floor set
+        at 0.40 (safe band [0.40, 0.45], leaning in-scope-protective).
+    Sparse (raw BM25) is NOT consulted in normal operation: on a small KB it does
+    NOT separate scope — off-scope function words ("gimana", "di", "siapa")
+    accumulate BM25 (off-scope sparse 8.56 outscores in-scope "Poket" 6.23), so an
+    OR-rescue on sparse re-admits off-scope. The fused `score`/`hybrid_score` is
+    min-max normalized per-query (top hit ≈ 1.0 on every query), so it can't gate
+    a global miss — the raw dense signal can. Sparse is read ONLY in the C5
+    degraded window below (embedding outage), as a fail-open backstop.
 
     C4 — the gate reads POOL-LEVEL maxes (`pool_max_dense`/`pool_max_sparse`,
     set by rag_node over the full fetch_k pool BEFORE the top-k slice), not the
@@ -1512,28 +1430,28 @@ def _route_after_rag(state: RAGState) -> str:
         )
         return "low_relevance"
 
-    dense_ok = max_dense >= _settings.kb_min_dense_score
-    sparse_ok = max_sparse >= _settings.kb_min_sparse_score
-    if not dense_ok and not sparse_ok:
+    # Normal operation: DENSE is the mandatory floor. Sparse is NOT consulted —
+    # raw BM25 does not separate scope on a small KB (off-scope function-word
+    # matches outscore real entities), so an OR-rescue on sparse re-admits
+    # off-scope. The clean dense gap (off-scope ≤~0.36, in-scope ≥~0.50) is the
+    # gate.
+    if max_dense < _settings.kb_min_dense_score:
+        # NEAR-MISS monitor: dense just below the floor. Could be a terse
+        # entity/acronym wrongly rejected — instrument so ops can pull these and
+        # decide whether a corroboration tier is needed. Does NOT change routing.
+        if max_dense >= _settings.kb_min_dense_score - 0.05:
+            logger.info(
+                f"NEAR-MISS reject (dense just below floor) — "
+                f"dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
+                f"sparse={max_sparse:.4f}"
+            )
+            _emit_sparse_only_passthrough()
         logger.info(
-            f"Retrieval below both gates — skipping generate_node "
+            f"Dense below floor — NOT-FOUND "
             f"(pool dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-            f"pool sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score})"
+            f"pool sparse={max_sparse:.4f} ignored)"
         )
         return "low_relevance"
-    # H9: dense cosine missed its floor but a raw BM25 term match rescued the
-    # query through the OR-gate. This is precisely the colloquial-ID false-pass
-    # window — terse / slangy Indonesian that embeddings rank off-topic but that
-    # shares a lexical token with the KB. Instrument it (day-bucketed counter +
-    # log) so ops can pull these queries and grow the eval sample if the rate
-    # climbs. Does NOT change routing — the gate decision is unchanged.
-    if not dense_ok and sparse_ok:
-        logger.info(
-            f"Gate passed on SPARSE signal alone (H9 instrument) — "
-            f"dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-            f"sparse={max_sparse:.4f} >= {_settings.kb_min_sparse_score}"
-        )
-        _emit_sparse_only_passthrough()
     return "generate"
 
 

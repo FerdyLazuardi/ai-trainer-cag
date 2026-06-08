@@ -279,6 +279,21 @@ class Settings(BaseSettings):
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
     intent_semantic_threshold: float = 0.55
     intent_semantic_margin: float = 0.10
+    # Master switch for the Tier-1.5 semantic gate (app/graph/intent_classifier.
+    # classify_semantic), wired into _pre_processor between the regex Tier-1 and
+    # the LLM pre-processor. DEFAULT OFF: the threshold above (0.55) is a
+    # self-described uncalibrated stopgap, and a false-positive would mis-route a
+    # production turn — so the gate stays dormant until calibrated against real
+    # traffic via scripts/calibrate_intent_threshold.py, then flipped on by env.
+    # When enabled, the gate ONLY short-circuits the canned, score-free intents
+    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/BRAINSTORM
+    # (they need the LLM's 4-axis scores) and never MALICIOUS (injection
+    # detection stays on the deterministic regex + LLM path), so it can never
+    # strip a safety/vent turn's escalation scores. Off → behaviour is
+    # byte-identical to today (regex Tier-1 → LLM).
+    intent_semantic_gate_enabled: bool = Field(
+        default=False, alias="INTENT_SEMANTIC_GATE_ENABLED"
+    )
 
     # ─── Context Engineering ────────────────────────────────────────────────
     # Hard ceiling on the retrieved-context block sent to the generate LLM.
@@ -312,33 +327,25 @@ class Settings(BaseSettings):
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
-    # Below this RAW DENSE COSINE top-1 score, treat retrieval as a miss and
-    # skip generate_node entirely (saves ~2700 input tokens + 1 LLM call per
-    # off-topic query). Absolute [0, 1] cosine — calibrated from production:
-    # answered turns median ≈ 0.68 vs not-found ≈ 0.45; 0.30 blocks only the
-    # weakest misses while sparing virtually all valid answers.
-    kb_min_dense_score: float = 0.30
-    # Lexical-match rescue for the NOT-FOUND gate. Terse entity queries
-    # ("Modal", "CP", "AmarthaLink") score LOW on dense cosine but have a strong
-    # exact BM25 match (raw score ≫ 0), so the gate ALSO passes when raw BM25
-    # top-score clears this floor — rescuing real KB entities dense alone would
-    # wrongly reject.
-    #
-    # IMPORTANT — this is a LEAKY backstop, not the primary off-scope gate.
-    # Calibration (scripts/calibrate_sparse_gate.py, measured against the live
-    # KB) shows BM25 does NOT cleanly separate scope:
-    #   - legit entities: sparse 3.46 .. 13.12
-    #   - off-scope:      sparse 0.00 ..  8.58  (e.g. "berita hari ini di
-    #     jakarta"=8.58, "harga bitcoin sekarang"=7.08) — common Indonesian
-    #     filler tokens (siapa/kapan/hari/jakarta/harga) have KB IDF overlap, so
-    #     "off-scope = 0.0" only holds for ZERO-overlap phrases ("resep nasi
-    #     goreng"=0.0). Dense overlaps too ("berita..."=0.30 ≥ "Modal"=0.24).
-    # There is NO single sparse floor that admits all entities while blocking
-    # all off-scope — the OFF_SCOPE intent classifier in _pre_processor is the
-    # real scope gate; this floor only catches misclassified-as-KNOWLEDGE turns,
-    # and imperfectly. Kept at 1.0 (admits entities, blocks only zero-overlap
-    # junk) on purpose: raising it would kill low-scoring entities like
-    # AmarthaLink (3.46) without blocking the 6-8 scoring off-scope phrases.
+    # MANDATORY DENSE FLOOR for the NOT-FOUND gate (app/graph/pipeline.py
+    # _route_after_rag). Below this RAW DENSE COSINE pool-max, treat retrieval as
+    # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
+    # Absolute [0, 1] cosine. bge-m3 cleanly separates scope on this KB:
+    # off-scope tops out ≈ 0.36 (weather/recipe/trivia), in-scope floors ≈ 0.50.
+    # Set to 0.40 — safe band [0.40, 0.45], chosen toward the low end to protect
+    # legit in-scope queries (production not-found turns can land ≈ 0.45). Dense
+    # is now the SOLE normal-operation discriminator; sparse is NOT OR'd in (see
+    # kb_min_sparse_score). Re-derive after major KB growth or any embedding-model
+    # change via: python -m app.eval.run_retrieval_eval (reports gate margins).
+    kb_min_dense_score: float = 0.40
+    # DEGRADED-WINDOW ONLY sparse floor. This is NO LONGER an OR-rescue in normal
+    # operation — raw BM25 does not separate scope on a small KB (off-scope
+    # filler tokens like siapa/hari/jakarta accumulate BM25: "berita hari ini di
+    # jakarta"=8.58 OUTSCORES legit "AmarthaLink"=3.46), so OR'ing sparse
+    # re-admitted off-scope. It is consulted ONLY when dense is UNAVAILABLE
+    # (embedding outage → sparse-only retrieval, C5): in that window the gate
+    # fails OPEN on sparse >= this floor so Ava stays usable during the blip,
+    # accepting some off-scope leak until embeddings recover. Kept at 1.0.
     kb_min_sparse_score: float = 1.0
 
     # ─── Embedding resilience (C5 — query-embedding SPOF) ────────────────────
@@ -355,21 +362,29 @@ class Settings(BaseSettings):
     embedding_backoff_base_seconds: float = 0.5
     embedding_backoff_max_seconds: float = 4.0
 
-    # ─── Mentor Mode (Field Office scaffolding) ──────────────────────────────
-    # Field Office users often need explicit step-by-step learning, not just
-    # factual lookup. When the pre-processor emits learning_context >= this
-    # threshold, _generate_node layers RESPONSE_SHAPE_MENTOR on top of the
-    # base prompt (numbered steps, max `lms_scaffolding_max_steps`, bolded
-    # action terms, closing follow-up). The gate is suppressed by high
-    # empathy (vent) and high safety (real victim) so scaffolding never
-    # competes with empathy blocks. 0.5 was picked from 15 golden cases
-    # (tests/eval/mentor_mode_cases.json): clear separation between
-    # procedural ("gimana cara lapor pelecehan" ~0.2) and learning
-    # ("ajarin aku handle Mitra marah" ~0.85) intents.
-    learning_context_threshold: float = 0.5
-    # Hard cap on numbered steps in MENTOR scaffolded responses. 5 keeps
-    # the response scannable on mobile (~1 screen on a 13k-user FO phone).
+    # ─── How-to / step-by-step formatting ───────────────────────────────────
+    # When a KNOWLEDGE query is a how-to/teach-me request ("gimana cara X",
+    # "ajarin aku X"), SYSTEM_PROMPT rule 5 tells the model to answer as numbered
+    # steps. This caps the step count so the reply stays scannable on mobile
+    # (~1 screen on a 13k-user FO phone). (The old float-driven MENTOR mode +
+    # learning_context_threshold were removed when the pre-processor was slimmed
+    # to intent + rewrite only; step formatting is now intent/prompt-driven.)
     lms_scaffolding_max_steps: int = 5
+
+    # ─── Empathy LLM (temp-0 mode-collapse fix) ──────────────────────────────
+    # Gemini Flash Lite at temperature 0.0 is DETERMINISTIC and, on the vent
+    # path, collapses onto the prior assistant turn in history — re-emitting it
+    # byte-for-byte and ignoring both the new user message AND the per-turn
+    # anti-repetition signal (verified via DEBUG_GEN: the signal fires, the model
+    # ignores it). Prompt-only variation cannot fix a model that ignores the
+    # prompt. So the BRAINSTORM/vent path uses a separate LLM at a non-zero
+    # temperature to break determinism and produce genuinely varied, on-topic
+    # replies. Selected by intent==BRAINSTORM in _generate_node — KNOWLEDGE turns
+    # stay at temp 0.0 for factual/channel fidelity. Configurable so it can be
+    # tuned without a code change; 0.6 gives clear variation without going
+    # incoherent. (The old empathy_temp_* float gates were removed with the
+    # pre-processor slim-down; LLM selection is now intent-driven.)
+    empathy_llm_temperature: float = 0.6
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).
@@ -468,6 +483,25 @@ class Settings(BaseSettings):
     # Small enough to fast-fail a sustained burst, large enough to absorb a
     # sub-second spike without rejecting.
     pipeline_acquire_timeout_s: float = 5.0
+    # End-to-end ceiling on a NON-STREAM /chat graph run (rag_graph.ainvoke).
+    # Without this, a turn makes 2-3 sequential LLM calls and each cheap call
+    # is bounded only by request_timeout=30 × stop_after_attempt(3) + backoff
+    # ≈ 93s, so a single upstream black-hole could pin a pipeline slot for
+    # 3-9 minutes (llm/client.py:136-148). At max_concurrent_pipelines=12 that
+    # converts a slow-upstream blip into a full-surface 503 outage. 120s bounds
+    # the worst case to ~2 min — generous enough that a normal ~3s turn (or one
+    # legitimate retry sequence) never trips it, tight enough to free the slot.
+    pipeline_total_timeout_s: float = 120.0
+    # STREAM /chat/stream STALL ceiling: max seconds allowed between two
+    # astream_events emissions. Resets on EVERY event (including every output
+    # token), so a slow-but-actively-streaming answer never trips it — it only
+    # fires when the graph goes silent (upstream hang with no tokens). 75s
+    # covers a pre-processor call that times out once and retries (30s + 1s +
+    # 30s ≈ 61s of legitimate silence before the first generate token) while
+    # still bounding a true hang's slot-hold to one stall window instead of
+    # minutes. A total wall-clock cap is deliberately NOT used on the stream
+    # path so long legitimate answers stream uninterrupted.
+    pipeline_stream_stall_timeout_s: float = 75.0
 
     # ─── Streaq worker hardening ────────────────────────────────────────────
     # Optional HMAC secret for streaq's pickle payload signing. If set, the

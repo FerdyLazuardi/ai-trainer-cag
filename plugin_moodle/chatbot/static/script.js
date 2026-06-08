@@ -5,15 +5,6 @@
     // Cek apakah sudah ada (hindari duplikat)
     if (document.getElementById("chat-toggle")) return;
 
-    // Inject Inter font (widget hidup di halaman Moodle yang tidak punya font ini)
-    if (!document.getElementById("ava-inter-font")) {
-        const fontLink = document.createElement("link");
-        fontLink.id = "ava-inter-font";
-        fontLink.rel = "stylesheet";
-        fontLink.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
-        document.head.appendChild(fontLink);
-    }
-
     const html = `
         <button id="chat-toggle">
             <i id="chat-icon" class="fas fa-comment-dots"></i>
@@ -144,47 +135,17 @@ function toggleChat() {
 }
 
 // ============================================================
-// INTRO — welcome screen terpusat (sapa user pakai nama Moodle)
+// INTRO — sapa user pakai nama Moodle
 // ============================================================
-
-/**
- * Greeting berbasis waktu lokal browser (dihitung fresh tiap dibuka).
- *   5–10  → Selamat pagi
- *   11–14 → Selamat siang
- *   15–17 → Selamat sore
- *   else  → Selamat malam
- */
-function getGreeting() {
-    const h = new Date().getHours();
-    if (h >= 5 && h <= 10) return "Selamat pagi";
-    if (h >= 11 && h <= 14) return "Selamat siang";
-    if (h >= 15 && h <= 17) return "Selamat sore";
-    return "Selamat malam";
-}
-
-/** Hapus welcome screen kalau ada (dipanggil saat pesan pertama muncul). */
-function removeWelcome() {
-    const el = document.getElementById("ava-welcome");
-    if (el) el.remove();
-}
-
 function showIntro() {
-    // Hindari duplikat welcome
-    if (document.getElementById("ava-welcome")) return;
-
     const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
         ? MOODLE_USER_NAME.split(' ')[0]
         : 'A-Team';
 
-    const welcome = document.createElement("div");
-    welcome.id = "ava-welcome";
-    welcome.className = "animate__animated animate__fadeIn animate__faster";
-    welcome.innerHTML = `
-        <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
-        <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
-    `;
-
-    messages.appendChild(welcome);
+    addAIResponse(
+        `Hi **${nama}**! Aku **Ava**. ` +
+        `Ada yang bisa aku bantu hari ini terkait materi Amarthapedia? 😊`
+    );
 }
 
 async function loadHistory() {
@@ -257,8 +218,11 @@ async function clearChat() {
 // ============================================================
 // HELPERS
 // ============================================================
+function getTime() {
+    return new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+}
+
 function addMessage(text, type) {
-    removeWelcome();
     const wrap = document.createElement("div");
     wrap.className = `msg ${type} animate__animated animate__zoomIn animate__faster`;
 
@@ -276,6 +240,7 @@ function addMessage(text, type) {
 
     bubble.innerHTML = `
         <div class="content">${tempDiv.innerHTML}</div>
+        <span class="time">${getTime()}</span>
     `;
 
     wrap.appendChild(bubble);
@@ -343,12 +308,15 @@ function resetChat() {
  * Returns { wrap, contentDiv, bubble } to allow progressive updates.
  */
 function createStreamBubble() {
-    removeWelcome();
     let wrap = document.getElementById("typing-id");
     let bubble;
 
     const contentDiv = document.createElement("div");
     contentDiv.className = "content";
+
+    const timeSpan = document.createElement("span");
+    timeSpan.className = "time";
+    timeSpan.textContent = getTime();
 
     if (wrap) {
         // Reuse existing bubble to prevent visual drop
@@ -360,6 +328,7 @@ function createStreamBubble() {
             if (typingDiv) typingDiv.remove();
 
             bubble.appendChild(contentDiv);
+            bubble.appendChild(timeSpan);
         }
     } else {
         wrap = document.createElement("div");
@@ -369,6 +338,7 @@ function createStreamBubble() {
         bubble.className = "bubble ai streaming";
 
         bubble.appendChild(contentDiv);
+        bubble.appendChild(timeSpan);
         wrap.appendChild(bubble);
         messages.appendChild(wrap);
     }
@@ -642,7 +612,6 @@ async function send() {
 // FALLBACK: Client-side simulated streaming (when SSE fails)
 // ============================================================
 function streamMessageFallback(fullText, type) {
-    removeWelcome();
     const wrap = document.createElement("div");
     wrap.className = `msg ${type}`;
 
@@ -652,7 +621,12 @@ function streamMessageFallback(fullText, type) {
     const contentDiv = document.createElement("div");
     contentDiv.className = "content";
 
+    const timeSpan = document.createElement("span");
+    timeSpan.className = "time";
+    timeSpan.textContent = getTime();
+
     bubble.appendChild(contentDiv);
+    bubble.appendChild(timeSpan);
     wrap.appendChild(bubble);
     messages.appendChild(wrap);
 

@@ -76,10 +76,10 @@ def _ltm_lock_key(conv_id: str) -> str:
 def _key_ttl() -> int:
     """Key-level EXPIRE applied on EVERY write (C6).
 
-    Always the longest field TTL (`conversation_ttl_seconds`, 24h) regardless
+    Always the longest field TTL (`conversation_ttl_seconds`, 12h) regardless
     of which field is being written, so the key-level EXPIRE never truncates a
     still-live longer field (e.g. a `set_last_active` write with an 11h field
-    TTL must NOT pull the 24h `history` field's key down to 11h). This makes
+    TTL must NOT pull the 12h `history` field's key down to 11h). This makes
     the HASH eviction-eligible under `volatile-lru` without ever shortening a
     field's effective lifetime.
     """
@@ -208,7 +208,7 @@ async def append_to_history(
     writer raced us; convergence in <2 RTTs since per-conv writers are
     rare — single user, single tab).
 
-    Per-call TTL is `conversation_ttl_seconds` (24h default).
+    Per-call TTL is `conversation_ttl_seconds` (12h default).
     """
     if not conv_id:
         return 0

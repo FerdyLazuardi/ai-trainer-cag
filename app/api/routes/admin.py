@@ -1,3 +1,4 @@
+import secrets
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Security
@@ -13,7 +14,11 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def verify_api_key(api_key: str = Security(api_key_header)):
     settings = get_settings()
-    if api_key != settings.admin_api_key:
+    # Constant-time compare to avoid a timing side-channel that could let an
+    # attacker recover the admin key byte-by-byte. `secrets.compare_digest`
+    # requires str (not None), so reject the missing-header case first —
+    # APIKeyHeader(auto_error=False) yields None when the header is absent.
+    if not api_key or not secrets.compare_digest(api_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return api_key
 
