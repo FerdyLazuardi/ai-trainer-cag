@@ -380,6 +380,15 @@ def get_generate_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
+        # streaming=True makes ainvoke() stream tokens internally from Gemini,
+        # so the graph's astream_events surfaces real per-token
+        # on_chat_model_stream events (the SSE handler in chat.py already
+        # consumes them). Without it, ainvoke blocks for the full answer and the
+        # "stream" is just a frontend setTimeout animation. stream_usage=True is
+        # REQUIRED alongside it — otherwise usage/cached_tokens come back empty
+        # while streaming and _log_cache_usage would report false 0% hits.
+        streaming=True,
+        stream_usage=True,
         extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
@@ -413,6 +422,10 @@ def get_empathy_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
+        # See get_generate_llm: real token streaming for the SSE path +
+        # stream_usage so cache accounting still works while streaming.
+        streaming=True,
+        stream_usage=True,
         extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
