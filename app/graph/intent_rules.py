@@ -191,6 +191,37 @@ _TOPIC_LIST_PHRASES = (
     "what do you have", "what can i learn", "what can you teach",
 )
 
+# Regex backstop for TOPIC_LIST phrasings the fixed-substring list above misses:
+# the `-nya` suffix ("topiknya apa aja", "materinya apa saja") and the reversed
+# word order ("apa aja topiknya"). These are the exact forms that were falling
+# through to KNOWLEDGE — where only `final_top_k` chunks are retrieved, spanning
+# a SUBSET of courses, so the model listed 3 topics instead of all 5. Routing
+# them to TOPIC_LIST instead pulls the complete, ground-truth course list from
+# Postgres. Anchored to a topic-meta marker on BOTH sides so content questions
+# ("produk apa aja", "prinsip apa aja") do NOT match and stay KNOWLEDGE.
+_TOPIC_MARKER = r"(?:topik|tema|materi|course|kursus|pelatihan|modul|pembelajaran)"
+_TOPIC_LIST_RE = re.compile(
+    # marker(nya) … apa aja/saja      "topiknya apa aja", "materi apa saja"
+    rf"\b{_TOPIC_MARKER}(?:nya)?\b[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja|yg ada|yang ada)\b"
+    # apa aja/saja … marker(nya)      "apa aja topiknya"
+    rf"|\bapa\s*(?:aja|saja)\b[^.?!\n]{{0,6}}\b{_TOPIC_MARKER}(?:nya)?\b"
+    # marker(nya) + apa at END        "topiknya apa", "materinya apa sih"
+    rf"|\b{_TOPIC_MARKER}(?:nya)?\s+apa\b(?:\s+(?:sih|dong|donk|ya|yaa|jir|woi|kak|ka|min))?\s*\??\s*$"
+    # belajar/pelajari + apa aja/saja "bisa belajar apa aja", "mau belajar apa saja"
+    rf"|\b(?:belajar|pelajari|dipelajari)\b[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja)\b",
+    re.IGNORECASE,
+)
+
+# Fluff/connective tokens that carry no topic content. Used by the bare-"apa aja"
+# whole-message check below: if stripping these leaves NOTHING, the message is a
+# context-free "what's available?" → topic list. A content noun like "produk" in
+# "produk apa aja" survives the strip, so that stays KNOWLEDGE.
+_BARE_APAAJA_FLUFF = {
+    "emang", "emng", "mang", "ada", "apa", "aja", "saja", "kah", "sih", "dong",
+    "donk", "ya", "yaa", "yah", "kak", "ka", "min", "bang", "gan", "jir", "woi",
+    "tu", "itu", "yg", "yang", "ini", "tuh", "deh", "nih", "ni", "kira", "kirakira",
+}
+
 # Greeting/filler tokens used to decide whether a message is a PURE greeting or
 # a greeting that PREFIXES a real question ("pagi, modal itu apa"). Only the
 # former should short-circuit to GREETING; the latter must reach the LLM so the
@@ -316,7 +347,20 @@ def _is_topic_list(low: str) -> bool:
     """
     if len(low) > 80:
         return False
-    return any(p in low for p in _TOPIC_LIST_PHRASES)
+    if any(p in low for p in _TOPIC_LIST_PHRASES):
+        return True
+    if _TOPIC_LIST_RE.search(low):
+        return True
+    # Bare context-free "what's available?" — "apa aja", "emng ada apa aja".
+    # Only fires when the WHOLE message is fluff + "apa aja" with NO content
+    # noun. A content word ("produk apa aja", "prinsip apa aja") survives the
+    # strip → stays KNOWLEDGE. Requires "apa" present so a pure greeting/filler
+    # ("ada", "emang") doesn't match.
+    if "apa" in low:
+        tokens = re.findall(r"[a-zA-ZÀ-ſ]+", low)
+        if tokens and all(t in _BARE_APAAJA_FLUFF for t in tokens):
+            return True
+    return False
 
 
 def classify(text: str) -> Optional[Intent]:

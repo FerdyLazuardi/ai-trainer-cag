@@ -307,13 +307,19 @@ class Settings(BaseSettings):
     # relevant hits before fusion. Widening the pool costs ~nothing — it does
     # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
     retrieval_top_k: int = 20
-    # Final number of fused chunks fed to the generate LLM. 3 (was 4): the
-    # safety + harassment cases need ≤ 3 chunks; the multi-hop KB hot-fix
-    # showed 3 chunks gives the same answer as 4 for 85% of queries. The
-    # dropped chunk is always the lowest-fused score. Saves ~225 input
-    # tokens/turn (~18% on the chunk portion). If multi-hop quality
-    # regresses, raise to 4.
-    final_top_k: int = 3
+    # Final number of fused chunks fed to the generate LLM. 5 (was 3): raised
+    # for better recall on multi-item / enumeration questions ("produk apa aja",
+    # "sebutkan semua") where the answer can span several chunks — the prior 3
+    # occasionally missed an item that lived in a 4th/5th chunk. NOTE: tried 8
+    # to fix an enumeration completeness bug (a product dropping from the list),
+    # but a retrieval dump proved the doc's SUMMARY chunk (full item list) is
+    # already retrieved at 5 — the dropout was the model enumerating from
+    # per-item chunks, not the summary. 8 only pulled in distractor chunks
+    # (business-model/security) that made the model MIS-classify a support
+    # service as a product. The real fix is prompt-side (anchor enumeration to
+    # the summary list); top_k stays 5. The whole context block is bounded by
+    # max_context_tokens=3000 (truncate_to_tokens). Lower to 3 if cost bites.
+    final_top_k: int = 5
     # Per-chunk char cap for the LMS generate path. 1600 (was 1000): 5/52
     # KB chunks exceed 1000 (largest 1513) and were silently trimmed at
     # retrieval — "Profile-Amartha.md" 8-DNA list was cut at "Planning &
@@ -362,41 +368,30 @@ class Settings(BaseSettings):
     embedding_backoff_base_seconds: float = 0.5
     embedding_backoff_max_seconds: float = 4.0
 
-    # ─── How-to / step-by-step formatting ───────────────────────────────────
-    # When a KNOWLEDGE query is a how-to/teach-me request ("gimana cara X",
-    # "ajarin aku X"), SYSTEM_PROMPT rule 5 tells the model to answer as numbered
-    # steps. This caps the step count so the reply stays scannable on mobile
-    # (~1 screen on a 13k-user FO phone). (The old float-driven MENTOR mode +
-    # learning_context_threshold were removed when the pre-processor was slimmed
-    # to intent + rewrite only; step formatting is now intent/prompt-driven.)
+    # ─── Conversational LLM ──────────────────────────────────────────────────
+    # The collapsed pipeline uses ONE conversational LLM (get_chat_llm →
+    # generate_node) for greetings, identity, meta-turns, vents, and grounded KB
+    # answers. Non-zero temperature so Ava feels like a real chat AI rather than
+    # a stiff form-filler; kept moderate (0.4) so it stays grounded when
+    # <retrieved_context> is present. Tunable without a code change — raise for
+    # more warmth/variation, lower if it drifts off the grounded facts.
+    chat_llm_temperature: float = 0.4
+    # DEPRECATED (kept to avoid a settings-schema break): the old MENTOR step cap
+    # and empathy-path temperature. No longer referenced after the pipeline was
+    # collapsed to one conversational prompt — length + warmth are now handled in
+    # CONVERSATIONAL_PROMPT + chat_llm_temperature. Safe to delete once confirmed
+    # nothing external reads them.
     lms_scaffolding_max_steps: int = 5
-
-    # ─── Empathy LLM (temp-0 mode-collapse fix) ──────────────────────────────
-    # Gemini Flash Lite at temperature 0.0 is DETERMINISTIC and, on the vent
-    # path, collapses onto the prior assistant turn in history — re-emitting it
-    # byte-for-byte and ignoring both the new user message AND the per-turn
-    # anti-repetition signal (verified via DEBUG_GEN: the signal fires, the model
-    # ignores it). Prompt-only variation cannot fix a model that ignores the
-    # prompt. So the BRAINSTORM/vent path uses a separate LLM at a non-zero
-    # temperature to break determinism and produce genuinely varied, on-topic
-    # replies. Selected by intent==BRAINSTORM in _generate_node — KNOWLEDGE turns
-    # stay at temp 0.0 for factual/channel fidelity. Configurable so it can be
-    # tuned without a code change; 0.6 gives clear variation without going
-    # incoherent. (The old empathy_temp_* float gates were removed with the
-    # pre-processor slim-down; LLM selection is now intent-driven.)
     empathy_llm_temperature: float = 0.6
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    # Query→answer cache lifetime (Redis exact-match + Qdrant semantic cache).
-    # 7d: the KB is near-static (updates ~yearly) so a long TTL maximizes hit
-    # rate, but we cap at 7 days NOT a year on purpose: (1) if any KB-update path
-    # ever skips flush_cache_by_course, a stale answer's blast radius is bounded
-    # to a week, not a year; (2) the semantic cache's real retention is
-    # min(TTL, time-to-fill _SEMANTIC_CACHE_MAX_POINTS) — at 13k users the 50k
-    # size cap evicts oldest-first long before a year, so a year-long TTL would
-    # be fictional unless the cap is raised too. Revisit to 30d + a larger cap
-    # once post-launch traffic is understood. Expired semantic-cache points are
-    # pruned lazily; mem_limit caps worst-case RAM.
+    # Query→answer cache lifetime (Redis exact-match only; the Qdrant semantic
+    # layer was removed to eliminate cross-user/cross-tone leaks). 7d: the KB is
+    # near-static (updates ~yearly) so a long TTL maximizes hit rate, but we cap
+    # at 7 days NOT a year on purpose: if any KB-update path ever skips
+    # flush_cache_by_course, a stale answer's blast radius is bounded to a week,
+    # not a year. Redis evicts via native TTL (no manual prune needed); revisit
+    # to 30d once post-launch traffic is understood.
     cache_query_ttl_seconds: int = 604800
     # 12h: must outlive `ltm_afk_threshold_seconds` (10h) so STM history+summary
     # survive long enough for the AFK LTM worker to consume them, with a 2h
@@ -407,20 +402,24 @@ class Settings(BaseSettings):
     # now rides this same HASH (B1), so it inherits this lifetime too.
     conversation_ttl_seconds: int = 43200
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
-    # Max fresh (un-summarized) conversation turns fed to generate_node. 2
-    # (was 3): the rolling summary captures everything older, and the 3rd
-    # prior turn is almost always paraphrased in the summary anyway. 2 keeps
-    # one prior user/AI pair + current = 3 messages, which is enough for
-    # entity binding while saving ~250 input tokens/turn on the typical
-    # 4-5 turn session.
-    max_fresh_turns: int = 2
-    # Per-AI-reply char cap for STM history sent to generate_node. 250
-    # (was 400): the pre-processor already summarises AI history at 300 chars
-    # in its history-str; 400 compounded across 4 fresh turns = ~1600 chars
-    # in generate_node's history section. 250 keeps the gist + entity names
-    # for the typical 2-3 turn follow-up while cutting history section size
-    # by ~37% (saves ~150 tokens/turn on multi-turn queries).
-    max_history_ai_chars: int = 250
+    # Max fresh (un-summarized) conversation turns fed to generate_node. 5
+    # (was 2): the old value was tuned for the multi-call architecture where a
+    # separate pre-processor LLM rewrote queries. In the conversational single-
+    # call design the generate LLM IS the memory — so it must SEE enough raw
+    # turns to answer "udah bahas apa aja" accurately instead of fabricating from
+    # freshly-retrieved KB chunks. STM already loads 5 fresh turns (chat.py
+    # get_or_summarize_history max_fresh_turns=5), so 5 here ALIGNS generate's
+    # window with what STM provides (was a mismatch: STM kept 5, generate saw 2).
+    # Older turns beyond 5 are still covered by the rolling summary
+    # (<previous_context>). Costs ~+700 non-cached input tok/turn on a long
+    # session — acceptable for accurate recall.
+    max_fresh_turns: int = 5
+    # Per-AI-reply char cap for STM history sent to generate_node. 600 (was 250):
+    # 250 truncated Ava's own list answers mid-way (an 8-principle reply is
+    # ~400-500 chars), so on a later "what were the principles?" the model saw a
+    # fragment and reconstructed the rest wrongly (said 5, not 8). 600 holds a
+    # full enumerated answer so the model recalls its OWN prior replies verbatim.
+    max_history_ai_chars: int = 600
     # AFK window before LTM sync fires. 10h matches "user closed laptop / went
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.

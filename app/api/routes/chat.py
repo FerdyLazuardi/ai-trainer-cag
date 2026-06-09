@@ -20,7 +20,7 @@ from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
 from app.database.models import UserProfile
-from app.graph.pipeline import get_rag_graph, _route_after_rag
+from app.graph.pipeline import get_rag_graph, _route_after_rag, _META_CONVO_RE
 from app.graph.state import RAGState
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
@@ -422,8 +422,10 @@ async def _prepare_rag_context(
 ) -> dict:
     """Shared context preparation for both /chat and /chat/stream.
 
-    Computes the query embedding ONCE and reuses it for both the semantic
-    cache lookup and the LTM lookup, avoiding redundant embedding API calls.
+    Computes the query embedding ONCE for the LTM lookup (and reuses it in the
+    graph's rag_node when the retrieval query is unchanged), avoiding redundant
+    embedding API calls. The query cache is Redis exact-match only and does NOT
+    use the embedding.
     """
     from llama_index.core import Settings as LISettings
     from app.config.embedding_config import ensure_llamaindex_configured
@@ -452,6 +454,11 @@ async def _prepare_rag_context(
     # to opinion/vent queries causes shape mismatch (e.g. user asks "menurut
     # kamu mana paling kritis" but cache returns a flat list).
     # Cheap regex check; full intent classification still happens in graph.
+    #
+    # TOPIC_LIST is skipped too: it's answered from the live Postgres course
+    # list and is never written to the cache (excluded from the write gate), so
+    # a lookup would always miss — skipping it just saves the round-trip and
+    # keeps the answer bound to live Postgres data rather than a stale snapshot.
     import re
     _OPINION_REGEX = re.compile(
         r"\b(menurut|menurutmu|pendapat|opini|kasih saran|sarankan|advice|"
@@ -464,12 +471,15 @@ async def _prepare_rag_context(
     )
     skip_cache = (
         _skip_embedding
+        or _tier1_intent == "TOPIC_LIST"
         or _is_bare_affirmation(resolved_query)
         or bool(_OPINION_REGEX.search(resolved_query))
+        or bool(_META_CONVO_RE.search(resolved_query))
     )
     if skip_cache:
         logger.debug(
-            "Cache lookup skipped — greeting/filler or opinion/synthesis pattern",
+            "Cache lookup skipped — greeting/filler, opinion/synthesis, or "
+            "meta-conversation recall pattern",
             query=resolved_query[:60],
         )
 
@@ -484,13 +494,11 @@ async def _prepare_rag_context(
             get_cached_response(
                 resolved_query,
                 course_id=request.course_id,
-                query_embedding=query_embedding,
                 cache_namespace=private_ns,
             ),
             get_cached_response(
                 resolved_query,
                 course_id=request.course_id,
-                query_embedding=query_embedding,
                 cache_namespace=global_ns,
             )
         )
@@ -835,11 +843,11 @@ async def _run_chat(
     # affirmation. NOTE: the former MENTOR-shape exclusion (skip-cache when
     # learning_context >= threshold) was dropped when the pre-processor was
     # slimmed to intent-only — step-by-step how-to answers are now cacheable
-    # too. Low collision risk: the semantic cache match threshold is 0.88, so a
-    # "gimana cara X" (steps) answer won't be served to an "apa itu X"
-    # (definition) paraphrase unless they're near-identical queries.
+    # too. Collision-safe: the cache is Redis exact-match only, so a "gimana
+    # cara X" answer is only ever re-served to a byte-identical re-ask, never a
+    # paraphrase.
     if (
-        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "BRAINSTORM")
+        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
         and not is_low_relevance
         and not _is_bare_affirmation(request.query)
     ):
@@ -850,7 +858,6 @@ async def _run_chat(
             answer=answer,
             sources=sources, # we can pass dict directly since the schema validation handles it
             course_id=effective_course_id,
-            query_embedding=query_embedding,
             cache_namespace=ns,
         )
     background_tasks.add_task(
@@ -1020,90 +1027,14 @@ async def chat_stream(
 
         return StreamingResponse(_stream_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # ── Redis greeting cache check (before Tier-1) ───────────────────────────
-    # Any query that was previously answered as GREETING (from LangGraph or
-    # Tier-1 fast-path) is cached here with 1h TTL. This catches sapaan like
-    # "assalamualaikum" that don't match Tier-1 regex but were cached after
-    # first LangGraph run. Serves ~7ms from Redis, bypassing everything.
-    _low_q = resolved_query.lower().strip()
-    _greeting_cache_key = f"rag:greeting:{_low_q[:80]}"
-    _redis_client = get_redis_client()
-    _cached_greeting_resp = None
-    try:
-        _cached_greeting_resp = await _redis_client.get(_greeting_cache_key)
-    except Exception:
-        pass
-
-    if _cached_greeting_resp:
-        _cached_greeting_text = _cached_greeting_resp if isinstance(_cached_greeting_resp, str) else _cached_greeting_resp.decode()
-        logger.info("Greeting Redis cache HIT", query=resolved_query[:60])
-
-        async def _stream_greeting_cached():
-            try:
-                sem_release()
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                yield f"data: {json.dumps({'token': _cached_greeting_text})}\n\n"
-                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
-                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=_cached_greeting_text)
-                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
-            finally:
-                pass
-
-        return StreamingResponse(_stream_greeting_cached(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-    # ── Tier-1 fast-path: bypass LangGraph entirely for GREETING/AMBIGUOUS ──
-    # Entering the graph via astream_events adds ~300ms of framework + routing
-    # overhead before the first token (measured: canned-via-graph TTFT ~350ms
-    # vs this direct bypass ~50ms; full graph traversal also pays a ~2s one-time
-    # cold-start on first request). For Tier-1 intents we already know the
-    # response, so we stream it directly and skip that ~300ms entirely.
-    # (Historical note: an earlier pipeline made this overhead ~15-50s; that is
-    # NO LONGER the case on the current build — the win here is ~300ms, but it's
-    # the cheapest possible path for the most trivial queries so we keep it.)
-    from app.graph.intent_rules import classify as _t1_classify, _is_greeting as _is_pure_greeting, _is_identity_question
-    _t1_intent = _t1_classify(resolved_query)
-    if _t1_intent in ("GREETING", "AMBIGUOUS"):
-        low_q = _low_q
-
-        # Determine fast reply
-        if _t1_intent == "GREETING":
-            if _is_pure_greeting(low_q):
-                if any(c in low_q for c in ("halo", "hai", "hei", "pagi", "siang", "sore", "malam", "selamat", "permisi", "assalam", "waalaikum")):
-                    _fast_reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
-                else:
-                    _fast_reply = "Hi! Anything I can help with from Amarthapedia?"
-            elif _is_identity_question(low_q):
-                if any(c in low_q for c in ("kamu", "lu", "lo", "ini apps", "ini aplikasi", "perkenalkan")):
-                    _fast_reply = "Aku Ava, asisten AI di Amarthapedia — LMS internal Amartha untuk karyawan. Bisa bantu cari info dari materi training soal produk, kebijakan, atau topik lain di Amarthapedia. Mau tanya soal apa?"
-                else:
-                    _fast_reply = "I'm Ava, the AI assistant for Amarthapedia — Amartha's internal LMS for employees. What would you like to know?"
-            else:
-                _fast_reply = "Halo! Ada yang bisa aku bantu seputar materi Amarthapedia?"
-        else:  # AMBIGUOUS / pure filler
-            if any(ord(c) > 127 for c in resolved_query):
-                _fast_reply = "Ada yang bisa aku bantu? Boleh sebut topiknya ya."
-            else:
-                _fast_reply = "Anything I can help with? Feel free to name a topic."
-
-        # Cache this greeting response for 1 hour
-        try:
-            await _redis_client.set(_greeting_cache_key, _fast_reply, ex=3600)
-        except Exception:
-            pass
-
-        async def _stream_tier1():
-            try:
-                sem_release()
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                yield f"data: {json.dumps({'token': _fast_reply})}\n\n"
-                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
-                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=_fast_reply)
-                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
-            finally:
-                pass
-
-        logger.info(f"Tier-1 fast-path bypass LangGraph: {_t1_intent}", query=resolved_query[:60])
-        return StreamingResponse(_stream_tier1(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    # NOTE: the Redis greeting-cache short-circuit and the Tier-1 fast-path
+    # (which bypassed the graph for GREETING/AMBIGUOUS with canned replies) were
+    # removed when the pipeline was collapsed to a single conversational LLM.
+    # They were the source of the "yang benerlah → identity intro" misroute:
+    # edge phrasings hit the regex identity check and got a canned self-intro.
+    # All turns now flow through the conversational graph, which handles
+    # greetings/identity/meta-turns naturally in one prompt. The Redis exact
+    # cache (checked above) still short-circuits byte-identical re-asks.
 
     initial_state = context["initial_state"]
     rag_graph = get_rag_graph()
@@ -1299,19 +1230,6 @@ async def chat_stream(
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
 
-        # ── Greeting Redis cache write ─────────────────────────────────────
-        # Cache GREETING responses so repeated sapaan ("assalamualaikum",
-        # "selamat pagi", etc.) from 13k users are served instantly next time
-        # without going through LangGraph again. TTL 1h — greeting responses
-        # are static and don't need freshness guarantees.
-        if intent == "GREETING" and full_answer and len(full_answer) < 500:
-            try:
-                _greeting_key = f"rag:greeting:{resolved_query.lower().strip()[:80]}"
-                await get_redis_client().set(_greeting_key, full_answer, ex=3600)
-                logger.debug("Greeting response cached", query=resolved_query[:60])
-            except Exception:
-                pass
-
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
             stream_dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
@@ -1333,9 +1251,9 @@ async def chat_stream(
             is_low_relevance_stream = _route_after_rag(cast(RAGState, _gate_state)) == "low_relevance"
             # Mirrors the non-stream cache gate. The former MENTOR-shape
             # exclusion (learning_context >= threshold) was dropped with the
-            # pre-processor slim-down — how-to answers are cacheable now; the
-            # 0.88 semantic match threshold keeps step vs definition collisions
-            # unlikely.
+            # pre-processor slim-down — how-to answers are cacheable now. The
+            # cache is Redis exact-match only (no semantic layer), so a cached
+            # answer is only ever re-served to a byte-identical re-ask.
             if (
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
                 and not is_low_relevance_stream
@@ -1347,7 +1265,6 @@ async def chat_stream(
                     answer=full_answer,
                     sources=sources,
                     course_id=effective_course_id,
-                    query_embedding=query_embedding,
                     cache_namespace=ns,
                 )
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)

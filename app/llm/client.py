@@ -400,6 +400,39 @@ def get_generate_llm() -> ChatOpenAI:
 
 
 @lru_cache(maxsize=1)
+def get_chat_llm() -> ChatOpenAI:
+    """The single conversational LLM for the collapsed pipeline (generate_node).
+
+    One Gemini 2.5 Flash Lite client at a NON-ZERO temperature
+    (`chat_llm_temperature`, default 0.4) — warm enough to feel like a real chat
+    AI, low enough to stay grounded when <retrieved_context> is present. Replaces
+    the old get_generate_llm (temp 0) + get_empathy_llm (temp 0.6) split: there's
+    one conversational prompt now, so one client. Keeps the same model/provider
+    (google-vertex, best cache hit + cheapest), real token streaming, and usage
+    accounting flags as get_generate_llm.
+    """
+    llm = ChatOpenAI(
+        model=settings.cheap_llm_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+        temperature=settings.chat_llm_temperature,
+        max_tokens=1024,
+        request_timeout=30,
+        max_retries=1,
+        http_async_client=_make_http_client(),
+        streaming=True,
+        stream_usage=True,
+        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        default_headers={
+            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "X-Title": "AI LMS RAG Agent (Chat)",
+        },
+    )
+    _wrap_with_retry(llm)
+    return llm
+
+
+@lru_cache(maxsize=1)
 def get_empathy_llm() -> ChatOpenAI:
     """Vent/empathy-path LLM at a NON-ZERO temperature.
 

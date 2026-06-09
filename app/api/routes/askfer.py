@@ -66,21 +66,11 @@ async def askfer_stream(
     query = request.query
     logger.info("Askfer request", query=query[:80], ip=client_ip)
 
-    # Cache lookup (askfer namespace — fully isolated from Ava)
-    from llama_index.core import Settings as LISettings
-    from app.config.embedding_config import ensure_llamaindex_configured
-
-    query_embedding = None
-    try:
-        ensure_llamaindex_configured()
-        query_embedding = await LISettings.embed_model.aget_query_embedding(query)
-    except Exception as exc:
-        logger.warning(f"Askfer embed-once failed: {exc}")
-
+    # Cache lookup (askfer namespace — fully isolated from Ava). Redis
+    # exact-match only: no embedding needed (the semantic layer was removed).
     cached = await get_cached_response(
         query,
         course_id=None,
-        query_embedding=query_embedding,
         cache_namespace=_CACHE_NS,
     )
 
@@ -212,7 +202,6 @@ async def askfer_stream(
                     answer=full_answer,
                     sources=sources,
                     course_id=None,
-                    query_embedding=query_embedding,
                     cache_namespace=_CACHE_NS,
                 )
             await batch_logger.add_log({

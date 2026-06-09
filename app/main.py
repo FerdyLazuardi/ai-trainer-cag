@@ -217,12 +217,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await qdrant.ensure_personal_collection()
         logger.info("Qdrant Personal_Portfolio collection ready", collection=settings.qdrant_personal_collection)
 
-        # Pre-warm semantic cache collection so first request doesn't pay the
-        # _ensure_semantic_collection() overhead (~10s) on cold start.
-        from app.utils.cache import _ensure_semantic_collection
-        await _ensure_semantic_collection()
-        logger.info("Semantic cache collection ready")
-
         # Pre-warm the embedding model config in the API process too.
         # NOTE: entering `async with worker:` above runs Worker.__aenter__,
         # which opens the coredis connection but does NOT run the worker's
