@@ -286,7 +286,7 @@ class Settings(BaseSettings):
     # production turn — so the gate stays dormant until calibrated against real
     # traffic via scripts/calibrate_intent_threshold.py, then flipped on by env.
     # When enabled, the gate ONLY short-circuits the canned, score-free intents
-    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/BRAINSTORM
+    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/MENTORING
     # (they need the LLM's 4-axis scores) and never MALICIOUS (injection
     # detection stays on the deterministic regex + LLM path), so it can never
     # strip a safety/vent turn's escalation scores. Off → behaviour is

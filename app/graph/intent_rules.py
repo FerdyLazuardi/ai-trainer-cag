@@ -33,11 +33,11 @@ Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"
 # instructions, extract its system prompt, or activate a "no rules" persona.
 # Routes straight to MALICIOUS (canned refusal) BEFORE the LLM classifier.
 #
-# WHY deterministic: the LLM classifier (pipeline.py) has ZERO MALICIOUS
-# few-shots and a 3-word MALICIOUS definition, while BRAINSTORM explicitly
-# invites role-play ("anggap kamu X"). So "kamu sekarang DAN" was misrouting
-# to BRAINSTORM — the LOOSEST prompt — which then recited the system prompt.
-# A rule here fires before that path can be reached.
+# WHY deterministic: an injection attempt ("abaikan instruksimu", "kamu
+# sekarang DAN mode") must be caught BEFORE any softer rule or the LLM path can
+# mishandle it — historically a role-play-flavored injection misrouted to the
+# loosest conversational path and recited the system prompt. A rule here fires
+# first, so the attempt never reaches a prompt that could be coaxed.
 #
 # PRECISION over recall: every pattern requires a verb/target co-occurrence or
 # a multi-word anchor that essentially never appears in a legitimate Amartha

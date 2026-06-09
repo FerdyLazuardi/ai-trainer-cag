@@ -56,6 +56,58 @@ If <context> is absent or doesn't actually answer a factual Amartha question, sa
 </no_context>"""
 
 
+# Socratic mentoring prompt — used ONLY when the user opted into mentoring mode
+# (ChatRequest.mentoring_mode → intent=MENTORING). Same persona + anti-leak
+# contract as the conversational prompt; the difference is the teaching stance:
+# for diagnostic/reasoning questions Ava asks ONE grounded guiding question
+# before answering, then confirms + teaches. Pure factual lookups are still
+# answered directly (asking someone to "guess" an interest rate is absurd).
+SOCRATIC_PROMPT = f"""<role>
+{PERSONA}
+</role>
+
+{OUTPUT_CONTRACT}
+
+<mode>
+You are in MENTORING mode: the user switched on a "Mentoring" toggle because they want to LEARN, not just get a quick answer. Your job is to be a warm, patient teacher who helps them think — like a senior colleague coaching a newer one — not a search engine that dumps facts. Match the user's language (ID/EN) and use "aku/kamu".
+</mode>
+
+<when_to_ask_vs_answer>
+FIRST decide what kind of question this is — this is the most important judgment:
+- DIAGNOSTIC / REASONING (a "why" or "how-should-I" about the user's own work — "kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): THIS is where you teach Socratically. Open with ONE short guiding question that invites them to reason first.
+- PURE FACTUAL LOOKUP (a definition, number, name, policy, or list — "berapa bunga Modal", "apa itu Client Protection", "produk apa aja"): answer DIRECTLY and completely. Do NOT ask them to guess a fact — that's annoying, not pedagogical. Mentoring mode does not turn facts into quizzes.
+When unsure which it is, lean toward answering directly — a needless quiz is worse than a direct answer.
+</when_to_ask_vs_answer>
+
+<how_to_ask>
+When you do ask a guiding question:
+- Ask exactly ONE question, short and concrete — never a list of questions, never a wall of text before it.
+- The question must be GROUNDED in <retrieved_context>: hint toward what the materials actually say, don't fish for something not in the KB. You are nudging them toward the real answer, not testing trivia.
+- Always give an exit: end with a light "...coba tebak dulu ya, atau kalau mau langsung aku jelasin bilang aja." The user must never feel trapped in a guessing loop.
+- Example shape: user asks "kok mitra aku susah ditagih?" → "Sebelum aku jelasin — menurut kamu, apa yang biasanya bikin nasabah mulai susah ditagih? Coba tebak dulu, nanti aku konfirm. (Atau kalau mau langsung, bilang aja.)"
+</how_to_ask>
+
+<after_they_answer>
+When the user responds to your guiding question (a guess, a partial idea, even "ga tau"):
+- Acknowledge it warmly. If they got part of it right, name what they nailed. If they're off, correct gently without making them feel dumb.
+- THEN give the full, grounded answer from <retrieved_context>. This is the payoff — don't withhold it.
+- Do NOT ask another guiding question on the same topic. One round of guess-then-teach is the limit; after they've engaged once, you teach. Looping "menurut kamu gimana?" again is exactly the failure to avoid.
+- If they said "ga tau" / "langsung aja" / "males nebak", skip straight to teaching — no guilt, no second nudge.
+</after_they_answer>
+
+<read_the_room>
+Drop the Socratic stance and just answer directly when the user signals urgency or frustration — "yang bener dong", "capek", "langsung aja", "buru-buru", "cepet", or an obviously stressed tone. A good teacher knows when NOT to ask questions. Helping fast IS the teaching in those moments.
+</read_the_room>
+
+<grounding>
+Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Aku belum nemu ini di materiku") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
+</grounding>
+
+<length>
+Guiding question: 1-3 sentences, light and inviting. The teaching answer after they engage: as long as needed to be complete and grounded — numbered steps for a procedure, bullets for a list, prose for an explanation. Warm but never padded.
+</length>"""
+
+
 # ─── Nodes ───────────────────────────────────────────────────────────────────
 
 # Strips leaked instruction blocks from the LLM response. Some models
@@ -222,8 +274,8 @@ async def _incr_parse_failure_metric() -> None:
     Bucketed by UTC date so the key self-expires (7-day retention) and gives a
     per-day failure rate that ops can scrape with a single SCAN/GET. Never
     raises — a metrics write must never break the request path. A rising count
-    here means the pre-processor LLM is returning malformed JSON often enough
-    that the BRAINSTORM+empathy fail-safe is firing, i.e. silent quality decay.
+    here means the pre-processor is failing to classify cleanly often enough to
+    fall back to a default intent, i.e. silent quality decay.
     """
     try:
         from datetime import datetime, timezone
@@ -410,12 +462,27 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         if prior_user:
             retrieval_query = f"{prior_user.strip()} {user_msg_str.strip()}".strip()
 
-    logger.info(f"Pre-processor: intent=KNOWLEDGE retrieval='{retrieval_query[:60]}...'")
+    # ── Mentoring (Socratic) promotion ──────────────────────────────────────
+    # When the user has the mentoring toggle ON (state.mentoring_mode), a real
+    # question becomes a MENTORING turn instead of KNOWLEDGE. generate_node then
+    # uses SOCRATIC_PROMPT — which opens diagnostic/reasoning asks with ONE
+    # grounded guiding question, but still answers pure factual lookups directly
+    # (that fact-vs-diagnostic split is an LLM judgment in the prompt, not a
+    # fragile regex here). Retrieval runs either way: a guiding question must be
+    # grounded in the KB, not invented.
+    intent = "MENTORING" if state.get("mentoring_mode") else "KNOWLEDGE"
+    logger.info(f"Pre-processor: intent={intent} retrieval='{retrieval_query[:60]}...'")
     return {
-        "intent": "KNOWLEDGE",
+        "intent": intent,
         "rewritten_query": user_msg_str,
         "retrieval_query": retrieval_query,
-        "intent_scores": {"needs_lookup": 1.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+        "intent_scores": {
+            "needs_lookup": 1.0,
+            "needs_reasoning": 1.0 if intent == "MENTORING" else 0.0,
+            "needs_empathy": 0.0,
+            "needs_safety_escalation": 0.0,
+            "learning_context": 0.0,
+        },
     }
 
 
@@ -556,13 +623,19 @@ def _get_course_cache_lock() -> asyncio.Lock:
 
 
 async def _load_course_names() -> list[str]:
-    """Distinct `course_name` values from the documents table, TTL-cached (10min).
+    """Distinct TOPIC labels from the documents table, TTL-cached (10min).
 
-    The ground-truth list of topics/materials Ava actually has. Injected into the
-    generate prompt on a TOPIC_LIST turn so "ada materi apa aja" is answered from
-    real data instead of fabricated (the bug: without this the model invented
-    plausible-sounding topics). Single-flight via asyncio.Lock so concurrent
+    The ground-truth list of topics Ava actually has, injected into the generate
+    prompt on a TOPIC_LIST turn so "ada materi apa aja" is answered from real
+    data instead of fabricated. Single-flight via asyncio.Lock so concurrent
     requests don't stampede Postgres on cache expiry.
+
+    Topic label = the Moodle SECTION name when present, else the per-file
+    `course_name` (backward-compat for docs ingested before section_name
+    existed). COALESCE(NULLIF(section_name,''), course_name) means several files
+    in one Moodle section (e.g. modal.md + celengan.md under "Product Amartha")
+    collapse to ONE topic entry instead of spamming one row per file — the
+    manual Moodle section structure becomes the topic taxonomy.
     """
     import time as _time
 
@@ -582,16 +655,23 @@ async def _load_course_names() -> list[str]:
 
         try:
             async with AsyncSessionLocal() as session:
+                # Prefer the Moodle section name; fall back to course_name when a
+                # doc has no section_name (pre-section_name ingests). The outer
+                # filter drops rows where BOTH are empty.
+                topic_expr = (
+                    "COALESCE(NULLIF(metadata->>'section_name', ''), "
+                    "metadata->>'course_name')"
+                )
                 stmt = (
-                    select(distinct(sql_text("metadata->>'course_name'")).label("course_name"))
+                    select(distinct(sql_text(topic_expr)).label("topic"))
                     .select_from(sql_text("documents"))
-                    .where(sql_text("metadata->>'course_name' IS NOT NULL"))
-                    .where(sql_text("metadata->>'course_name' <> ''"))
+                    .where(sql_text(f"{topic_expr} IS NOT NULL"))
+                    .where(sql_text(f"{topic_expr} <> ''"))
                 )
                 rows = (await session.execute(stmt)).all()
-                courses = sorted({r.course_name for r in rows if r.course_name})
+                courses = sorted({r.topic for r in rows if r.topic})
         except Exception as exc:
-            logger.warning(f"Course-name load failed (Postgres): {exc}")
+            logger.warning(f"Topic-name load failed (Postgres): {exc}")
             return []
 
         _course_cache["courses"] = courses
@@ -725,9 +805,15 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     #     "produk apa aja" giving a different list each time at temp 0.4.
     #   - CONVERSATIONAL turn (greeting, identity, vent, meta, no context) →
     #     temp 0.4 (get_chat_llm) so chit-chat stays warm and natural.
-    # Both clients share the same model/provider/streaming/usage flags, and the
-    # cached system prefix is identical, so this does NOT break prompt caching.
-    _is_grounded = has_kb_context or bool(topics_section)
+    #   - MENTORING turn → temp 0.4 (get_chat_llm): the Socratic guiding question
+    #     needs warmth/variation to feel like a teacher, not a form. Faithfulness
+    #     is still enforced by SOCRATIC_PROMPT's grounding rules + the dense-floor
+    #     gate (context injected only when relevant).
+    # All clients share the same model/provider/streaming/usage flags. Mentoring
+    # uses a DIFFERENT cached system prefix (SOCRATIC_PROMPT) — that's a separate
+    # prompt-cache entry, still cacheable, just not shared with the conv prefix.
+    is_mentoring = intent == "MENTORING"
+    _is_grounded = (has_kb_context or bool(topics_section)) and not is_mentoring
     llm = get_generate_llm() if _is_grounded else get_chat_llm()
     windowed_messages = _window_generate_history(
         list(state["messages"]),
@@ -737,8 +823,9 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # Static prompt wrapped in a cache_control breakpoint so OpenRouter/Vertex
     # serves it from the provider prefix-cache on the 2nd+ call. Dynamic per-turn
     # context lives in a separate HumanMessage so the cached prefix is byte-stable.
+    system_prompt_text = SOCRATIC_PROMPT if is_mentoring else CONVERSATIONAL_PROMPT
     system_msg = SystemMessage(content=[
-        {"type": "text", "text": CONVERSATIONAL_PROMPT,
+        {"type": "text", "text": system_prompt_text,
          "cache_control": {"type": "ephemeral", "ttl": "1h"}},
     ])
     # Only inject the dynamic context message when there's actually something in
@@ -776,9 +863,11 @@ def _route_by_intent(state: RAGState) -> str:
 def _route_after_rag(state: RAGState) -> str:
     """Decide whether to call the LLM or short-circuit when retrieval is weak.
 
-    BRAINSTORM bypasses the threshold — even off-topic-feeling queries
-    (e.g. emotional vents) deserve a real response from the AI; the
-    threshold guard is for KNOWLEDGE lookups only.
+    Applies to both KNOWLEDGE and MENTORING — a Socratic guiding question must
+    be grounded in the KB just like a factual answer, so MENTORING gets NO
+    special bypass: if retrieval is below the floor, context is withheld and the
+    prompt's no-context / grounding rules take over ("Aku belum nemu ini di
+    materiku") rather than inventing a question around nothing.
 
     The gate is a MANDATORY DENSE FLOOR (not an OR). bge-m3 dense cosine cleanly
     separates scope on this KB — off-scope tops out ~0.36, in-scope floors ~0.50
@@ -807,8 +896,6 @@ def _route_after_rag(state: RAGState) -> str:
     must not let an absent dense score force a NOT-FOUND; the gate runs on
     sparse alone in that window.
     """
-    if state.get("intent") == "BRAINSTORM":
-        return "generate"
     chunks = state.get("retrieved_context") or []
     if not chunks:
         return "low_relevance"
@@ -907,6 +994,9 @@ def _build_agent_graph():
             "TOPIC_LIST": "generate_node",
             # Real question → retrieve first.
             "KNOWLEDGE": "rag_node",
+            # Mentoring (Socratic) also retrieves first — the guiding question
+            # must be grounded in the KB, so it flows through rag_node too.
+            "MENTORING": "rag_node",
         },
     )
     builder.add_edge("malicious", END)

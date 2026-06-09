@@ -56,11 +56,11 @@ from loguru import logger
 from app.config.settings import get_settings
 
 # Must match the union in intent_rules.Intent + extra graph-only intents
-# (MALICIOUS / KNOWLEDGE / BRAINSTORM aren't handled by regex; they are
+# (MALICIOUS / KNOWLEDGE / MENTORING aren't handled by regex; they are
 # gate-eligible so the LLM pre-processor can be skipped for clear cases).
 Intent = Literal[
     "GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST",
-    "KNOWLEDGE", "BRAINSTORM", "MALICIOUS",
+    "KNOWLEDGE", "MENTORING", "MALICIOUS",
 ]
 
 

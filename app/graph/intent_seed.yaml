@@ -37,8 +37,13 @@
 # * KNOWLEDGE seeds use ONLY Amartha-relevant topics so the centroid
 #   stays in-domain; off-scope topics live under OFF_SCOPE so the
 #   gate doesn't accidentally route "harga bitcoin" to KNOWLEDGE.
-# * BRAINSTORM seeds include both venting AND advice/scenario variants
-#   so the centroid covers the full brainstorm spectrum.
+# * MENTORING seeds are diagnostic / reasoning questions about the user's
+#   OWN situation ("kok mitra aku susah ditagih", "kenapa target aku ga
+#   kecapai") — the kind worth thinking through Socratically. NOTE: in fase 1
+#   MENTORING is BUTTON-driven (ChatRequest.mentoring_mode), NOT auto-routed by
+#   this gate. These seeds exist for the future fase-2 "offer to enable
+#   mentoring" detector — they must NOT be used to silently route a user into
+#   Socratic mode without opt-in.
 
 GREETING:
   # Casual Indonesian
@@ -135,31 +140,26 @@ KNOWLEDGE:
   - "what is npl ratio"
   - "how to verify a borrower"
 
-BRAINSTORM:
-  # Venting / emotional — explicit emotional content, no concrete topic
-  - "aku stress banget akhir2 ini"
-  - "aku capek kerja"
-  - "aku bingung harus gimana"
-  - "aku frustrasi sama atasan"
-  - "aku burnout"
-  - "aku sedih akhir2 ini"
-  - "aku marah sama situasi ini"
-  - "lelah banget"
-  - "ga kuat lagi"
-  # Advice / opinion-seeking
-  - "menurut kamu lebih baik a atau b"
-  - "kasih saran dong"
-  - "gimana kalau aku ngomong langsung ke supervisor"
-  - "aku harus pilih yang mana"
-  - "what should i do"
-  - "should i quit my job"
-  - "kira2 enaknya gimana ya"
-  - "ada saran ga"
-  # Scenario / role-play
-  - "anggap kamu bp juga"
-  - "kalo kamu jadi aku kamu bakal gimana"
-  - "tolong bantu aku mikirin solusi"
-  - "bantu brainstorm dong"
+MENTORING:
+  # Diagnostic — user asking WHY something in their own work is happening.
+  # These are the turns worth thinking through Socratically (button-driven).
+  - "kok mitra aku susah ditagih ya"
+  - "kenapa nasabah aku banyak yang nunggak"
+  - "kok target aku bulan ini ga kecapai"
+  - "kenapa ya mitra aku pada kabur"
+  - "kok susah banget dapat nasabah baru"
+  - "kenapa pencairan aku sering ditolak"
+  # Reasoning / how-should-I — open-ended approach questions about their work
+  - "gimana caranya aku ningkatin repayment rate"
+  - "gimana aku ngeyakinin mitra yang ragu"
+  - "menurut kamu gimana cara aku handle nasabah nakal"
+  - "gimana strategi nagih yang baik"
+  - "aku harus mulai dari mana buat bangun kepercayaan nasabah"
+  - "gimana caranya aku jelasin produk ke mitra yang gaptek"
+  # Explicit mentoring / think-with-me requests
+  - "ajak aku mikir dong soal ini"
+  - "bantu aku analisa kenapa ini bisa terjadi"
+  - "aku pengen ngerti akar masalahnya"
 
 AMBIGUOUS:
   # Under-specified / needs clarification

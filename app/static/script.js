@@ -99,6 +99,16 @@ if (toggleBtn) {
 // ============================================================
 // TOGGLE CHAT
 // ============================================================
+function toggleMentoring() {
+    window.MENTORING_MODE = !window.MENTORING_MODE;
+    const icon = document.getElementById("mentoring-toggle");
+    if (!icon) return;
+    const on = !!window.MENTORING_MODE;
+    icon.style.opacity = on ? "1" : "0.45";
+    icon.title = "Mode Mentoring (Socratic): " + (on ? "on" : "off");
+    icon.classList.toggle("mentoring-active", on);
+}
+
 function toggleChat() {
     const icon = document.getElementById("chat-icon");
     const toggleBtn = document.getElementById("chat-toggle");
@@ -429,7 +439,8 @@ async function send() {
         query: text,
         conversation_id: getSessionId(),
         course_id: typeof MOODLE_COURSE_ID !== 'undefined' ? MOODLE_COURSE_ID : 0,
-        course_name: typeof MOODLE_COURSE_NAME !== 'undefined' ? MOODLE_COURSE_NAME : ''
+        course_name: typeof MOODLE_COURSE_NAME !== 'undefined' ? MOODLE_COURSE_NAME : '',
+        mentoring_mode: !!window.MENTORING_MODE
     });
 
     try {

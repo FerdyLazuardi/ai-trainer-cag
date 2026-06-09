@@ -218,9 +218,10 @@ DEV_BYPASS_USER_ID = "dev_user_123"
 
 # Intents whose answers don't go through the RAG generator — no faithfulness
 # signal worth measuring. GREETING/AMBIGUOUS are canned, MALICIOUS is a refusal,
-# TOPIC_LIST reads from Postgres metadata, BRAINSTORM is reasoning-only,
+# TOPIC_LIST reads from Postgres metadata, MENTORING often returns a Socratic
+# guiding question (not a standard answer to grade for faithfulness),
 # OFF_SCOPE is a canned redirect with no retrieval.
-_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM", "OFF_SCOPE"}
+_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING", "OFF_SCOPE"}
 
 
 def _should_eval_turn(
@@ -472,14 +473,15 @@ async def _prepare_rag_context(
     skip_cache = (
         _skip_embedding
         or _tier1_intent == "TOPIC_LIST"
+        or request.mentoring_mode
         or _is_bare_affirmation(resolved_query)
         or bool(_OPINION_REGEX.search(resolved_query))
         or bool(_META_CONVO_RE.search(resolved_query))
     )
     if skip_cache:
         logger.debug(
-            "Cache lookup skipped — greeting/filler, opinion/synthesis, or "
-            "meta-conversation recall pattern",
+            "Cache lookup skipped — greeting/filler, mentoring mode, "
+            "opinion/synthesis, or meta-conversation recall pattern",
             query=resolved_query[:60],
         )
 
@@ -642,6 +644,9 @@ async def _prepare_rag_context(
         # retrieval query can differ). None when embedding failed (C5 degrade).
         "query_embedding": query_embedding,
         "query_embedding_text": resolved_query if query_embedding is not None else None,
+        # Socratic mentoring toggle (opt-in via UI). When True, _pre_processor
+        # promotes a real question to MENTORING → SOCRATIC_PROMPT.
+        "mentoring_mode": request.mentoring_mode,
     }
 
     # ── Cross-user cache-leak guard (FIX 1 + C1) ──────────────────────────────
@@ -839,15 +844,16 @@ async def _run_chat(
     # so they can't leak to another user but still provide cache hits for this user.
     #
     # Cache only KNOWLEDGE-class answers (not greeting/ambiguous/malicious/
-    # brainstorm) that actually found relevant context and aren't a bare
+    # mentoring) that actually found relevant context and aren't a bare
     # affirmation. NOTE: the former MENTOR-shape exclusion (skip-cache when
     # learning_context >= threshold) was dropped when the pre-processor was
     # slimmed to intent-only — step-by-step how-to answers are now cacheable
     # too. Collision-safe: the cache is Redis exact-match only, so a "gimana
     # cara X" answer is only ever re-served to a byte-identical re-ask, never a
-    # paraphrase.
+    # paraphrase. MENTORING is excluded: a Socratic guiding question is
+    # conversational and turn-dependent, never a reusable answer.
     if (
-        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
+        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING")
         and not is_low_relevance
         and not _is_bare_affirmation(request.query)
     ):
@@ -1255,7 +1261,7 @@ async def chat_stream(
             # cache is Redis exact-match only (no semantic layer), so a cached
             # answer is only ever re-served to a byte-identical re-ask.
             if (
-                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "BRAINSTORM")
+                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING")
                 and not is_low_relevance_stream
                 and not _is_bare_affirmation(request.query)
             ):

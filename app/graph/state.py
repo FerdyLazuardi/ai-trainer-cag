@@ -52,4 +52,9 @@ class RAGState(TypedDict):
     pool_max_dense: Optional[float]
     pool_max_sparse: Optional[float]
     dense_retrieval_ok: Optional[bool]
+    # Socratic mentoring toggle (set from ChatRequest.mentoring_mode). When True,
+    # _pre_processor promotes a diagnostic/reasoning KNOWLEDGE turn to MENTORING,
+    # which routes to the Socratic prompt in generate_node (one grounded guiding
+    # question first, then confirm + teach). Pure factual lookups stay direct.
+    mentoring_mode: Optional[bool]
 

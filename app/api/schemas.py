@@ -16,6 +16,17 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional course ID to scope the semantic cache and retrieval",
     )
+    mentoring_mode: bool = Field(
+        default=False,
+        description=(
+            "When true, Ava enters Socratic mentoring mode: for diagnostic / "
+            "reasoning questions ('kenapa', 'gimana caranya') she opens with ONE "
+            "grounded guiding question to make the user think before answering, "
+            "then confirms + teaches. Pure factual lookups are still answered "
+            "directly. User opts in via a UI toggle; default false = normal "
+            "direct answers."
+        ),
+    )
 
     model_config = {"json_schema_extra": {"example": {"query": "What is LangGraph?", "course_id": 4}}}
 

@@ -125,18 +125,27 @@ async def _delete_stale_documents(session: AsyncSession, course_id: int, current
     Delete documents in DB/Qdrant for this course that are no longer present in Moodle.
     Batched: one Qdrant delete + one PG bulk delete + one cache flush per course
     instead of N round-trips per stale document.
+
+    Scoping: a KB doc is identified by `metadata->>'moodle_course_id'` (the
+    actual synced course), NOT `course_id` (which comes from frontmatter and is
+    usually unrelated — 10/2205/etc — so the old filter almost never matched and
+    cleanup silently never ran, letting renamed files accumulate as duplicates).
+    A `.md`-source fallback catches legacy docs ingested before the marker
+    existed. Askfer/portfolio docs are safe: their sources are http(s)://
+    or portfolio:// — never `.md` — and they carry no moodle_course_id.
     """
     from sqlalchemy import select
     from sqlalchemy.sql import text
 
-    # Find documents for this course_id (from metadata JSON)
-    from sqlalchemy import or_
+    # Scope to docs synced from THIS Moodle course (marker), plus legacy KB docs
+    # (source ends in .md) that predate the marker. The .md filter can never
+    # match a portfolio doc (http/portfolio:// sources), so Askfer stays untouched.
     stmt = select(Document).where(
-        or_(
-            text("metadata->>'course_id' = :cid_str"),
-            text("metadata->>'course_id' = :cid_int")
+        text(
+            "(metadata->>'moodle_course_id' = :cid"
+            " OR (metadata->>'moodle_course_id' IS NULL AND lower(source) LIKE '%.md'))"
         )
-    ).params(cid_str=str(course_id), cid_int=str(course_id))
+    ).params(cid=str(course_id))
 
     result = await session.execute(stmt)
     docs = result.scalars().all()
@@ -186,10 +195,17 @@ async def _ingest_markdown(
     session: AsyncSession,
     moodle_course_id: int,
     force_reingest: bool = False,
+    section_name: str = "",
 ) -> int:
     """
     Parse frontmatter, split by headers, embed, upsert to Knowledge_Base.
     Returns number of chunks ingested (0 if file was unchanged and not forced).
+
+    `section_name` is the Moodle section the file lives in (e.g. "Product
+    Amartha"). It is stored in metadata so TOPIC_LIST can group multiple files
+    in one section under a single topic — manual section structure in Moodle
+    becomes the topic taxonomy. Empty for files in unnamed/section-0; the
+    TOPIC_LIST query falls back to course_name in that case.
     """
     content_hash = hashlib.sha256(raw_content.encode()).hexdigest()
 
@@ -215,7 +231,13 @@ async def _ingest_markdown(
         "department": frontmatter.get("department", "Global"),
         "topic": frontmatter.get("topic", ""),
         "course_id": frontmatter.get("course_id", moodle_course_id),
+        # The ACTUAL Moodle course this file was synced from. Distinct from
+        # `course_id` (which comes from frontmatter and is often unrelated, e.g.
+        # 10/2205). Stale-cleanup scopes by THIS so it reliably identifies
+        # KB-synced docs (and never touches Askfer/portfolio docs).
+        "moodle_course_id": moodle_course_id,
         "course_name": frontmatter.get("course_name", ""),
+        "section_name": (section_name or "").strip(),
         "source": filename,
     }
 
@@ -460,8 +482,13 @@ async def sync_moodle_knowledge_base(
             # --------------------
 
             for section in sections:
-                section_name = section.get("name", "").lower().strip()
-                
+                # Moodle returns section names HTML-encoded (e.g. "A &amp; B").
+                # Decode so "&amp;" is stored as "&" — otherwise the entity leaks
+                # into TOPIC_LIST labels and source citations.
+                import html as _html
+                section_name_raw = _html.unescape(section.get("name", "") or "")
+                section_name = section_name_raw.lower().strip()
+
                 # Filter by target_sections if provided
                 if target_sections_lower and section_name not in target_sections_lower:
                     logger.debug("Skipping section not in targets", section=section_name)
@@ -480,7 +507,10 @@ async def sync_moodle_knowledge_base(
                             raw_bytes = await _download_file(client, file_url)
                             raw_text = raw_bytes.decode("utf-8", errors="replace")
 
-                            chunks = await _ingest_markdown(raw_text, filename, session, cid, force_reingest)
+                            chunks = await _ingest_markdown(
+                                raw_text, filename, session, cid, force_reingest,
+                                section_name=section_name_raw,
+                            )
                             if chunks == 0:
                                 summary["files_skipped"] += 1
                             else:
