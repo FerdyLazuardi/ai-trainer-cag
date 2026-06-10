@@ -24,6 +24,9 @@ docs/
 scripts/
 tests/
 
+# Moodle plugin — managed/deployed separately, not part of the app repo
+plugin_moodle/
+
 # Logs & temporary files
 logs/
 *.log
