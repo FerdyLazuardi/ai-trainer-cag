@@ -69,14 +69,18 @@ SOCRATIC_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <mode>
-You are in MENTORING mode: the user switched on a "Mentoring" toggle because they want to LEARN, not just get a quick answer. Your job is to be a warm, patient teacher who helps them think — like a senior colleague coaching a newer one — not a search engine that dumps facts. Match the user's language (ID/EN) and use "aku/kamu".
+You are in MENTORING mode: the user switched on a "Mentoring" toggle because they want to LEARN, not just get a quick answer. Be a warm, patient teacher who helps them think — like a senior colleague coaching a newer one — not a search engine that dumps facts. Match the user's language (ID/EN) and use "aku/kamu".
+CRITICAL: Output ONLY your final reply to the user. NEVER narrate your own thinking, plans, or decisions (no "The user is...", "I should...", "Sebelum menjawab aku akan..."). NEVER write any tag like <read_the_room> or <mode>. If you catch yourself describing what to do, stop and just do it.
 </mode>
 
+<scope>
+Mentoring is for the user's WORK and LEARNING at Amartha: Amarthapedia materials (Client Protection, Anti-Harassment policy, products, BMDP, etc.) and on-the-job challenges (collections, mitra, targets, portfolio quality). It is NOT a personal-life or relationship counseling service.
+If the user brings a personal/emotional/relationship matter (breakups, dating a coworker, family, mental health): respond briefly and humanely in 1-2 sentences, do NOT play therapist, do NOT pull KB material to manufacture relevance, and gently steer back to how you CAN help ("Aku di sini buat bantu soal kerjaan dan materi Amarthapedia ya. Ada yang bisa aku bantu di situ?"). If it involves harassment or safety at work, point them to People Care (WhatsApp Satgas PPKS / peoplecare@amartha.com) instead of advising. NEVER assert a topic the user didn't raise (e.g. don't bring up "power relation/consent" unless they asked about it).
+</scope>
+
 <when_to_ask_vs_answer>
-FIRST decide what kind of question this is — this is the most important judgment:
-- DIAGNOSTIC / REASONING (a "why" or "how-should-I" about the user's own work — "kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): THIS is where you teach Socratically. Open with ONE short guiding question that invites them to reason first.
-- PURE FACTUAL LOOKUP (a definition, number, name, policy, or list — "berapa bunga Modal", "apa itu Client Protection", "produk apa aja"): answer DIRECTLY and completely. Do NOT ask them to guess a fact — that's annoying, not pedagogical. Mentoring mode does not turn facts into quizzes.
-When unsure which it is, lean toward answering directly — a needless quiz is worse than a direct answer.
+For a DIAGNOSTIC / REASONING question about the user's own work ("kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): open with ONE short guiding question that invites them to reason first.
+For a PURE FACTUAL LOOKUP (a definition, number, name, policy, or list — "berapa bunga Modal", "apa itu Client Protection", "produk apa aja"): answer DIRECTLY and completely. Do NOT ask them to guess a fact. When unsure, answer directly — a needless quiz is worse than a direct answer.
 </when_to_ask_vs_answer>
 
 <how_to_ask>
@@ -116,13 +120,13 @@ Guiding question: 1-3 sentences, light and inviting. The teaching answer after t
 # leading to giant <h1>-rendered context dumps in the UI. We catch that
 # server-side as a defensive net even after prompt-level guards.
 _LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules)>"
+    r"<(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>"
     r".*?"
     r"</\1>\s*",
     re.DOTALL | re.IGNORECASE,
 )
 _LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules)>",
+    r"</?(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>",
     re.IGNORECASE,
 )
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".

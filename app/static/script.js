@@ -29,7 +29,14 @@
                         <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
                     </div>
                 </div>
-                <div style="display:flex; gap:22px; align-items:center;">
+                <div style="display:flex; gap:16px; align-items:center;">
+                    <label class="mentor-switch" title="Mode Mentoring (Socratic)">
+                        <input type="checkbox" id="mentor-toggle" onchange="setMentoring(this.checked, true)">
+                        <span class="mentor-switch-track">
+                            <span class="mentor-switch-text">Mentor</span>
+                            <span class="mentor-switch-thumb"></span>
+                        </span>
+                    </label>
                     <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
                     <i class="fas fa-times header-icon" onclick="toggleChat()" title="Close chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
                 </div>
@@ -99,14 +106,61 @@ if (toggleBtn) {
 // ============================================================
 // TOGGLE CHAT
 // ============================================================
-function toggleMentoring() {
-    window.MENTORING_MODE = !window.MENTORING_MODE;
-    const icon = document.getElementById("mentoring-toggle");
-    if (!icon) return;
-    const on = !!window.MENTORING_MODE;
-    icon.style.opacity = on ? "1" : "0.45";
-    icon.title = "Mode Mentoring (Socratic): " + (on ? "on" : "off");
-    icon.classList.toggle("mentoring-active", on);
+// ============================================================
+// MENTORING MODE — single source of truth for the slider + chips
+// ============================================================
+// setMentoring(on, showMsg): sets the flag read by send() (mentoring_mode in
+// the request body), syncs the header slider, and — when showMsg — injects an
+// awareness message so the user SEES the mode change. Both on AND off respond,
+// so the switch never flips silently.
+function setMentoring(on, showMsg) {
+    window.MENTORING_MODE = !!on;
+    const cb = document.getElementById("mentor-toggle");
+    if (cb) cb.checked = !!on;
+    const sw = document.querySelector(".mentor-switch");
+    if (sw) sw.classList.toggle("on", !!on);
+    if (showMsg) {
+        if (on) {
+            addMessage(
+                "Oke, aku pandu kamu belajar ya. Apa yang bikin kamu bingung, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
+                "ai"
+            );
+        } else {
+            addMessage("Oke, mode Mentoring dimatiin. Balik ke jawaban langsung ya.", "ai");
+        }
+    }
+}
+
+// Welcome-screen chip: "Topik" → fetch the topic list straight from the
+// instant endpoint (Postgres, no LLM) and render it client-side, so the list
+// appears immediately instead of waiting on the chat pipeline's generate step.
+async function chipTopik() {
+    removeWelcome();
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+    const headers = { "ngrok-skip-browser-warning": "true" };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
+    try {
+        const res = await fetch(`${baseUrl}/api/v1/chat/topics`, { method: "GET", headers });
+        const data = await res.json();
+        const topics = (data && data.topics) || [];
+        if (topics.length) {
+            const list = topics.map(t => `* ${t}`).join("\n");
+            addMessage("Topik yang tersedia di Amarthapedia:\n\n" + list, "ai");
+        } else {
+            addMessage("Belum ada topik yang bisa aku tampilkan saat ini.", "ai");
+        }
+    } catch (e) {
+        console.error("chipTopik failed:", e);
+        addMessage("Aku belum bisa nampilin daftar topik sekarang. Coba lagi ya.", "ai");
+    }
+}
+
+// Welcome-screen chip: "Mentoring" → flip the slider ON and show the canned
+// guiding prompt instantly (client-side, no backend round-trip).
+function chipMentoring() {
+    setMentoring(true, true);
 }
 
 function toggleChat() {
@@ -192,6 +246,14 @@ function showIntro() {
     welcome.innerHTML = `
         <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
         <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
+        <div class="ava-chips">
+            <button class="ava-chip" onclick="chipTopik()">
+                <i class="fas fa-layer-group"></i> Topik
+            </button>
+            <button class="ava-chip" onclick="chipMentoring()">
+                <i class="fas fa-graduation-cap"></i> Mentoring
+            </button>
+        </div>
     `;
 
     messages.appendChild(welcome);

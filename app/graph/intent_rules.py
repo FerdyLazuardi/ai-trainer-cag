@@ -145,16 +145,23 @@ _IDENTITY_PHRASES = (
 # ── Rule 5: greeting prefixes ────────────────────────────────────────────────
 # Regex-based to catch common Indonesian typo elongations:
 # "halooo", "haiiii", "heiii", "heyy", "helloooo", etc.
+# Also covers religious salaams, regional/slang openers, and chat shorthand
+# ("p", "pp" = the Indonesian "ping/halo"), since 13k FO greet in many forms.
 # Pattern anchored at start of string, case-insensitive applied at call site.
 _GREETING_PREFIX_RE = re.compile(
     r"^("
-    r"halo+|hai+|hei+|hi+|hey+|hello+"   # salutations with elongation
-    r"|pagi|siang|sore|malam"              # time-of-day greetings
-    r"|good\s+(morning|afternoon|evening)" # English time greetings
-    r"|selamat"                            # formal ID opener
-    r"|permisi|excuse\s+me"                # polite openers
-    r"|test"                               # test messages
-    r")[\s,\.!?]*",                        # optional trailing punct/space
+    r"halo+|hai+|hei+|hi+|hey+|hello+|helo+"   # salutations with elongation
+    r"|yo+i*|yuhu+|hola"                       # casual openers (yo/yoi/yoii)
+    r"|pagi|siang|sore|malam"                  # time-of-day greetings
+    r"|met\s+(pagi|siang|sore|malam)"          # "met pagi" (slang selamat)
+    r"|good\s+(morning|afternoon|evening)"     # English time greetings
+    r"|morning|evening"                        # bare English greeting
+    r"|selamat"                                # formal ID opener
+    r"|permisi|punten|excuse\s+me"             # polite openers (incl. Sundanese)
+    r"|assalamu?'?\s?alaikum|asalamualaikum|assalam|spada"  # Islamic salaam + variants
+    r"|shalom|salam\s+sejahtera|om\s+swastiastu|namaste|namo\s+buddhaya"  # other faiths
+    r"|test|ping|p+(?![a-z])"                  # test / chat-ping shorthand "p","pp"
+    r")[\s,\.!?]*",                            # optional trailing punct/space
     re.IGNORECASE,
 )
 
@@ -237,6 +244,13 @@ _GREETING_FLUFF = {
     "ya", "yaa", "dong", "donk", "kak", "ka", "min", "bang", "gan", "ges",
     "gaes", "nih", "ni", "aja", "deh", "sih", "kok", "aku", "saya", "gw", "gue",
     "wr", "wb", "semua", "semuanya", "teman", "temen", "guys", "all",
+    # Bot/assistant names — "selamat pagi ava" / "halo ava bot" is still a pure
+    # greeting, not a KNOWLEDGE lookup. Without these the trailing name leaked
+    # the turn to KNOWLEDGE (wasted retrieval; misclassified).
+    "ava", "bot", "kakak",
+    # Honorifics that commonly trail a greeting ("assalamualaikum pak",
+    # "halo bu", "pagi mas") — still a pure greeting, not a question.
+    "pak", "bu", "bapak", "ibu", "mas", "mbak", "mbn", "pak/bu",
 }
 
 

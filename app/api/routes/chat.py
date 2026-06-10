@@ -949,6 +949,25 @@ async def delete_history(
     return {"status": "success", "message": "Conversation history cleared"}
 
 
+@router.get("/chat/topics", summary="List available KB topics (instant, no LLM)")
+async def list_topics(
+    current_user: Optional[User] = Depends(get_current_user),
+) -> dict:
+    """Return the ground-truth topic list straight from Postgres.
+
+    Powers the 'Topik' welcome chip: rendered client-side instantly, bypassing
+    the chat pipeline's LLM generate step (~2s). Reuses _load_course_names,
+    which is TTL-cached, so this is a ~ms in-memory return on the hot path.
+    """
+    from app.graph.pipeline import _load_course_names
+    try:
+        topics = await _load_course_names()
+    except Exception as exc:
+        logger.warning(f"/chat/topics load failed: {exc}")
+        topics = []
+    return {"topics": topics}
+
+
 @router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
 async def sync_memory(
     conversation_id: str,
