@@ -145,9 +145,22 @@ async def set_cached_response(
         return
 
     lower_answer = answer.lower()
-    error_phrases = ["maaf saya tidak", "terjadi kesalahan", "maaf, aku tidak menemukan", "maaf, saya tidak menemukan"]
+    # Never cache a NOT-FOUND / error reply. If one gets cached, every future
+    # re-ask is served the stale "belum nemu" even after retrieval is fixed —
+    # exactly the topic-panel bug (the generator says "Aku belum nemu info
+    # soal X", which the old short list ("maaf, aku tidak menemukan") missed,
+    # so the broken answer stuck in cache). Match the phrasings the generator
+    # actually emits, not just the formal "maaf" forms.
+    error_phrases = [
+        "maaf saya tidak", "terjadi kesalahan",
+        "maaf, aku tidak menemukan", "maaf, saya tidak menemukan",
+        "belum nemu", "belum menemukan", "belum ketemu",
+        "tidak tersedia di materi", "tidak ada di materi",
+        "tidak tersedia di materiku", "ga nemu", "gak nemu", "nggak nemu",
+        "coba pakai kata kunci lain", "coba cari dengan kata kunci lain",
+    ]
     if any(phrase in lower_answer for phrase in error_phrases):
-        logger.debug("Skipping cache write: response contains error phrase")
+        logger.debug("Skipping cache write: response contains error/not-found phrase")
         return
 
     # Normalize 0 to None

@@ -43,6 +43,9 @@
             </div>
             <div id="chat-messages"></div>
             <div id="chat-input">
+                <button class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
+                    <i class="fas fa-list-ul"></i>
+                </button>
                 <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
                 <button class="send-btn" onclick="handleSendClick()">
                     <i class="fas fa-paper-plane"></i>
@@ -161,6 +164,78 @@ async function chipTopik() {
 // guiding prompt instantly (client-side, no backend round-trip).
 function chipMentoring() {
     setMentoring(true, true);
+}
+
+// ── Topic-list button → in-chatbox section/item picker ───────────────────────
+// Fetches /chat/sections (deterministic, no LLM) and renders an accordion INSIDE
+// #chat-box (clipped by overflow:hidden, like the delete modal). Click a section
+// to expand its items; click an item to send "jelaskan tentang <item>" as a
+// normal KNOWLEDGE query. Replaces the old fragile free-text section parsing.
+function _esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function openSectionPanel() {
+    if (document.getElementById("ava-section-panel")) return;  // already open
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+    const headers = { "ngrok-skip-browser-warning": "true" };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
+    let sections = {};
+    try {
+        const res = await fetch(`${baseUrl}/api/v1/chat/sections`, { method: "GET", headers });
+        const data = await res.json();
+        sections = (data && data.sections) || {};
+    } catch (e) {
+        console.error("openSectionPanel fetch failed:", e);
+    }
+
+    const overlay = document.createElement("div");
+    overlay.id = "ava-section-panel";
+    overlay.className = "ava-panel-overlay";
+
+    const names = Object.keys(sections);
+    let rows = "";
+    if (names.length) {
+        rows = names.map(sec => {
+            const items = (sections[sec] || []).map(it =>
+                `<button class="ava-panel-item" data-item="${_esc(it)}">${_esc(it)}</button>`
+            ).join("");
+            return `<div class="ava-panel-section">
+                <button class="ava-panel-sec-head"><span>${_esc(sec)}</span><i class="fas fa-chevron-down"></i></button>
+                <div class="ava-panel-items">${items}</div>
+            </div>`;
+        }).join("");
+    } else {
+        rows = `<div class="ava-panel-empty">Belum ada topik yang bisa ditampilkan.</div>`;
+    }
+
+    overlay.innerHTML = `
+        <div class="ava-panel-card">
+            <div class="ava-panel-head">
+                <span>Daftar Topik</span>
+                <i class="fas fa-times ava-panel-close" title="Tutup"></i>
+            </div>
+            <div class="ava-panel-body">${rows}</div>
+        </div>`;
+
+    const close = () => overlay.remove();
+    overlay.querySelector(".ava-panel-close").onclick = close;
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    // Accordion: toggle a section open/closed.
+    overlay.querySelectorAll(".ava-panel-sec-head").forEach(h => {
+        h.onclick = () => h.parentElement.classList.toggle("open");
+    });
+    // Click an item → close panel + ask about it as a normal question.
+    overlay.querySelectorAll(".ava-panel-item").forEach(b => {
+        b.onclick = () => {
+            const item = b.getAttribute("data-item");
+            close();
+            send(`jelaskan tentang ${item}`);
+        };
+    });
+    chatBox.appendChild(overlay);
 }
 
 // ── Auto-hook: OFFER mentoring after a reflective question ───────────────────

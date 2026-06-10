@@ -57,10 +57,4 @@ class RAGState(TypedDict):
     # which routes to the Socratic prompt in generate_node (one grounded guiding
     # question first, then confirm + teach). Pure factual lookups stay direct.
     mentoring_mode: Optional[bool]
-    # Set by _pre_processor when the user asked "apa aja di <section>" (items
-    # WITHIN one Moodle section, e.g. "Business Process" → Validasi UK, Pelayanan,
-    # ...). Reuses the TOPIC_LIST intent + no-retrieval path; generate_node injects
-    # this section's item list instead of the full section list. None = the user
-    # asked for the full topic/section list (default TOPIC_LIST behavior).
-    topic_list_section: Optional[str]
 

@@ -188,6 +188,37 @@ class Settings(BaseSettings):
     # back to a 7B class and keep Flash Lite on judge + generate.
     cheap_llm_model: str = "google/gemini-2.5-flash-lite"
 
+    # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
+    # Comma-separated OpenRouter provider SLUGS to pin the generator to, in
+    # priority order (e.g. "baidu,deepinfra"). Empty = use the built-in default
+    # per model family (deepseek/* -> deepseek native; google/* -> google-vertex).
+    #
+    # ONLY applies to deepseek/* models (the only family with a meaningful
+    # multi-provider market here). Gemini stays pinned to google-vertex
+    # regardless, since vertex is the only upstream with implicit-cache wins.
+    #
+    # Slugs are the `tag` prefix from OpenRouter's /endpoints API, NOT the
+    # display name: baidu, deepinfra, cloudflare, digitalocean, gmicloud,
+    # siliconflow, io-net, streamlake, alibaba, morph, deepseek, parasail,
+    # atlas-cloud, akashml, novita, venice. (Verified 2026-06 for
+    # deepseek-v4-flash.)
+    #
+    # CAUTION before pinning a cheaper provider:
+    #   - quantization differs (deepinfra=fp4 aggressive, baidu=fp8) → can shift
+    #     answer quality; RE-RUN the 71-Q groundedness suite after switching.
+    #   - implicit prompt caching exists ONLY on the `deepseek` native endpoint;
+    #     every other provider is no-cache, so a low base price can still be more
+    #     expensive in practice when the cached-prefix hit rate is high.
+    #   - data-privacy/training posture varies per provider.
+    # allow_fallbacks stays True so a pinned provider's outage degrades to the
+    # rest of the market instead of failing the request.
+    llm_provider_order: str = Field(default="", alias="LLM_PROVIDER_ORDER")
+
+    @property
+    def llm_provider_order_list(self) -> list[str]:
+        """Parse LLM_PROVIDER_ORDER into a clean slug list (order preserved)."""
+        return [s.strip() for s in self.llm_provider_order.split(",") if s.strip()]
+
     # ─── LLM-as-judge (eval faithfulness) ────────────────────────────────────
     # C3: the judge MUST be a different model family than the generator. When
     # judge == generator they share fabrication patterns and the eval

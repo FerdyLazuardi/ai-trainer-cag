@@ -93,6 +93,42 @@ _GEMINI_PROVIDER = {
 }
 
 
+def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
+    """Build the OpenRouter `extra_body` for a generator/classifier client,
+    MODEL-AWARE so the provider pin matches the upstream that serves the model.
+
+    This is what makes LLM_MODEL / CHEAP_LLM_MODEL a real .env swap: change the
+    model string and the right provider routing follows automatically, instead
+    of every builder hard-pinning google-vertex (which only serves Gemini and
+    would 404/misroute a DeepSeek or Qwen model sent to it).
+
+      - gemini/* (google/*) → google-vertex first (best implicit-cache hit +
+        cheapest input), allow_fallbacks=True so a Vertex blip degrades to
+        AI Studio instead of failing.
+      - deepseek/* → deepseek upstream; reasoning.effort="none" because V4 is
+        reasoning-capable and a GENERATOR only needs the answer in
+        message.content — reasoning tokens land in reasoning_content (dropped
+        by ChatOpenAI), which would blank the streamed answer or leak CoT.
+      - anything else → no provider pin (OpenRouter default routing); usage only.
+    """
+    body: dict = {}
+    if include_usage:
+        body["usage"] = {"include": True}
+    m = model.lower()
+    if m.startswith("google/") or "gemini" in m:
+        body["provider"] = _GEMINI_PROVIDER
+    elif m.startswith("deepseek/"):
+        # Default: DeepSeek native (the only endpoint with implicit prompt
+        # caching). Override via LLM_PROVIDER_ORDER=baidu,deepinfra to chase a
+        # cheaper/faster provider — see settings.llm_provider_order for the
+        # quant/caching/privacy caveats. allow_fallbacks=True so a pinned
+        # provider outage degrades to the rest of the market, not a failure.
+        order = settings.llm_provider_order_list or ["deepseek"]
+        body["provider"] = {"order": order, "allow_fallbacks": True}
+        body["reasoning"] = {"effort": "none"}
+    return body
+
+
 def _should_retry(exc: BaseException) -> bool:
     """Decide whether a given exception is worth retrying.
 
@@ -180,7 +216,7 @@ def get_llm() -> ChatOpenAI:
         # the cached_tokens field comes back 0 even when caching DID happen, so
         # our _log_cache_usage would report false misses. (Caching itself is
         # automatic for Gemini; this only affects whether it's REPORTED to us.)
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.llm_model),
         # OpenRouter-specific headers for app attribution (ignored by Ollama)
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
@@ -211,7 +247,7 @@ def get_cheap_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Background Worker)",
@@ -334,7 +370,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
         request_timeout=30,
         max_retries=1,
         http_async_client=_make_http_client(),
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Pre-Processor)",
@@ -389,9 +425,9 @@ def get_generate_llm() -> ChatOpenAI:
         # while streaming and _log_cache_usage would report false 0% hits.
         streaming=True,
         stream_usage=True,
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/peped-BE",
             "X-Title": "AI LMS RAG Agent (Generate)",
         },
     )
@@ -422,7 +458,7 @@ def get_chat_llm() -> ChatOpenAI:
         http_async_client=_make_http_client(),
         streaming=True,
         stream_usage=True,
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Chat)",
@@ -459,7 +495,7 @@ def get_empathy_llm() -> ChatOpenAI:
         # stream_usage so cache accounting still works while streaming.
         streaming=True,
         stream_usage=True,
-        extra_body={"provider": _GEMINI_PROVIDER, "usage": {"include": True}},
+        extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Empathy)",

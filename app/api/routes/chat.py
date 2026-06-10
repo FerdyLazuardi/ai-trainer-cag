@@ -863,7 +863,13 @@ async def _run_chat(
             query=resolved_query,
             answer=answer,
             sources=sources, # we can pass dict directly since the schema validation handles it
-            course_id=effective_course_id,
+            # Key the write on request.course_id — the SAME value the read path
+            # (get_cached_response above) uses. The read runs BEFORE retrieval, so
+            # it can't auto-detect a course from chunks; if the write keyed on the
+            # chunk-detected `effective_course_id` instead (e.g. 600), the answer
+            # would land at :cache:600: while every re-ask looks in :cache:global:
+            # — a key the read can never produce. Symmetric key = cache actually hits.
+            course_id=request.course_id,
             cache_namespace=ns,
         )
     background_tasks.add_task(
@@ -966,6 +972,26 @@ async def list_topics(
         logger.warning(f"/chat/topics load failed: {exc}")
         topics = []
     return {"topics": topics}
+
+
+@router.get("/chat/sections", summary="List Moodle sections and their items (instant, no LLM)")
+async def list_sections(
+    current_user: Optional[User] = Depends(get_current_user),
+) -> dict:
+    """Return {section_name: [item, ...]} straight from Postgres.
+
+    Powers the UI topic-list button: the chat widget renders an accordion of
+    sections; expanding one shows its items; clicking an item sends a normal
+    "jelaskan tentang <item>" query. Deterministic (no LLM, no NLP section
+    parsing). Reuses _load_section_map (TTL-cached) so this is a ~ms return.
+    """
+    from app.graph.pipeline import _load_section_map
+    try:
+        sections = await _load_section_map()
+    except Exception as exc:
+        logger.warning(f"/chat/sections load failed: {exc}")
+        sections = {}
+    return {"sections": sections}
 
 
 @router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
@@ -1308,7 +1334,12 @@ async def chat_stream(
                     query=resolved_query,
                     answer=full_answer,
                     sources=sources,
-                    course_id=effective_course_id,
+                    # Key the write on request.course_id — SAME value the read path
+                    # uses (the read runs before retrieval, so it can't auto-detect
+                    # a course). Keying on the chunk-detected effective_course_id
+                    # would land the answer at :cache:600: while every re-ask looks
+                    # in :cache:global:, a key the read can never produce → 0 hits.
+                    course_id=request.course_id,
                     cache_namespace=ns,
                 )
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)

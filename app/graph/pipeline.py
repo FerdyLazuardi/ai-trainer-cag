@@ -95,11 +95,12 @@ When you do ask a guiding question:
 
 <after_they_answer>
 When the user responds to your guiding question (a guess, a partial idea, even "ga tau"):
-- Acknowledge it in a way that FITS what they gave you. If they GUESSED at a fact, you can confirm/correct ("betul, itu salah satu faktornya" / "belum tepat, sebenarnya..."). But if they SHARED A REAL EXPERIENCE or a personal story (e.g. "di point sebelah pernah ada yang...") do NOT grade it like a quiz answer — never say "wah tepat sekali!" / "betul sekali!" to a lived experience, that sounds fake and presumptuous (you don't actually know their story). Instead respond like a colleague: acknowledge the experience genuinely ("makasih udah cerita — kasus kayak gitu emang nyata di lapangan"), then connect it to the material.
+- REFLECT FIRST (briefly): mirror back the gist of what they said in your own words so they feel heard, before you add anything — e.g. "Oke, jadi menurut kamu penyebabnya lebih ke faktor ekonomi mitra ya." Keep it to ONE short clause, natural, not a robotic "Jadi yang kamu maksud adalah..." every single time. Vary it.
+- Then acknowledge it in a way that FITS what they gave you. If they GUESSED at a fact, you can confirm/correct ("betul, itu salah satu faktornya" / "belum tepat, sebenarnya..."). But if they SHARED A REAL EXPERIENCE or a personal story (e.g. "di point sebelah pernah ada yang...") do NOT grade it like a quiz answer — never say "wah tepat sekali!" / "betul sekali!" to a lived experience, that sounds fake and presumptuous (you don't actually know their story). Instead respond like a colleague: acknowledge the experience genuinely ("makasih udah cerita — kasus kayak gitu emang nyata di lapangan"), then connect it to the material.
 - THEN give the grounded teaching point from <retrieved_context>. This is the payoff — don't withhold it.
-- KEEP THE LEARNING GOING: after teaching, pose ONE NEW guiding question that goes DEEPER or to the NEXT facet of the topic — don't stop at one round. Match the invitation verb to the ask (ceritakan/inget-inget/jawab for recall or opinion; tebak only for a guessable fact). Example flow: they explain why a nasabah is hard to bill → you confirm + explain the real factor → then ask "nah, kalau kondisinya begitu, menurut kamu langkah pertama yang paling tepat apa?". Always pair the new question with a light exit ("...atau kalau mau aku rangkum semuanya sekalian, bilang aja").
+- KEEP THE LEARNING GOING: after teaching, pose ONE NEW guiding question that goes DEEPER or to the NEXT facet of the topic — don't stop at one round. Match the invitation verb to the ask (ceritakan/inget-inget/jawab for recall or opinion; tebak only for a guessable fact). Example flow: they explain why a nasabah is hard to bill → you reflect their point → confirm + explain the real factor → then ask "nah, kalau kondisinya begitu, menurut kamu langkah pertama yang paling tepat apa?". Always pair the new question with a light exit ("...atau kalau mau aku rangkum semuanya sekalian, bilang aja").
 - CRITICAL anti-loop: the new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword of it. If you have nothing new and grounded left to probe, summarize what you've covered and invite them to pick the next thing to explore — don't fake a question.
-- If they say "ga tau" / "langsung aja" / "males nebak" / show fatigue, STOP probing: just teach plainly, no new question, no guilt.
+- The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. This is warm senior-to-junior coaching, never an adversarial gotcha. Stop probing the moment they're satisfied, ask to be told, or show fatigue ("ga tau" / "langsung aja" / "males nebak") — then just teach plainly, no new question, no guilt.
 </after_they_answer>
 
 <read_the_room>
@@ -158,6 +159,22 @@ _META_CONVO_RE = re.compile(
     r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
     r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)",
+    re.IGNORECASE,
+)
+
+
+# Pure anaphoric/deictic follow-up markers — a short turn that references the
+# PRIOR turn without naming its own topic ("jelasin lagi", "terus gimana",
+# "kok gitu", "contohnya?", "yang tadi"). Only these get the prior-user-turn
+# prepend for retrieval. Deliberately EXCLUDES bare "kenapa"/"gimana"/"apa",
+# which routinely open SELF-CONTAINED questions ("kenapa CP penting", "gimana
+# cara cegah fraud") that must retrieve on their own text. Requiring the -nya
+# forms (contohnya/detailnya) avoids matching self-contained "kasih contoh X".
+_ANAPHORIC_FOLLOWUP_RE = re.compile(
+    r"\b(?:lagi|tadi|terus|trus|lanjut(?:in|kan)?|gitu|gini|"
+    r"contohnya|maksudnya|selengkapnya|detailnya|"
+    r"sebelumnya|berikutnya|selanjutnya)\b"
+    r"|\b(?:abis|habis|setelah)\s+itu\b",
     re.IGNORECASE,
 )
 
@@ -442,32 +459,13 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
         }
 
-    # ── Section-contents question: "apa aja di <section>", "isi <section>",
-    #    "<section> ada apa aja", "materi di <section>" → list the ITEMS inside
-    #    that one Moodle section (e.g. "Business Process" → Validasi UK,
-    #    Pelayanan, ...). Reuses the TOPIC_LIST intent + no-retrieval path;
-    #    generate_node injects this section's items via topic_list_section.
-    #    GUARD: only fires when the matched section has >1 item — a 1-item
-    #    section (e.g. "Client Protection") listing is just its own name again,
-    #    and "prinsip client protection apa aja" should stay KNOWLEDGE (8
-    #    principles from content), not a useless 1-file list.
-    _low = user_msg_str.lower()
-    if any(m in _low for m in ("apa aja", "apa saja", "ada apa", "isi ", "daftar", "list ", "materi")):
-        try:
-            section_map = await _load_section_map()
-            if section_map:
-                _matched = _match_section(user_msg_str, list(section_map.keys()))
-                if _matched and len(section_map.get(_matched, [])) > 1:
-                    logger.info(f"Pre-processor: section-contents → TOPIC_LIST(section={_matched!r})")
-                    return {
-                        "intent": "TOPIC_LIST",
-                        "rewritten_query": user_msg_str,
-                        "retrieval_query": user_msg_str,
-                        "topic_list_section": _matched,
-                        "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                    }
-        except Exception as exc:
-            logger.debug(f"section-contents detection skipped: {exc}")
+    # NOTE: "apa aja di <section>" text-detection was REMOVED — structured
+    # navigation (which section, which item) now lives in the UI: a topic-list
+    # button opens a section/item picker, and clicking an item sends a normal
+    # KNOWLEDGE query ("jelaskan tentang <item>"). Free-text section parsing was
+    # fragile (cross-language, content-noun collisions) and is no longer needed.
+    # The full topic list ("topik apa aja") still routes via the regex/semantic
+    # TOPIC_LIST path below.
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
@@ -480,11 +478,29 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         }
 
     # ── KNOWLEDGE: a real question → retrieve, then generate ────────────────
-    # Best-effort follow-up context (no LLM): a terse follow-up ("jelasin lagi",
-    # "terus gimana") doesn't retrieve well alone, so prepend the most recent
-    # prior USER turn so the search lands near the active topic.
+    # Best-effort follow-up context (no LLM): a terse ANAPHORIC follow-up
+    # ("jelasin lagi", "terus gimana", "kenapa gitu") doesn't retrieve well
+    # alone, so prepend the most recent prior USER turn to land the search near
+    # the active topic.
+    #
+    # GUARD (fixes topic-panel bug): only prepend when the message is genuinely
+    # anaphoric — i.e. it references the prior turn WITHOUT naming its own topic.
+    # A self-contained short query ("jelaskan tentang Pelayanan", "apa itu PAR")
+    # names its topic and retrieves correctly alone; blending the previous turn
+    # into it pulls the WRONG document. The topic panel sends consecutive
+    # "jelaskan tentang X" clicks (each ≤40 chars), so the old length-only rule
+    # made every click inherit the PREVIOUS topic's chunks → a confident
+    # "belum nemu". Requiring a pure deictic marker (gitu/lagi/tadi/terus/…,
+    # deliberately NOT "kenapa"/"gimana" which commonly open self-contained
+    # questions like "kenapa CP penting") keeps the follow-up benefit while
+    # leaving self-contained queries untouched.
     retrieval_query = user_msg_str
-    if len(user_msg_str.strip()) <= 40 and len(messages) > 1:
+    _msg_stripped = user_msg_str.strip()
+    if (
+        len(_msg_stripped) <= 40
+        and len(messages) > 1
+        and _ANAPHORIC_FOLLOWUP_RE.search(_msg_stripped)
+    ):
         prior_user = next(
             (
                 (m.content if isinstance(m.content, str) else str(m.content))
@@ -494,7 +510,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             None,
         )
         if prior_user:
-            retrieval_query = f"{prior_user.strip()} {user_msg_str.strip()}".strip()
+            retrieval_query = f"{prior_user.strip()} {_msg_stripped}".strip()
 
     # ── Semantic TOPIC_LIST fallback (regex missed) ─────────────────────────
     # The regex Tier-1 can't catch every typo/paraphrase of "what can I learn?"
@@ -815,32 +831,11 @@ async def _load_section_map() -> dict[str, list[str]]:
         return section_map
 
 
-def _match_section(query: str, sections: list[str]) -> str | None:
-    """Best-effort match of a user query to a known section name.
-
-    Lexical/token overlap only (no embedding): lowercase, strip non-alnum, and
-    require that MOST of a section's significant tokens appear in the query. So
-    "apa aja di bisnis proses" matches "Business Process"? No — different
-    language. That cross-language case is handled by the SEMANTIC fallback in the
-    caller; this function catches same-language and near-spelling matches
-    ("business process", "bmdp", "recovery portfolio") deterministically.
-    Returns the section name, or None.
-    """
-    import re as _re
-    ql = " " + _re.sub(r"[^a-z0-9\s]", " ", query.lower()) + " "
-    best = None
-    best_score = 0.0
-    for sec in sections:
-        toks = [t for t in _re.sub(r"[^a-z0-9\s]", " ", sec.lower()).split() if len(t) > 2]
-        if not toks:
-            continue
-        hit = sum(1 for t in toks if f" {t} " in ql)
-        score = hit / len(toks)
-        # Require a strong majority of the section's tokens to be present.
-        if score >= 0.6 and score > best_score:
-            best_score = score
-            best = sec
-    return best
+def _match_section(query: str, sections: list[str]) -> str | None:  # noqa: ARG001
+    """REMOVED — replaced by UI-driven section navigation (see /chat/sections
+    endpoint + the topic-list button in the chat UI). Kept as a no-op stub only
+    if something still imports it; nothing in-tree does."""
+    return None
 
 
 async def _generate_node(state: RAGState, config: RunnableConfig):
@@ -905,17 +900,12 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             "\n\n---\n\n".join(context_lines), _settings.max_context_tokens
         )
         context_section = f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"
-        if _is_set_list:
-            # Plain-prose directive (NOT a new XML tag — avoids leak-guard work).
-            context_section += (
-                "\n\nCATATAN PENTING: user minta menyebutkan sebuah HIMPUNAN "
-                "(mis. semua produk / semua prinsip). Pindai SELURUH "
-                "<retrieved_context> dan sebutkan SETIAP item yang ada — utamakan "
-                "chunk ringkasan yang memuat daftar lengkapnya. JANGAN bergantung "
-                "pada jumlah yang kamu sebut di giliran sebelumnya; hitung ULANG "
-                "dari konteks setiap kali. Kalau user protes (mis. 'dua doang?'), "
-                "hitung ulang dari konteks, jangan mempertahankan jawaban lama."
-            )
+        # NOTE: the set/list enumeration RULE lives in <grounding> in the system
+        # prompt (stable, rarely echoed). We deliberately do NOT append a
+        # plain-prose directive to the context here — Flash Lite echoed it
+        # verbatim to the user ("CATATAN PENTING: ..."). The chunk reordering
+        # above (summary-first) is the structural nudge; the prompt carries the
+        # instruction.
 
     # TOPIC_LIST: the user asked what materials/topics exist ("ada materi apa
     # aja"). This is a no-retrieval intent, so inject the GROUND-TRUTH course
@@ -923,59 +913,34 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # (the bug). The prompt is told to list ONLY these.
     topics_section = ""
     if intent == "TOPIC_LIST":
-        _section = state.get("topic_list_section")
-        if _section:
-            # "apa aja di <section>" → inject the ITEMS inside that one section.
-            try:
-                section_map = await _load_section_map()
-            except Exception:
-                section_map = {}
-            items = section_map.get(_section, [])
-            if items:
-                topics_section = (
-                    f"\n\n<available_topics>\nIsi section \"{_section}\":\n"
-                    + "\n".join(f"- {it}" for it in items)
-                    + "\n</available_topics>\n"
-                    f"User asked what's inside the \"{_section}\" section. List ONLY "
-                    "the items in <available_topics> above, verbatim — do NOT invent, "
-                    "rename, or add any. Open by naming the section."
-                )
-            else:
-                topics_section = (
-                    "\n\n<available_topics>\n(could not load the section contents right now)\n"
-                    "</available_topics>\n"
-                    "Say briefly you can't pull up that section's contents right now "
-                    "and ask them to try again — do NOT invent or name ANY items."
-                )
+        try:
+            course_names = await _load_course_names()
+        except Exception:
+            course_names = []
+        if course_names:
+            topics_section = (
+                "\n\n<available_topics>\n"
+                + "\n".join(f"- {c}" for c in course_names)
+                + "\n</available_topics>\n"
+                "User asked what topics/materials exist. List ONLY the topics in "
+                "<available_topics> above, verbatim — do NOT invent or rename any."
+            )
         else:
-            try:
-                course_names = await _load_course_names()
-            except Exception:
-                course_names = []
-            if course_names:
-                topics_section = (
-                    "\n\n<available_topics>\n"
-                    + "\n".join(f"- {c}" for c in course_names)
-                    + "\n</available_topics>\n"
-                    "User asked what topics/materials exist. List ONLY the topics in "
-                    "<available_topics> above, verbatim — do NOT invent or rename any."
-                )
-            else:
-                # Empty list = Postgres load failed or no docs ingested. Without
-                # this branch topics_section stays "", _is_grounded falls to False,
-                # and the warm chat LLM answers a "what topics?" turn with NO
-                # grounding — which fabricates plausible-sounding topics (the
-                # "Pinjaman Modal, Cicilan Emas" hallucination). Inject an explicit
-                # no-data directive instead; the non-empty string also flips
-                # _is_grounded → True so the deterministic (temp 0) client is used.
-                topics_section = (
-                    "\n\n<available_topics>\n(could not load topic list right now)\n"
-                    "</available_topics>\n"
-                    "User asked what topics/materials exist, but the list is "
-                    "unavailable. Say briefly that you can't pull up the topic list "
-                    "right now and ask them to try again — do NOT invent, guess, or "
-                    "name ANY topics."
-                )
+            # Empty list = Postgres load failed or no docs ingested. Without
+            # this branch topics_section stays "", _is_grounded falls to False,
+            # and the warm chat LLM answers a "what topics?" turn with NO
+            # grounding — which fabricates plausible-sounding topics (the
+            # "Pinjaman Modal, Cicilan Emas" hallucination). Inject an explicit
+            # no-data directive instead; the non-empty string also flips
+            # _is_grounded → True so the deterministic (temp 0) client is used.
+            topics_section = (
+                "\n\n<available_topics>\n(could not load topic list right now)\n"
+                "</available_topics>\n"
+                "User asked what topics/materials exist, but the list is "
+                "unavailable. Say briefly that you can't pull up the topic list "
+                "right now and ask them to try again — do NOT invent, guess, or "
+                "name ANY topics."
+            )
 
     # Long-term memory (LTM profile)
     ltm_section = ""

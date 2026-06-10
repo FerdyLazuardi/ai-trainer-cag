@@ -51,6 +51,9 @@
         <div id="chat-messages"></div>
 
         <div id="chat-input">
+            <button class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
+                <i class="fas fa-list-ul"></i>
+            </button>
             <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
             <button class="send-btn" onclick="handleSendClick()">
                 <i class="fas fa-paper-plane"></i>
