@@ -174,7 +174,7 @@ body {
 .msg.ai { justify-content: flex-start; }
 
 .bubble {
-    max-width: 80%;
+    max-width: 92%;
     padding: 12px 16px;
     border-radius: 15px;
     font-size: 14px;
@@ -347,6 +347,43 @@ body {
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 12px;
+}
+
+/* ================= TABLES IN CHAT ================= */
+/* AI sering balas dengan tabel markdown. Widget chat sempit, jadi tabel 3+
+   kolom TIDAK dipaksa muat (itu bikin "Aspek" pecah jadi "As pe k"). Tiap sel
+   dapat lebar minimum + word-break normal (putus di spasi, bukan per huruf),
+   dan tabel boleh meluap -> scroll horizontal di dalam bubble. */
+.bubble .content table {
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 13px;
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+.bubble .content th,
+.bubble .content td {
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+    min-width: 120px;
+    word-break: normal;
+    overflow-wrap: break-word;
+}
+
+.bubble .content th {
+    background: #f8fafc;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+}
+
+.bubble .content tr:nth-child(even) td {
+    background: #fafafa;
 }
 
 /* ================= STREAMING STATUS INDICATOR ================= */

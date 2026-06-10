@@ -329,6 +329,68 @@ function maybeOfferMentoringByTopicStreak(userText, sources) {
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
+
+// ── Trigger #3 (explicit): user literally asks to be mentored ────────────────
+// "mentor", "aku mau dimentorin", "pandu aku", "mode mentor", "belajar bareng"
+// → offer the mode immediately instead of answering in normal mode. Bare
+// "mentor" counts, EXCEPT when the turn is a content question ABOUT mentors as
+// a topic ("apa itu mentor", "tugas mentor apa") — those must be answered, not
+// intercepted. Generic "ajarin aku X" is NOT matched (normal teach request).
+function _wantsMentoring(t) {
+    if (!t) return false;
+    const s = " " + t.toLowerCase() + " ";
+    // Specific mode-request phrasings — always intercept.
+    if (/\b(mode mentor|mentor mode)\b/.test(s)) return true;
+    if (/\b(aktif(in|kan)?|nyalain|hidupin)\s+(mode\s+)?mentor\b/.test(s)) return true;
+    if (/\b(pandu|bimbing|tuntun)\s+(aku|saya|gw|gue|ku)\b/.test(s)) return true;
+    if (/\b(belajar|ngulik)\s+bareng\b/.test(s)) return true;
+    // Bare "mentor"/"mentorin" → mode request, UNLESS it's a definitional/content
+    // question about mentors as a topic.
+    if (/\b(di)?mentor(in|i|kan)?\b/.test(s)) {
+        const aboutMentorTopic =
+            /\b(apa\s*itu|apa\s*sih|apa|siapa|tugas|peran|fungsi|gimana|bagaimana|jelas(in|kan)?)\b[^?\n]{0,20}\bmentor\b/.test(s)
+            || /\bmentor\b[^?\n]{0,12}\b(itu|tuh)\s+(apa|siapa|gimana)\b/.test(s);
+        return !aboutMentorTopic;
+    }
+    return false;
+}
+
+// Pull the TOPIC out of an explicit request so accepting re-asks it Socratically
+// ("aku mau dimentorin soal cara nagih" → "cara nagih"). "" when no topic given.
+function _stripMentoringPhrase(t) {
+    let s = (t || "");
+    s = s.replace(/\b(di)?mentor(in|i|kan)?\b/gi, " ");
+    s = s.replace(/\b(mode mentor|mentor mode)\b/gi, " ");
+    s = s.replace(/\b(aktif(in|kan)?|nyalain|hidupin)\b/gi, " ");
+    s = s.replace(/\b(pandu|bimbing|tuntun)\b/gi, " ");
+    s = s.replace(/\b(belajar|ngulik)\s+bareng\b/gi, " ");
+    s = s.replace(/\b(aku|saya|gw|gue|ku)\b/gi, " ");
+    s = s.replace(/\b(mau|pengen|pingin|pgn|minta|tolong|dong|donk|ya|nih|deh|coba)\b/gi, " ");
+    s = s.replace(/\b(soal|tentang|mengenai|terkait|buat|untuk|ttg)\b/gi, " ");
+    s = s.replace(/\bstep by step\b/gi, " ");
+    s = s.replace(/[?!.]+/g, " ").replace(/\s+/g, " ").trim();
+    return s;
+}
+
+// Render the offer card with custom text + the standard accept button.
+function _renderMentorOffer(innerHtml) {
+    if (document.getElementById("ava-mentor-offer")) return;
+    const wrap = document.createElement("div");
+    wrap.id = "ava-mentor-offer";
+    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.innerHTML =
+        '<span class="ava-offer-text">' + innerHtml + '</span>' +
+        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+// Offer shown when the user EXPLICITLY asked for mentoring. Worded as an
+// acknowledgement so it doesn't feel like the bot ignored the request.
+function offerExplicitMentoring() {
+    _renderMentorOffer("Siap! Aku bisa pandu kamu mikir step by step. Aktifin mode Mentor sekarang?");
+}
+
 // message) and re-ask their last question in mentoring mode so the answer
 // continues straight into Socratic coaching ON THAT topic — not a reset to
 // "apa yang bikin kamu bingung?". skipBubble: the question is already shown
@@ -706,6 +768,17 @@ async function send(presetText, opts) {
     if (presetText == null) {
         textarea.value = "";
         textarea.style.height = "auto";
+    }
+
+    // Trigger #3 (explicit): user literally asked to be mentored while the mode
+    // is OFF — show the offer instead of answering in normal mode. skipBubble is
+    // the "Ya, pandu aku" re-ask path; never intercept it or we'd loop. The user
+    // request already shows as a bubble above; the offer card appears below it.
+    if (!window.MENTORING_MODE && !opts.skipBubble && _wantsMentoring(text)) {
+        const topic = _stripMentoringPhrase(text);
+        window._lastReflectiveQ = topic || null;
+        offerExplicitMentoring();
+        return;
     }
 
     showTyping();
