@@ -470,3 +470,95 @@ body {
     transform: translateY(-1px);
 }
 .ava-chip i { font-size: 12px; }
+
+/* ── In-chatbox confirm modal (delete chat) ──────────────────────────────── */
+.ava-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(30, 41, 59, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    border-radius: 20px;
+    animation: ava-modal-fade 0.15s ease;
+}
+@keyframes ava-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+.ava-modal-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 22px 20px;
+    width: min(280px, 85%);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    text-align: center;
+}
+.ava-modal-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0 0 6px 0;
+}
+.ava-modal-body {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #64748b;
+    margin: 0 0 18px 0;
+}
+.ava-modal-actions { display: flex; gap: 10px; }
+.ava-modal-btn {
+    flex: 1;
+    padding: 9px 0;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 10px;
+    cursor: pointer;
+    border: none;
+    transition: filter 0.15s ease, background-color 0.15s ease;
+}
+.ava-modal-cancel {
+    background: #f1f5f9;
+    color: #475569;
+}
+.ava-modal-cancel:hover { background: #e2e8f0; }
+.ava-modal-confirm {
+    background: #ef4444;
+    color: #fff;
+}
+.ava-modal-confirm:hover { filter: brightness(0.93); }
+
+/* ── Auto-hook mentoring offer card ──────────────────────────────────────── */
+.ava-mentor-offer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    background: #f4f0fa;
+    border: 1px solid #e3d8f2;
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-top: 2px;
+    max-width: 85%;
+}
+.ava-offer-text {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #4b3a63;
+}
+.ava-offer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--primary-color);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: filter 0.15s ease, transform 0.15s ease;
+}
+.ava-offer-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.ava-offer-btn i { font-size: 11px; }

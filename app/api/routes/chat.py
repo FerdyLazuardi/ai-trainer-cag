@@ -1253,7 +1253,26 @@ async def chat_stream(
             )
             full_answer = cleaned_answer
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2)})}\n\n"
+        # Auto-hook (fase-2): should we OFFER mentoring after this answer? Only
+        # for a normal KNOWLEDGE turn when mentoring is OFF. Reuses the embedding
+        # already computed for LTM (no extra embed call). Never gates/hijacks the
+        # answer — just a soft signal the frontend turns into a clickable offer.
+        # Wrapped so a scoring hiccup can never break the stream.
+        suggest_mentoring = False
+        try:
+            if (not request.mentoring_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
+                from app.graph.intent_classifier import mentoring_affinity
+                _aff = await mentoring_affinity(resolved_query, query_embedding=query_embedding)
+                suggest_mentoring = _aff >= settings.mentoring_suggest_threshold
+                logger.info(
+                    f"mentoring auto-hook: affinity={_aff:.3f} "
+                    f"thr={settings.mentoring_suggest_threshold} suggest={suggest_mentoring} "
+                    f"q={resolved_query[:50]!r}"
+                )
+        except Exception as exc:
+            logger.debug(f"mentoring auto-hook scoring skipped: {exc}")
+
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_mentoring': suggest_mentoring})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)

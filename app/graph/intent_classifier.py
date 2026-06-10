@@ -50,8 +50,35 @@ from typing import Literal, Optional
 
 import numpy as np
 import yaml
-from cachetools import LRUCache
+from collections import OrderedDict
 from loguru import logger
+
+
+class _LRU(OrderedDict):
+    """Minimal bounded LRU cache (stdlib only — no cachetools dependency).
+
+    cachetools was NOT installed in the runtime container and not declared in
+    requirements.txt; importing it here used to make this whole module
+    un-importable at runtime (it only worked because the module was dead code).
+    This OrderedDict-based LRU is O(1) get/set, evicts the oldest entry past
+    maxsize, and keeps the same .get()/[]=  interface the call sites use.
+    """
+    def __init__(self, maxsize: int = 2048):
+        super().__init__()
+        self._maxsize = maxsize
+
+    def get(self, key, default=None):
+        if key not in self:
+            return default
+        self.move_to_end(key)
+        return self[key]
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self._maxsize:
+            super().__delitem__(next(iter(self)))
 
 from app.config.settings import get_settings
 
@@ -113,10 +140,10 @@ def invalidate_seed_cache() -> None:
 
 
 # ── Embedding cache ───────────────────────────────────────────────────────────
-# Proper LRU: frequently asked queries stay cached; stale entries evict
-# automatically. cachetools.LRUCache is O(1) get/set with a doubly-linked
-# list. At 2048 entries × 1024-dim × 8 bytes ≈ 16 MB — bounded and safe.
-_embed_cache: LRUCache = LRUCache(maxsize=2048)
+# Bounded LRU (stdlib OrderedDict, see _LRU above): frequently asked queries
+# stay cached; oldest entries evict past maxsize. At 2048 entries × 1024-dim ×
+# 8 bytes ≈ 16 MB — bounded and safe.
+_embed_cache: _LRU = _LRU(maxsize=2048)
 
 
 async def _embed_one(text: str) -> list[float]:
@@ -293,6 +320,68 @@ async def classify_semantic(text: str) -> Optional[Intent]:
         f"min_margin={settings.intent_semantic_margin}) — falling through"
     )
     return None
+
+
+# ── Mentoring affinity (auto-hook fase-2) ─────────────────────────────────────
+async def mentoring_affinity(text: str, query_embedding: Optional[list[float]] = None) -> float:
+    """Cosine similarity of `text` to the MENTORING centroid, in [0, 1]-ish.
+
+    Used by the chat route's auto-hook to decide whether to OFFER mentoring after
+    a normal answer (it never auto-activates). NOT a gate — just a soft score the
+    frontend turns into a one-line offer above settings.mentoring_suggest_threshold.
+
+    Reuses a precomputed `query_embedding` when given (the route already embeds
+    the query for LTM), so this adds ~1ms (one dot product), no extra embed call.
+    Returns 0.0 on any failure or if the MENTORING centroid is unavailable.
+    """
+    if not text or not text.strip():
+        return 0.0
+    try:
+        centroids = await _compute_centroids()
+        c = centroids.get("MENTORING")
+        if not c:
+            return 0.0
+        if query_embedding is not None:
+            vec = query_embedding
+        else:
+            vec = await _embed_one(text.strip())
+        return _cosine(_l2_normalize(vec), c)
+    except Exception as e:
+        logger.debug(f"mentoring_affinity failed (non-fatal): {e}")
+        return 0.0
+
+
+# ── Semantic TOPIC_LIST fallback ──────────────────────────────────────────────
+async def is_topic_list_semantic(
+    text: str, threshold: float = 0.70, query_embedding: Optional[list[float]] = None
+) -> bool:
+    """True if `text` semantically reads as a 'what topics/materials can I learn?'
+    question — used as a FALLBACK after the regex Tier-1 misses (typos, paraphrases
+    like "materi yang kamu bisa pelajari", "bisa belajar apa hari ini").
+
+    Strict gate: the MENTORING/KNOWLEDGE centroids sit near TOPIC_LIST, so we
+    require BOTH (a) TOPIC_LIST is the single best-matching centroid AND
+    (b) its cosine >= threshold. Calibrated 2026-06-10: real topic-list phrasings
+    score 0.74-0.86 with TOPIC_LIST as best; "produk amartha apa aja" (a content
+    question that must stay KNOWLEDGE) scores 0.58 with KNOWLEDGE as best — clean
+    separation. Reuses a precomputed `query_embedding` (route already embeds the
+    query for LTM/cache) when given, so this adds ~1ms on the hot path. Returns
+    False on any failure (degrade to regex/KNOWLEDGE).
+    """
+    if not text or not text.strip():
+        return False
+    try:
+        centroids = await _compute_centroids()
+        if "TOPIC_LIST" not in centroids:
+            return False
+        vec = query_embedding if query_embedding is not None else await _embed_one(text.strip())
+        vec = _l2_normalize(vec)
+        sims = {k: _cosine(vec, c) for k, c in centroids.items()}
+        best = max(sims, key=sims.get)
+        return best == "TOPIC_LIST" and sims["TOPIC_LIST"] >= threshold
+    except Exception as e:
+        logger.debug(f"is_topic_list_semantic failed (non-fatal): {e}")
+        return False
 
 
 # ── Warmup helper (optional) ──────────────────────────────────────────────────

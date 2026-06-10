@@ -196,6 +196,13 @@ _TOPIC_LIST_PHRASES = (
     "list of topics", "list of courses", "list of materials",
     "topics available", "courses available", "materials available",
     "what do you have", "what can i learn", "what can you teach",
+    # ID — learning-oriented phrasings. NOTE: only NON-greedy entries here.
+    # Bare "bisa belajar apa" / "mau belajar apa" are deliberately NOT listed —
+    # as substrings they'd wrongly match content questions like "bisa belajar
+    # apa itu modal". The END-anchored regex (_TOPIC_LIST_RE) catches those
+    # precisely instead ("belajar apa" only at end-of-message).
+    "belajar apa aja", "belajar apa saja", "yang bisa dipelajari",
+    "materi ada apa", "topik ada apa",
 )
 
 # Regex backstop for TOPIC_LIST phrasings the fixed-substring list above misses:
@@ -206,16 +213,31 @@ _TOPIC_LIST_PHRASES = (
 # them to TOPIC_LIST instead pulls the complete, ground-truth course list from
 # Postgres. Anchored to a topic-meta marker on BOTH sides so content questions
 # ("produk apa aja", "prinsip apa aja") do NOT match and stay KNOWLEDGE.
-_TOPIC_MARKER = r"(?:topik|tema|materi|course|kursus|pelatihan|modul|pembelajaran)"
+_TOPIC_MARKER = r"(?:topik|tema|materi|konten|course|kursus|pelatihan|modul|pembelajaran)"
+# Tolerant trailing suffix: catches the clean word AND typo'd possessives
+# ("materinya", "materiny", "topikny", "materinyaa") without requiring a strict
+# \b right after the stem — \bmateri\b fails on "materiny" because 'i'→'n' is no
+# boundary, so those typos used to fall through to the flaky semantic path.
+_MK = rf"{_TOPIC_MARKER}\w{{0,3}}"
 _TOPIC_LIST_RE = re.compile(
-    # marker(nya) … apa aja/saja      "topiknya apa aja", "materi apa saja"
-    rf"\b{_TOPIC_MARKER}(?:nya)?\b[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja|yg ada|yang ada)\b"
+    # marker(nya) … apa aja/saja      "topiknya apa aja", "materiny aada apa aja"
+    rf"\b{_MK}[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja|yg ada|yang ada)\b"
     # apa aja/saja … marker(nya)      "apa aja topiknya"
-    rf"|\bapa\s*(?:aja|saja)\b[^.?!\n]{{0,6}}\b{_TOPIC_MARKER}(?:nya)?\b"
+    rf"|\bapa\s*(?:aja|saja)\b[^.?!\n]{{0,6}}\b{_MK}\b"
     # marker(nya) + apa at END        "topiknya apa", "materinya apa sih"
-    rf"|\b{_TOPIC_MARKER}(?:nya)?\s+apa\b(?:\s+(?:sih|dong|donk|ya|yaa|jir|woi|kak|ka|min))?\s*\??\s*$"
+    rf"|\b{_MK}\s+apa\b(?:\s+(?:sih|dong|donk|ya|yaa|jir|woi|kak|ka|min))?\s*\??\s*$"
+    # apa + marker(nya) at END         "apa topiknya", "apa materinya", "apa topik nya"
+    # END-anchored so "apa materi client protection" (names a topic) stays KNOWLEDGE.
+    rf"|\bapa\s+{_TOPIC_MARKER}(?:\s*nya)?\b(?:\s+(?:sih|dong|donk|ya|yaa|jir|woi|kak|ka|min|nih))?\s*\??\s*$"
     # belajar/pelajari + apa aja/saja "bisa belajar apa aja", "mau belajar apa saja"
-    rf"|\b(?:belajar|pelajari|dipelajari)\b[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja)\b",
+    rf"|\b(?:belajar|pelajari|dipelajari|mempelajari)\b[^.?!\n]{{0,6}}\bapa\s*(?:aja|saja)\b"
+    # belajar/pelajari + apa at END   "mau belajar apa", "bisa belajar apa sih",
+    # "aku bisa belajar apa di sini" (trailing location fluff allowed, but NOT
+    # a content noun — "belajar apa itu modal" stays KNOWLEDGE since "itu" isn't
+    # in the trailing set).
+    rf"|\b(?:belajar|pelajari|dipelajari|mempelajari)\s+apa\b(?:\s+(?:aja|saja|sih|dong|donk|ya|yaa|nih|di\s*sini|disini|disitu|di\s*amartha\w*))*\s*\??\s*$"
+    # apa aja/saja … belajar/dipelajari (reversed)  "apa aja yang bisa dipelajari"
+    rf"|\bapa\s*(?:aja|saja)\b[^.?!\n]{{0,18}}\b(?:belajar|pelajari|dipelajari)\b",
     re.IGNORECASE,
 )
 

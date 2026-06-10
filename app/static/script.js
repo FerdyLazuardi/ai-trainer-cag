@@ -163,6 +163,115 @@ function chipMentoring() {
     setMentoring(true, true);
 }
 
+// ── Auto-hook: OFFER mentoring after a reflective question ───────────────────
+// Detects a diagnostic/"how-should-I" question about the user's OWN work and
+// (when mentoring is OFF) appends a soft OFFER below the answer. It never
+// auto-activates — the user must click "Ya, pandu aku" to opt in (which turns
+// the switch green). Frontend-only: the answer already streamed normally.
+function _looksReflective(t) {
+    if (!t) return false;
+    const s = " " + t.toLowerCase() + " ";
+    const why = /\b(kok|kenapa|mengapa|knp|ngapa|napa)\b/.test(s);
+    const work = /\b(aku|ku|saya|mitra|nasabah|target|tim|point|portfolio|portofolio|repayment|tagih|ditagih|kabur|nunggak|setoran|angsuran)\b/.test(s);
+    if (why && work) return true;
+    // "gimana caranya aku ...", "gimana aku bisa/harus ..."
+    if (/\b(gimana|gmn|gmana|bagaimana)\b[^.?!\n]{0,25}\b(aku|ku|saya)\b/.test(s)) return true;
+    return false;
+}
+
+function removeMentorOffer() {
+    const el = document.getElementById("ava-mentor-offer");
+    if (el) el.remove();
+}
+
+// backendSuggest: the server's suggest_mentoring flag (true/false), or null/
+// undefined when absent. When present it's AUTHORITATIVE (semantic affinity);
+// the regex _looksReflective is only the fallback when the backend didn't send
+// a signal (e.g. fallback/non-stream path or older backend).
+function maybeOfferMentoring(userText, backendSuggest) {
+    if (window.MENTORING_MODE) return;                        // already on
+    if (document.getElementById("ava-mentor-offer")) return;  // one at a time
+    const show = (backendSuggest === true || backendSuggest === false)
+        ? backendSuggest
+        : _looksReflective(userText);
+    if (!show) return;
+    window._lastReflectiveQ = userText;  // remembered for the accept handler
+    const wrap = document.createElement("div");
+    wrap.id = "ava-mentor-offer";
+    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.innerHTML =
+        '<span class="ava-offer-text">Mau ngulik ini bareng? Aku bisa pandu kamu mikir step by step.</span>' +
+        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+// Topic-streak auto-hook: if the user keeps asking about the SAME topic several
+// turns in a row, that's a strong "I want to go deep here" signal — offer to
+// coach them through it. Topic is taken from the answer's `sources` (each chunk
+// carries its course/section title). Frontend-only: no backend change.
+const _TOPIC_STREAK_THRESHOLD = 3;   // offer after this many same-topic turns
+window._topicStreak = { topic: null, count: 0 };
+
+function _dominantTopic(sources) {
+    if (!sources || !sources.length) return null;
+    // Most frequent title among the retrieved chunks (ties → first/highest-rank).
+    const freq = {};
+    let best = null, bestN = 0;
+    for (const s of sources) {
+        const t = (s && s.title) ? s.title.trim() : "";
+        if (!t || t === "Unknown") continue;
+        freq[t] = (freq[t] || 0) + 1;
+        if (freq[t] > bestN) { bestN = freq[t]; best = t; }
+    }
+    return best;
+}
+
+function maybeOfferMentoringByTopicStreak(userText, sources) {
+    if (window.MENTORING_MODE) return;                        // already on
+    if (document.getElementById("ava-mentor-offer")) return;  // per-question hook already offered
+    const topic = _dominantTopic(sources);
+    if (!topic) { window._topicStreak = { topic: null, count: 0 }; return; }
+
+    const st = window._topicStreak;
+    if (st.topic === topic) {
+        st.count += 1;
+    } else {
+        window._topicStreak = { topic: topic, count: 1 };
+    }
+    if (window._topicStreak.count < _TOPIC_STREAK_THRESHOLD) return;
+
+    // Streak reached → offer, then reset so we don't nag every subsequent turn.
+    window._topicStreak = { topic: null, count: 0 };
+    window._lastReflectiveQ = userText;  // accept handler re-asks this in mentoring mode
+    const wrap = document.createElement("div");
+    wrap.id = "ava-mentor-offer";
+    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.innerHTML =
+        '<span class="ava-offer-text">Kamu udah beberapa kali ngebahas <b>' + topic +
+        '</b> nih. Mau aku pandu ngulik lebih dalam soal ini?</span>' +
+        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+}
+// message) and re-ask their last question in mentoring mode so the answer
+// continues straight into Socratic coaching ON THAT topic — not a reset to
+// "apa yang bikin kamu bingung?". skipBubble: the question is already shown
+// above, don't duplicate it.
+function acceptMentoringOffer() {
+    removeMentorOffer();
+    setMentoring(true, false);   // green slider, no canned message
+    const q = window._lastReflectiveQ;
+    if (q) {
+        window._lastReflectiveQ = null;
+        send(q, { skipBubble: true });
+    } else {
+        // No remembered question (shouldn't happen from the offer) — fall back
+        // to the canned guiding prompt.
+        addMessage("Oke, aku pandu kamu belajar ya. Apa yang lagi pengen kamu ulik?", "ai");
+    }
+}
+
 function toggleChat() {
     const icon = document.getElementById("chat-icon");
     const toggleBtn = document.getElementById("chat-toggle");
@@ -235,6 +344,10 @@ function removeWelcome() {
 function showIntro() {
     // Hindari duplikat welcome
     if (document.getElementById("ava-welcome")) return;
+    // Welcome = empty-state ONLY. Kalau sudah ada bubble chat (mis. user klik
+    // chip Topik/Mentoring lalu close+open), JANGAN munculkan welcome lagi di
+    // bawah konten — itu bug "Selamat siang muncul lagi".
+    if (messages.querySelector(".msg")) return;
 
     const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
         ? MOODLE_USER_NAME.split(' ')[0]
@@ -299,30 +412,62 @@ async function loadHistory() {
     }
 }
 
-async function clearChat() {
-    if (confirm("Yakin mau hapus semua chat history?")) {
-        const sessionId = getSessionId();
-        const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-        const headers = {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true"
-        };
+function clearChat() {
+    // Custom in-chatbox confirm modal (replaces native confirm()).
+    showConfirmModal(
+        "Hapus semua chat?",
+        "Riwayat percakapan ini akan dihapus dan tidak bisa dikembalikan.",
+        doClearChat
+    );
+}
 
-        if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
-            headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
-        }
+// In-chatbox confirm modal. Overlay is appended INTO #chat-box, which is
+// position:fixed + overflow:hidden, so it's clipped to the chat window (not the
+// whole page). Buttons resolve by calling onConfirm or just closing.
+function showConfirmModal(title, body, onConfirm) {
+    if (document.getElementById("ava-modal")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "ava-modal";
+    overlay.className = "ava-modal-overlay";
+    overlay.innerHTML = `
+        <div class="ava-modal-card">
+            <h3 class="ava-modal-title">${title}</h3>
+            <p class="ava-modal-body">${body}</p>
+            <div class="ava-modal-actions">
+                <button class="ava-modal-btn ava-modal-cancel">Batal</button>
+                <button class="ava-modal-btn ava-modal-confirm">Hapus</button>
+            </div>
+        </div>
+    `;
+    const close = () => overlay.remove();
+    overlay.querySelector(".ava-modal-cancel").onclick = close;
+    overlay.querySelector(".ava-modal-confirm").onclick = () => { close(); onConfirm(); };
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    chatBox.appendChild(overlay);
+}
 
-        try {
-            await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
-                method: 'DELETE',
-                headers: headers
-            });
-            messages.innerHTML = '';
-            introduced = false;
-            showIntro();
-        } catch (e) {
-            console.error("Error clearing chat history:", e);
-        }
+async function doClearChat() {
+    const sessionId = getSessionId();
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+    const headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true"
+    };
+
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
+
+    try {
+        await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
+            method: 'DELETE',
+            headers: headers
+        });
+        messages.innerHTML = '';
+        introduced = false;
+        showIntro();
+    } catch (e) {
+        console.error("Error clearing chat history:", e);
     }
 }
 
@@ -470,13 +615,23 @@ function finalizeStreamBubble(contentDiv, bubble, fullText) {
 // ============================================================
 // SEND MESSAGE — True SSE Streaming
 // ============================================================
-async function send() {
-    const text = textarea.value.trim();
+async function send(presetText, opts) {
+    // presetText: send this instead of the textarea value (used by the
+    // "Ya, pandu aku" accept handler to re-ask the user's last question in
+    // mentoring mode). opts.skipBubble: don't add a user bubble (the question
+    // is already shown above, so re-asking shouldn't duplicate it).
+    opts = opts || {};
+    const text = (presetText != null ? presetText : textarea.value).trim();
     if (!text || isStreaming) return;
 
-    const userMsgNode = addMessage(text, "user");
-    textarea.value = "";
-    textarea.style.height = "auto";
+    removeMentorOffer();
+    if (!opts.skipBubble) {
+        addMessage(text, "user");
+    }
+    if (presetText == null) {
+        textarea.value = "";
+        textarea.style.height = "auto";
+    }
 
     showTyping();
     isStreaming = true;
@@ -532,6 +687,8 @@ async function send() {
         let _displayedText = "";
         let _streamActive = true;
         let _finalized = false;
+        let _suggestMentoring = null;  // backend auto-hook signal (set in done event)
+        let _doneSources = null;       // sources[] from done event (for topic-streak hook)
 
         function startStreamBubble() {
             if (!_streamStarted) {
@@ -573,6 +730,14 @@ async function send() {
             } else if (!_finalized) {
                 _finalized = true;
                 finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
+                // Auto-hook: after the answer lands, offer mentoring. Backend
+                // signal (_suggestMentoring) is authoritative when present;
+                // regex _looksReflective is the fallback when it's absent.
+                maybeOfferMentoring(text, _suggestMentoring);
+                // Topic-streak hook: if the per-question hook didn't already
+                // offer, and the user has asked about the SAME topic 3x in a
+                // row, offer to go deeper on that topic.
+                maybeOfferMentoringByTopicStreak(text, _doneSources);
             }
         }
 
@@ -609,6 +774,8 @@ async function send() {
 
                         if (currentEventType === "done") {
                             startStreamBubble();
+                            if (parsed.suggest_mentoring !== undefined) _suggestMentoring = parsed.suggest_mentoring;
+                            if (parsed.sources !== undefined) _doneSources = parsed.sources;
                             _streamActive = false;
                             currentEventType = "";
                             continue;
@@ -689,6 +856,7 @@ async function send() {
 
             const reply = data?.answer || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
             streamMessageFallback(reply, "ai");
+            maybeOfferMentoring(text);
 
         } catch (fallbackErr) {
             if (fallbackErr.name === 'AbortError') {

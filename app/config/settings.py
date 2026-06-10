@@ -279,6 +279,15 @@ class Settings(BaseSettings):
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
     intent_semantic_threshold: float = 0.55
     intent_semantic_margin: float = 0.10
+    # Auto-hook (fase-2): cosine threshold for OFFERING mentoring after a normal
+    # answer (intent_classifier.mentoring_affinity vs the MENTORING centroid).
+    # This is NOT a routing gate — it only decides whether to show a one-line
+    # "mau ngulik bareng?" offer the user can click; a false positive just shows
+    # an ignorable offer, never hijacks the answer. CALIBRATED 2026-06-10 against
+    # the bge-m3 centroids: diagnostic/work questions scored 0.747-0.839,
+    # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
+    # margin each side. Re-check if the MENTORING seeds in intent_seed.yaml change.
+    mentoring_suggest_threshold: float = 0.70
     # Master switch for the Tier-1.5 semantic gate (app/graph/intent_classifier.
     # classify_semantic), wired into _pre_processor between the regex Tier-1 and
     # the LLM pre-processor. DEFAULT OFF: the threshold above (0.55) is a
