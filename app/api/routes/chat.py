@@ -523,6 +523,19 @@ async def _prepare_rag_context(
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
 
+    # Live Moodle profile (firstname + custom fields) from the JWT. Lets the
+    # generate node greet by name and tailor answers to the user's dept/role.
+    # Per-user, so it never goes in the shared cache key (cache_namespace_for
+    # already splits on user_id).
+    user_context = {
+        "name": current_user.username,
+        "dept": current_user.dept,
+        "location": current_user.location,
+        "position": current_user.position,
+        "grade": current_user.grade,
+        "point": current_user.point,
+    }
+
     # For Tier-1 intents (GREETING, AMBIGUOUS), skip all expensive I/O:
     # no history summarization (avoids LLM call), no LTM, no UserProfile.
     # These intents have hardcoded responses that don't use any of this context.
@@ -535,6 +548,7 @@ async def _prepare_rag_context(
                 "conversation_summary": "",
                 "user_profile": {"summary": "", "course_names": []},
                 "user_preferences": None,
+                "user_context": user_context,
             },
             "query_embedding": None,
             "was_personalized": False,
@@ -637,6 +651,7 @@ async def _prepare_rag_context(
         "conversation_summary": summary,
         "user_profile": ltm_profile,
         "user_preferences": user_pref_dict,
+        "user_context": user_context,
         # H5 — hand the already-computed query embedding to rag_node so it can
         # skip a second embed. `query_embedding_text` is the EXACT string we
         # embedded (resolved_query); rag_node reuses the vector only when the

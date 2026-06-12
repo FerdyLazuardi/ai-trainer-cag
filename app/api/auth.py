@@ -21,6 +21,14 @@ class User(BaseModel):
     user_id: str
     role: str
     username: str
+    # Live Moodle profile fields (custom fields), passed through the JWT by the
+    # block_chatbot plugin so the conversational prompt can contextualize answers
+    # to who is asking. Optional — dev-bypass and older tokens omit them.
+    dept: str = ""
+    location: str = ""
+    position: str = ""
+    grade: str = ""
+    point: str = ""
 
 async def get_current_user(
     request: Request,
@@ -82,7 +90,16 @@ async def get_current_user(
             if not user_id or not user_id.strip():
                 raise ValueError("Invalid user_id in token payload")
 
-            user = User(user_id=user_id, role=role, username=username)
+            user = User(
+                user_id=user_id,
+                role=role,
+                username=username,
+                dept=payload.get("dept", "") or "",
+                location=payload.get("location", "") or "",
+                position=payload.get("position", "") or "",
+                grade=payload.get("grade", "") or "",
+                point=payload.get("point", "") or "",
+            )
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, ValueError, Exception) as e:
             # Single uniform 401 response regardless of why the token
             # was rejected. The previous code returned "Token

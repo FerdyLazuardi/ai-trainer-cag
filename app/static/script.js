@@ -285,7 +285,7 @@ function maybeOfferMentoring(userText, backendSuggest) {
 // turns in a row, that's a strong "I want to go deep here" signal — offer to
 // coach them through it. Topic is taken from the answer's `sources` (each chunk
 // carries its course/section title). Frontend-only: no backend change.
-const _TOPIC_STREAK_THRESHOLD = 3;   // offer after this many same-topic turns
+const _TOPIC_STREAK_THRESHOLD = 2;   // offer after this many same-topic turns
 window._topicStreak = { topic: null, count: 0 };
 
 function _dominantTopic(sources) {
@@ -602,6 +602,8 @@ async function doClearChat() {
         });
         messages.innerHTML = '';
         introduced = false;
+        window._topicStreak = { topic: null, count: 0 };
+        window._lastReflectiveQ = null;
         showIntro();
     } catch (e) {
         console.error("Error clearing chat history:", e);
@@ -667,13 +669,19 @@ marked.setOptions({ breaks: true, gfm: true });
 // ============================================================
 function getSessionId() {
     if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
-        const nama = (typeof MOODLE_USER_NAME !== 'undefined' && MOODLE_USER_NAME)
-            ? MOODLE_USER_NAME.replace(/\s+/g, '_').toLowerCase()
-            : "user";
-        const dept = (typeof MOODLE_DEPT !== 'undefined' && MOODLE_DEPT)
-            ? MOODLE_DEPT.toLowerCase()
-            : "general";
-        return `${nama}_${MOODLE_USER_ID}_${dept}`;
+        // MUST match $user_id_readable in block_chatbot.php byte-for-byte:
+        //   {user_id}_{firstname}_{department}_{point}   e.g. "11_rossy_academy_ho"
+        // Slug rule mirrors PHP: spaces→underscore, lowercase, then fallback.
+        const slug = (v, fallback) => {
+            const s = (typeof v === 'string' && v)
+                ? v.replace(/\s+/g, '_').toLowerCase()
+                : '';
+            return s || fallback;
+        };
+        const nama  = slug(typeof MOODLE_USER_NAME !== 'undefined' ? MOODLE_USER_NAME : '', 'user');
+        const dept  = slug(typeof MOODLE_DEPT       !== 'undefined' ? MOODLE_DEPT       : '', 'general');
+        const point = slug(typeof MOODLE_POINT      !== 'undefined' ? MOODLE_POINT      : '', 'na');
+        return `${MOODLE_USER_ID}_${nama}_${dept}_${point}`;
     }
     let sid = sessionStorage.getItem("ava_sid");
     if (!sid) {

@@ -124,13 +124,13 @@ Guiding question: 1-3 sentences, light and inviting. The teaching answer after t
 # leading to giant <h1>-rendered context dumps in the UI. We catch that
 # server-side as a defensive net even after prompt-level guards.
 _LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>"
+    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>"
     r".*?"
     r"</\1>\s*",
     re.DOTALL | re.IGNORECASE,
 )
 _LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>",
+    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>",
     re.IGNORECASE,
 )
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
@@ -983,7 +983,36 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
                 + "\n</user_preferences>"
             )
 
-    dynamic_tail = f"{pref_section}{ltm_section}{summary_section}{topics_section}{context_section}".strip()
+    # Live Moodle profile of the person asking (firstname + custom fields).
+    # Lets Ava greet by name and tailor answers to their dept/role/location.
+    # Rendered only when at least one field is present (greetings from a
+    # tokenless dev session carry nothing).
+    user_ctx_section = ""
+    uctx = state.get("user_context") or {}
+    if uctx:
+        ctx_lines = []
+        if uctx.get("name"):
+            ctx_lines.append(f"Nama: {uctx['name']}")
+        if uctx.get("dept"):
+            ctx_lines.append(f"Departemen: {uctx['dept']}")
+        if uctx.get("position"):
+            ctx_lines.append(f"Posisi: {uctx['position']}")
+        if uctx.get("grade"):
+            ctx_lines.append(f"Grade: {uctx['grade']}")
+        if uctx.get("location"):
+            ctx_lines.append(f"Lokasi: {uctx['location']}")
+        if uctx.get("point"):
+            ctx_lines.append(f"Point: {uctx['point']}")
+        if ctx_lines:
+            user_ctx_section = (
+                "\n\n<user_context>\nKamu sedang berbicara dengan user berikut. "
+                "Sapa dengan nama depannya bila relevan dan sesuaikan jawaban "
+                "dengan konteksnya:\n"
+                + "\n".join(ctx_lines)
+                + "\n</user_context>"
+            )
+
+    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{context_section}".strip()
 
     # Temperature split (no extra tokens — just which pre-built client we call):
     #   - GROUNDED turn (KB <context> present, or a TOPIC_LIST with the real

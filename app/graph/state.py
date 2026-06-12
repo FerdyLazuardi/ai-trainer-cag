@@ -36,6 +36,10 @@ class RAGState(TypedDict):
     conversation_summary: Optional[str]  # Sprint 2 — short-term session summary
     user_profile: Optional[dict]         # Sprint 3 — long-term user memory
     user_preferences: Optional[dict]     # Sprint 4 — persistent user preferences from SQL
+    # Live Moodle profile (firstname + custom fields: dept/location/position/
+    # grade/point) from the JWT. Read by generate_node to greet by name and
+    # contextualize answers. Per-user, never cached cross-user.
+    user_context: Optional[dict]
     # H5 — precomputed dense embedding of the query, threaded from the chat
     # route (which already embedded for cache/LTM lookup) to avoid a second
     # embed in rag_node. `query_embedding_text` records the EXACT string that
