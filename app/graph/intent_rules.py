@@ -1,25 +1,33 @@
 """Deterministic intent pre-classifier.
 
 Fast, regex-based rules that handle the highest-confidence intent cases
-WITHOUT calling the LLM. The LLM-based classifier in `_pre_processor`
-remains the fallback for everything that doesn't match a rule here —
+WITHOUT calling any LLM. Queries that don't match a rule here return None
+and fall through to the KNOWLEDGE retrieval path (the pipeline default) —
 this module just short-circuits the unambiguous 60-70% of traffic.
 
-Why: the LLM classifier (Gemini Flash Lite) was bouncing on edge cases
-when the prompt grew to cover every intent. Each prompt iteration that
-fixed one case broke another. Pulling deterministic patterns out lets us:
-  1. Eliminate flakiness for things that were never genuinely ambiguous
-     (math, single emoji, "kamu siapa").
-  2. Save LLM cost + latency on those calls.
-  3. Keep the LLM prompt small + focused on truly ambiguous middle cases.
+NOTE (current state): this module is Ava-only, and Ava's `_pre_processor`
+(app/graph/pipeline.py) NO LONGER calls an LLM to classify intent. The old
+LLM classifier described below has been removed entirely; an unmatched query
+now defaults to KNOWLEDGE, with an embedding-based TOPIC_LIST fallback
+(intent_classifier.py) for the topic-list case. Askfer has its own separate
+LLM pre-processor and does NOT use this module.
+
+History (why this module exists): the original LLM classifier (Gemini Flash
+Lite) was bouncing on edge cases when its prompt grew to cover every intent —
+each prompt iteration that fixed one case broke another. Pulling deterministic
+patterns out eliminated flakiness for things that were never genuinely
+ambiguous (math, single emoji, "kamu siapa") and saved LLM cost + latency.
+The LLM classification step was later dropped completely, leaving these rules
+(plus the semantic gate) as the only pre-retrieval classifier.
 
 Design:
   - Each rule is a function (text, low) -> Optional[Intent]
   - Rules check IN ORDER, first match wins.
   - Rules are conservative — false negatives (no match) fall through to
-    the LLM; false positives (wrong rule fires) are user-visible bugs.
-  - No history scanning here. History-binding stays in the LLM path
-    where it can reason about prior turns.
+    the KNOWLEDGE retrieval default; false positives (wrong rule fires)
+    are user-visible bugs.
+  - No history scanning here — a terse anaphoric follow-up is handled by
+    the retrieval-query prepend in _pre_processor, not in this module.
 """
 from __future__ import annotations
 
@@ -31,17 +39,17 @@ Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"
 # ── Rule 0: prompt-injection / jailbreak / system-prompt extraction ──────────
 # Deterministic guard for ADVERSARIAL inputs that try to override the bot's
 # instructions, extract its system prompt, or activate a "no rules" persona.
-# Routes straight to MALICIOUS (canned refusal) BEFORE the LLM classifier.
+# Routes straight to MALICIOUS (canned refusal) before any softer rule fires.
 #
 # WHY deterministic: an injection attempt ("abaikan instruksimu", "kamu
-# sekarang DAN mode") must be caught BEFORE any softer rule or the LLM path can
+# sekarang DAN mode") must be caught BEFORE any softer rule can
 # mishandle it — historically a role-play-flavored injection misrouted to the
 # loosest conversational path and recited the system prompt. A rule here fires
 # first, so the attempt never reaches a prompt that could be coaxed.
 #
 # PRECISION over recall: every pattern requires a verb/target co-occurrence or
 # a multi-word anchor that essentially never appears in a legitimate Amartha
-# materials question. Subtler paraphrases still fall through to the LLM.
+# materials question. Subtler paraphrases still fall through to KNOWLEDGE.
 #
 # CRITICAL false-positive traps explicitly avoided:
 #  - "dan" = Indonesian "and" → DAN only matches as an ALL-CAPS standalone
@@ -81,6 +89,21 @@ _INJECTION_RES = (
     # 5. DAN persona — ALL-CAPS standalone token co-occurring with "mode" (so
     #    the Indonesian conjunction "dan" never fires). NO IGNORECASE here.
     re.compile(r"\bDAN\b.{0,20}\bmode\b|\bmode\b.{0,20}\bDAN\b"),
+    # 6. English jailbreak phrasings that rule 2 misses (it requires an
+    #    instruction/rule/prompt object; "bypass your safety filters" and
+    #    "unrestricted AI" name no such object). These AI-safety terms
+    #    (unrestricted/uncensored/safety filter/guardrail/content policy) are
+    #    NEVER part of a legitimate Amartha materials question, so a hard block
+    #    here is safe. "do anything now" / "act as DAN" are canonical jailbreaks.
+    re.compile(
+        r"\b(unrestricted|uncensored|jailbroken|no[\s-]?restrictions?|without\s+restrictions?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(bypass|disable|turn\s+off|ignore|remove)\b.{0,30}\b(safety|filter|filters|guardrail|guardrails|moderation|content\s+polic(?:y|ies)|restriction)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bdo\s+anything\s+now\b|\bact\s+as\s+(?:a\s+)?(?:dan|an?\s+unrestricted|jailbroken)\b", re.IGNORECASE),
 )
 
 # ── Rule 1: pure punctuation / filler ────────────────────────────────────────
@@ -106,9 +129,11 @@ _MATH_OP_RE = re.compile(r"\b\d+\s*[+\-*x×/÷]\s*\d+\b")
 # partnerships are in-scope), or "masak" (slang "really?!"). Those produce
 # false OFF_SCOPE blocks on real questions like "apakah Amartha kerja sama
 # BRI", "cara jadi mitra mandiri", "integrasi gopay". Genuine competitor
-# questions ("bunga deposito BCA") are still caught by the LLM classifier's
-# STEP 1 — which, unlike this regex, can tell an in-scope partnership question
-# from an off-scope one.
+# questions ("bunga deposito BCA") are deliberately left to fall through to
+# KNOWLEDGE retrieval — the dense-floor relevance gate in the pipeline rejects
+# a genuinely off-scope competitor query when no in-scope chunk clears the
+# floor, so a hard regex block here (which can't tell an in-scope partnership
+# question from an off-scope one) would do more harm than good.
 _OFF_SCOPE_KEYWORDS = (
     # Weather
     "cuaca", "weather", "hujan deras",
@@ -122,6 +147,9 @@ _OFF_SCOPE_KEYWORDS = (
     "siapa presiden", "presiden indonesia", "ibu kota negara",
     # Celebrity / entertainment
     "selebriti", "selebgram", "gosip artis",
+    # Crypto (never an Amartha topic — Amartha is grassroots microfinance, not
+    # a crypto exchange; safe to hard-block, unlike bank/e-wallet partners)
+    "bitcoin", "crypto", "kripto", "ethereum", "dogecoin",
 )
 
 # ── Rule 4: bot-identity / app-purpose questions ─────────────────────────────
@@ -131,7 +159,7 @@ _OFF_SCOPE_KEYWORDS = (
 # "ini apa" or "what is this" — those are greedy and wrongly swallow legitimate
 # topic lookups ("modal ini apa", "celengan ini apa", "BP ini apa sih"), routing
 # them to a self-introduction instead of an answer. Anything genuinely
-# ambiguous ("ini apa?" alone) must fall through to the LLM, which has context.
+# ambiguous ("ini apa?" alone) must fall through to KNOWLEDGE retrieval.
 _IDENTITY_PHRASES = (
     # ID — anchored to bot/app reference
     "kamu siapa", "lu siapa", "lo siapa", "elu siapa", "siapa kamu",
@@ -179,8 +207,8 @@ _GREETING_PREFIXES = (
 # are anchored to a meta-marker (topik/tema/materi/course/pelatihan/available)
 # to avoid false positives on real questions.
 #
-# Saves ~1500 LLM input tokens per qualifying query by short-circuiting the
-# LLM pre-processor call entirely. The handler then injects the topic list.
+# Routing a qualifying query straight to TOPIC_LIST skips retrieval entirely;
+# the handler then injects the ground-truth topic list from Postgres.
 _TOPIC_LIST_PHRASES = (
     # ID
     "ada topik apa", "topik apa aja", "topik apa saja",
@@ -253,8 +281,8 @@ _BARE_APAAJA_FLUFF = {
 
 # Greeting/filler tokens used to decide whether a message is a PURE greeting or
 # a greeting that PREFIXES a real question ("pagi, modal itu apa"). Only the
-# former should short-circuit to GREETING; the latter must reach the LLM so the
-# actual question gets answered.
+# former should short-circuit to GREETING; the latter must fall through to
+# KNOWLEDGE so the actual question gets answered.
 _GREETING_WORDS = {
     "halo", "hai", "hei", "hi", "hey", "hello", "pagi", "siang", "sore", "malam",
     "selamat", "datang", "test", "good", "morning", "afternoon", "evening",
@@ -292,7 +320,7 @@ def _is_injection(text: str) -> bool:
 def _is_pure_filler(low: str) -> bool:
     """Filler = no semantic content. '??', '...', single emoji, single word
     that is not a topic name (we conservatively only fire on punctuation/
-    very short tokens — single Indonesian words are routed to the LLM)."""
+    very short tokens — single Indonesian words default to KNOWLEDGE)."""
     if not low:
         return True
     return bool(_PURE_PUNCT_RE.match(low))
@@ -343,7 +371,7 @@ def _is_identity_question(low: str) -> bool:
     Every phrase in _IDENTITY_PHRASES is anchored to an explicit bot/app
     reference (kamu/lu/apps/bot/who-are-you), so topic lookups like "modal ini
     apa" or "amartha ini apaan" do NOT match here — no company-name guard
-    needed. Anything genuinely ambiguous falls through to the LLM.
+    needed. Anything genuinely ambiguous falls through to KNOWLEDGE.
     """
     if len(low) > 60:
         return False
@@ -354,7 +382,7 @@ def _is_greeting(low: str) -> bool:
     """PURE greeting only — fires when the whole message is just salutation
     (+ optional conversational fluff). A greeting that PREFIXES a real question
     ("pagi, modal itu apa", "hi gimana cara daftar") must NOT short-circuit; it
-    falls through to the LLM so the actual question gets answered.
+    falls through to KNOWLEDGE so the actual question gets answered.
 
     Uses regex to catch elongated typos: "halooo", "haiiii", "heiii", "heyy".
     """
@@ -403,7 +431,7 @@ def classify(text: str) -> Optional[Intent]:
     """Return a high-confidence intent, or None if no rule fires.
 
     Order matters: filler before greeting (so '??' doesn't match nothing
-    and fall through to LLM); identity before off-scope (so 'kamu siapa'
+    and fall through to KNOWLEDGE); identity before off-scope (so 'kamu siapa'
     isn't accidentally caught by a future keyword); greeting last (the
     most permissive prefix match).
     """
@@ -413,7 +441,7 @@ def classify(text: str) -> Optional[Intent]:
 
     # Rule 0: adversarial injection/jailbreak — checked FIRST, on original-case
     # text (the DAN rule needs ALL-CAPS). Hard-routes to the canned MALICIOUS
-    # refusal before any softer rule or the LLM classifier can mis-handle it.
+    # refusal before any softer rule can mis-handle it.
     if _is_injection(text):
         return "MALICIOUS"
 

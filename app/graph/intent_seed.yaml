@@ -37,13 +37,13 @@
 # * KNOWLEDGE seeds use ONLY Amartha-relevant topics so the centroid
 #   stays in-domain; off-scope topics live under OFF_SCOPE so the
 #   gate doesn't accidentally route "harga bitcoin" to KNOWLEDGE.
-# * MENTORING seeds are diagnostic / reasoning questions about the user's
+# * COACHING seeds are diagnostic / reasoning questions about the user's
 #   OWN situation ("kok mitra aku susah ditagih", "kenapa target aku ga
-#   kecapai") — the kind worth thinking through Socratically. NOTE: in fase 1
-#   MENTORING is BUTTON-driven (ChatRequest.mentoring_mode), NOT auto-routed by
-#   this gate. These seeds exist for the future fase-2 "offer to enable
-#   mentoring" detector — they must NOT be used to silently route a user into
-#   Socratic mode without opt-in.
+#   kecapai") — the kind worth thinking through Socratically. NOTE: COACHING
+#   is BUTTON-driven (ChatRequest.coaching_mode), NOT auto-routed by this gate.
+#   These seeds also power the auto-hook that OFFERS coaching after a normal
+#   answer — they must NOT be used to silently route a user into Socratic mode
+#   without opt-in.
 
 GREETING:
   # Casual Indonesian
@@ -140,7 +140,7 @@ KNOWLEDGE:
   - "what is npl ratio"
   - "how to verify a borrower"
 
-MENTORING:
+COACHING:
   # Diagnostic — user asking WHY something in their own work is happening.
   # These are the turns worth thinking through Socratically (button-driven).
   - "kok mitra aku susah ditagih ya"
@@ -156,7 +156,7 @@ MENTORING:
   - "gimana strategi nagih yang baik"
   - "aku harus mulai dari mana buat bangun kepercayaan nasabah"
   - "gimana caranya aku jelasin produk ke mitra yang gaptek"
-  # Explicit mentoring / think-with-me requests
+  # Explicit coaching / think-with-me requests
   - "ajak aku mikir dong soal ini"
   - "bantu aku analisa kenapa ini bisa terjadi"
   - "aku pengen ngerti akar masalahnya"

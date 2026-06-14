@@ -428,15 +428,15 @@ body {
     color: #64748b;
     margin: 0;
 }
-/* ── Mentor toggle slider (header) — label sits INSIDE the track ─────────── */
-.mentor-switch {
+/* ── Coach toggle slider (header) — label sits INSIDE the track ─────────── */
+.coach-switch {
     display: inline-flex;
     align-items: center;
     cursor: pointer;
     user-select: none;
 }
-.mentor-switch input { display: none; }
-.mentor-switch-track {
+.coach-switch input { display: none; }
+.coach-switch-track {
     position: relative;
     width: 78px;
     height: 24px;
@@ -446,7 +446,7 @@ body {
     transition: background-color 0.25s ease;
     flex: 0 0 auto;
 }
-.mentor-switch-text {
+.coach-switch-text {
     position: absolute;
     inset: 0;
     display: flex;
@@ -460,7 +460,7 @@ body {
     transition: padding 0.25s ease;
     pointer-events: none;
 }
-.mentor-switch-thumb {
+.coach-switch-thumb {
     position: absolute;
     top: 3px;
     left: 3px;
@@ -471,12 +471,12 @@ body {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     transition: transform 0.25s ease;
 }
-.mentor-switch.on .mentor-switch-track {
+.coach-switch.on .coach-switch-track {
     background: #3fa76e;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
 }
-.mentor-switch.on .mentor-switch-thumb { transform: translateX(54px); }
-.mentor-switch.on .mentor-switch-text { padding-left: 0; padding-right: 18px; color: #fff; }
+.coach-switch.on .coach-switch-thumb { transform: translateX(54px); }
+.coach-switch.on .coach-switch-text { padding-left: 0; padding-right: 18px; color: #fff; }
 
 /* ── Welcome-screen chips ────────────────────────────────────────────────── */
 .ava-chips {
@@ -564,8 +564,8 @@ body {
 }
 .ava-modal-confirm:hover { filter: brightness(0.93); }
 
-/* ── Auto-hook mentoring offer card ──────────────────────────────────────── */
-.ava-mentor-offer {
+/* ── Auto-hook coaching offer card ──────────────────────────────────────── */
+.ava-coach-offer {
     display: flex;
     flex-direction: column;
     gap: 8px;

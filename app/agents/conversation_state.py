@@ -552,7 +552,7 @@ async def get_or_summarize_history(
     redis: Redis,
     conv_id: str,
     llm,
-    max_fresh_turns: int = 5,
+    max_fresh_turns: int = settings.max_fresh_turns,
     *,
     persist: bool = True,
 ) -> tuple[str, list[dict]]:
@@ -597,8 +597,10 @@ async def get_or_summarize_history(
         for m in turns_to_summarize
     )
     prompt = (
-        "Refine the following conversation summary to include the key points from the new dialogue segment. "
-        "Maintain a concise, 2-3 sentence overview. "
+        "Refine the running conversation summary by integrating the key points from the new dialogue segment. "
+        "Keep it tight but complete: up to about 6 sentences for a long conversation, fewer if little has been discussed. "
+        "PRESERVE specific facts either side actually stated — names, numbers, percentages, product/policy names, and any decision or still-open question — verbatim; do NOT generalize them away (keep a stated figure as the exact figure, not 'membahas angka'). Never add a fact, number, or name that does not appear in the dialogue below. "
+        "Drop only pleasantries and redundant phrasing. "
         "Write the summary in the dominant language of the conversation (English or Indonesian).\n\n"
         f"Existing Summary:\n{old_summary}\n\n"
         f"New context to integrate:\n{old_text}\n\n"
@@ -632,7 +634,7 @@ async def get_or_summarize_history(
 
 
 async def schedule_summary_refresh(
-    redis: Redis, conv_id: str, *, max_fresh_turns: int = 5
+    redis: Redis, conv_id: str, *, max_fresh_turns: int = settings.max_fresh_turns
 ) -> bool:
     """Enqueue an out-of-band summary refresh IF the conversation has overflowed
     the fresh-turn window (C7). Fire-and-forget; deduped via a short NX lock so

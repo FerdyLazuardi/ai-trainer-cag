@@ -83,11 +83,11 @@ class _LRU(OrderedDict):
 from app.config.settings import get_settings
 
 # Must match the union in intent_rules.Intent + extra graph-only intents
-# (MALICIOUS / KNOWLEDGE / MENTORING aren't handled by regex; they are
+# (MALICIOUS / KNOWLEDGE / COACHING aren't handled by regex; they are
 # gate-eligible so the LLM pre-processor can be skipped for clear cases).
 Intent = Literal[
     "GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST",
-    "KNOWLEDGE", "MENTORING", "MALICIOUS",
+    "KNOWLEDGE", "COACHING", "MALICIOUS",
 ]
 
 
@@ -322,23 +322,23 @@ async def classify_semantic(text: str) -> Optional[Intent]:
     return None
 
 
-# ── Mentoring affinity (auto-hook fase-2) ─────────────────────────────────────
-async def mentoring_affinity(text: str, query_embedding: Optional[list[float]] = None) -> float:
-    """Cosine similarity of `text` to the MENTORING centroid, in [0, 1]-ish.
+# ── Coaching affinity (auto-hook) ─────────────────────────────────────────────
+async def coaching_affinity(text: str, query_embedding: Optional[list[float]] = None) -> float:
+    """Cosine similarity of `text` to the COACHING centroid, in [0, 1]-ish.
 
-    Used by the chat route's auto-hook to decide whether to OFFER mentoring after
+    Used by the chat route's auto-hook to decide whether to OFFER coaching after
     a normal answer (it never auto-activates). NOT a gate — just a soft score the
-    frontend turns into a one-line offer above settings.mentoring_suggest_threshold.
+    frontend turns into a one-line offer above settings.coaching_suggest_threshold.
 
     Reuses a precomputed `query_embedding` when given (the route already embeds
     the query for LTM), so this adds ~1ms (one dot product), no extra embed call.
-    Returns 0.0 on any failure or if the MENTORING centroid is unavailable.
+    Returns 0.0 on any failure or if the COACHING centroid is unavailable.
     """
     if not text or not text.strip():
         return 0.0
     try:
         centroids = await _compute_centroids()
-        c = centroids.get("MENTORING")
+        c = centroids.get("COACHING")
         if not c:
             return 0.0
         if query_embedding is not None:
@@ -347,7 +347,7 @@ async def mentoring_affinity(text: str, query_embedding: Optional[list[float]] =
             vec = await _embed_one(text.strip())
         return _cosine(_l2_normalize(vec), c)
     except Exception as e:
-        logger.debug(f"mentoring_affinity failed (non-fatal): {e}")
+        logger.debug(f"coaching_affinity failed (non-fatal): {e}")
         return 0.0
 
 
@@ -359,7 +359,7 @@ async def is_topic_list_semantic(
     question — used as a FALLBACK after the regex Tier-1 misses (typos, paraphrases
     like "materi yang kamu bisa pelajari", "bisa belajar apa hari ini").
 
-    Strict gate: the MENTORING/KNOWLEDGE centroids sit near TOPIC_LIST, so we
+    Strict gate: the COACHING/KNOWLEDGE centroids sit near TOPIC_LIST, so we
     require BOTH (a) TOPIC_LIST is the single best-matching centroid AND
     (b) its cosine >= threshold. Calibrated 2026-06-10: real topic-list phrasings
     score 0.74-0.86 with TOPIC_LIST as best; "produk amartha apa aja" (a content

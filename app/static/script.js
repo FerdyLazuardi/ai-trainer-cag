@@ -30,11 +30,11 @@
                     </div>
                 </div>
                 <div style="display:flex; gap:16px; align-items:center;">
-                    <label class="mentor-switch" title="Mode Mentoring (Socratic)">
-                        <input type="checkbox" id="mentor-toggle" onchange="setMentoring(this.checked, true)">
-                        <span class="mentor-switch-track">
-                            <span class="mentor-switch-text">Mentor</span>
-                            <span class="mentor-switch-thumb"></span>
+                    <label class="coach-switch" title="Mode Coaching (Socratic)">
+                        <input type="checkbox" id="coach-toggle" onchange="setCoaching(this.checked, true)">
+                        <span class="coach-switch-track">
+                            <span class="coach-switch-text">Coaching</span>
+                            <span class="coach-switch-thumb"></span>
                         </span>
                     </label>
                     <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
@@ -110,26 +110,26 @@ if (toggleBtn) {
 // TOGGLE CHAT
 // ============================================================
 // ============================================================
-// MENTORING MODE — single source of truth for the slider + chips
+// COACHING MODE — single source of truth for the slider + chips
 // ============================================================
-// setMentoring(on, showMsg): sets the flag read by send() (mentoring_mode in
+// setCoaching(on, showMsg): sets the flag read by send() (coaching_mode in
 // the request body), syncs the header slider, and — when showMsg — injects an
 // awareness message so the user SEES the mode change. Both on AND off respond,
 // so the switch never flips silently.
-function setMentoring(on, showMsg) {
-    window.MENTORING_MODE = !!on;
-    const cb = document.getElementById("mentor-toggle");
+function setCoaching(on, showMsg) {
+    window.COACHING_MODE = !!on;
+    const cb = document.getElementById("coach-toggle");
     if (cb) cb.checked = !!on;
-    const sw = document.querySelector(".mentor-switch");
+    const sw = document.querySelector(".coach-switch");
     if (sw) sw.classList.toggle("on", !!on);
     if (showMsg) {
         if (on) {
             addMessage(
-                "Oke, aku pandu kamu belajar ya. Apa yang bikin kamu bingung, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
+                "Oke, kita ulik bareng ya — aku pandu kamu sampai nemu jawabannya sendiri. Mau mulai dari mana, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
                 "ai"
             );
         } else {
-            addMessage("Oke, mode Mentoring dimatiin. Balik ke jawaban langsung ya.", "ai");
+            addMessage("Oke, mode Coaching dimatiin. Aku balik jawab langsung ya — tetap aku temani kayak biasa.", "ai");
         }
     }
 }
@@ -160,10 +160,10 @@ async function chipTopik() {
     }
 }
 
-// Welcome-screen chip: "Mentoring" → flip the slider ON and show the canned
+// Welcome-screen chip: "Coaching" → flip the slider ON and show the canned
 // guiding prompt instantly (client-side, no backend round-trip).
-function chipMentoring() {
-    setMentoring(true, true);
+function chipCoaching() {
+    setCoaching(true, true);
 }
 
 // ── Topic-list button → in-chatbox section/item picker ───────────────────────
@@ -238,7 +238,7 @@ async function openSectionPanel() {
     chatBox.appendChild(overlay);
 }
 
-// ── Auto-hook: OFFER mentoring after a reflective question ───────────────────
+// ── Auto-hook: OFFER coaching after a reflective question ────────────────────
 // Detects a diagnostic/"how-should-I" question about the user's OWN work and
 // (when mentoring is OFF) appends a soft OFFER below the answer. It never
 // auto-activates — the user must click "Ya, pandu aku" to opt in (which turns
@@ -254,29 +254,29 @@ function _looksReflective(t) {
     return false;
 }
 
-function removeMentorOffer() {
-    const el = document.getElementById("ava-mentor-offer");
+function removeCoachOffer() {
+    const el = document.getElementById("ava-coach-offer");
     if (el) el.remove();
 }
 
-// backendSuggest: the server's suggest_mentoring flag (true/false), or null/
+// backendSuggest: the server's suggest_coaching flag (true/false), or null/
 // undefined when absent. When present it's AUTHORITATIVE (semantic affinity);
 // the regex _looksReflective is only the fallback when the backend didn't send
 // a signal (e.g. fallback/non-stream path or older backend).
-function maybeOfferMentoring(userText, backendSuggest) {
-    if (window.MENTORING_MODE) return;                        // already on
-    if (document.getElementById("ava-mentor-offer")) return;  // one at a time
+function maybeOfferCoaching(userText, backendSuggest) {
+    if (window.COACHING_MODE) return;                        // already on
+    if (document.getElementById("ava-coach-offer")) return;  // one at a time
     const show = (backendSuggest === true || backendSuggest === false)
         ? backendSuggest
         : _looksReflective(userText);
     if (!show) return;
     window._lastReflectiveQ = userText;  // remembered for the accept handler
     const wrap = document.createElement("div");
-    wrap.id = "ava-mentor-offer";
-    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.id = "ava-coach-offer";
+    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     wrap.innerHTML =
         '<span class="ava-offer-text">Mau ngulik ini bareng? Aku bisa pandu kamu mikir step by step.</span>' +
-        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
@@ -302,9 +302,9 @@ function _dominantTopic(sources) {
     return best;
 }
 
-function maybeOfferMentoringByTopicStreak(userText, sources) {
-    if (window.MENTORING_MODE) return;                        // already on
-    if (document.getElementById("ava-mentor-offer")) return;  // per-question hook already offered
+function maybeOfferCoachingByTopicStreak(userText, sources) {
+    if (window.COACHING_MODE) return;                        // already on
+    if (document.getElementById("ava-coach-offer")) return;  // per-question hook already offered
     const topic = _dominantTopic(sources);
     if (!topic) { window._topicStreak = { topic: null, count: 0 }; return; }
 
@@ -320,47 +320,48 @@ function maybeOfferMentoringByTopicStreak(userText, sources) {
     window._topicStreak = { topic: null, count: 0 };
     window._lastReflectiveQ = userText;  // accept handler re-asks this in mentoring mode
     const wrap = document.createElement("div");
-    wrap.id = "ava-mentor-offer";
-    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.id = "ava-coach-offer";
+    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     wrap.innerHTML =
         '<span class="ava-offer-text">Kamu udah beberapa kali ngebahas <b>' + topic +
         '</b> nih. Mau aku pandu ngulik lebih dalam soal ini?</span>' +
-        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
 
-// ── Trigger #3 (explicit): user literally asks to be mentored ────────────────
-// "mentor", "aku mau dimentorin", "pandu aku", "mode mentor", "belajar bareng"
-// → offer the mode immediately instead of answering in normal mode. Bare
-// "mentor" counts, EXCEPT when the turn is a content question ABOUT mentors as
-// a topic ("apa itu mentor", "tugas mentor apa") — those must be answered, not
-// intercepted. Generic "ajarin aku X" is NOT matched (normal teach request).
-function _wantsMentoring(t) {
+// ── Trigger #3 (explicit): user literally asks to be coached/mentored ────────
+// "coaching", "mentor", "aku mau dimentorin", "pandu aku", "mode coaching",
+// "belajar bareng" → offer the mode immediately instead of answering in normal
+// mode. Bare "coach"/"mentor" counts, EXCEPT when the turn is a content question
+// ABOUT mentors/coaches as a topic ("apa itu mentor", "tugas mentor apa") —
+// those must be answered, not intercepted. Generic "ajarin aku X" is NOT matched
+// (normal teach request — Ava already teaches by default).
+function _wantsCoaching(t) {
     if (!t) return false;
     const s = " " + t.toLowerCase() + " ";
     // Specific mode-request phrasings — always intercept.
-    if (/\b(mode mentor|mentor mode)\b/.test(s)) return true;
-    if (/\b(aktif(in|kan)?|nyalain|hidupin)\s+(mode\s+)?mentor\b/.test(s)) return true;
+    if (/\b(mode (coaching|coach|mentor)|(coaching|coach|mentor) mode)\b/.test(s)) return true;
+    if (/\b(aktif(in|kan)?|nyalain|hidupin)\s+(mode\s+)?(coaching|coach|mentor)\b/.test(s)) return true;
     if (/\b(pandu|bimbing|tuntun)\s+(aku|saya|gw|gue|ku)\b/.test(s)) return true;
     if (/\b(belajar|ngulik)\s+bareng\b/.test(s)) return true;
-    // Bare "mentor"/"mentorin" → mode request, UNLESS it's a definitional/content
-    // question about mentors as a topic.
-    if (/\b(di)?mentor(in|i|kan)?\b/.test(s)) {
-        const aboutMentorTopic =
-            /\b(apa\s*itu|apa\s*sih|apa|siapa|tugas|peran|fungsi|gimana|bagaimana|jelas(in|kan)?)\b[^?\n]{0,20}\bmentor\b/.test(s)
-            || /\bmentor\b[^?\n]{0,12}\b(itu|tuh)\s+(apa|siapa|gimana)\b/.test(s);
-        return !aboutMentorTopic;
+    // Bare "coach"/"mentor"/"mentorin" → mode request, UNLESS it's a definitional/
+    // content question about mentors/coaches as a topic.
+    if (/\b(coaching|coach|(di)?mentor(in|i|kan)?)\b/.test(s)) {
+        const aboutTopic =
+            /\b(apa\s*itu|apa\s*sih|apa|siapa|tugas|peran|fungsi|gimana|bagaimana|jelas(in|kan)?)\b[^?\n]{0,20}\b(coach|mentor)\w*\b/.test(s)
+            || /\b(coach|mentor)\w*\b[^?\n]{0,12}\b(itu|tuh)\s+(apa|siapa|gimana)\b/.test(s);
+        return !aboutTopic;
     }
     return false;
 }
 
 // Pull the TOPIC out of an explicit request so accepting re-asks it Socratically
 // ("aku mau dimentorin soal cara nagih" → "cara nagih"). "" when no topic given.
-function _stripMentoringPhrase(t) {
+function _stripCoachingPhrase(t) {
     let s = (t || "");
-    s = s.replace(/\b(di)?mentor(in|i|kan)?\b/gi, " ");
-    s = s.replace(/\b(mode mentor|mentor mode)\b/gi, " ");
+    s = s.replace(/\b(coaching|coach|(di)?mentor(in|i|kan)?)\b/gi, " ");
+    s = s.replace(/\b(mode (coaching|coach|mentor)|(coaching|coach|mentor) mode)\b/gi, " ");
     s = s.replace(/\b(aktif(in|kan)?|nyalain|hidupin)\b/gi, " ");
     s = s.replace(/\b(pandu|bimbing|tuntun)\b/gi, " ");
     s = s.replace(/\b(belajar|ngulik)\s+bareng\b/gi, " ");
@@ -373,31 +374,31 @@ function _stripMentoringPhrase(t) {
 }
 
 // Render the offer card with custom text + the standard accept button.
-function _renderMentorOffer(innerHtml) {
-    if (document.getElementById("ava-mentor-offer")) return;
+function _renderCoachOffer(innerHtml) {
+    if (document.getElementById("ava-coach-offer")) return;
     const wrap = document.createElement("div");
-    wrap.id = "ava-mentor-offer";
-    wrap.className = "ava-mentor-offer animate__animated animate__fadeIn animate__faster";
+    wrap.id = "ava-coach-offer";
+    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     wrap.innerHTML =
         '<span class="ava-offer-text">' + innerHtml + '</span>' +
-        '<button class="ava-offer-btn" onclick="acceptMentoringOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
 
-// Offer shown when the user EXPLICITLY asked for mentoring. Worded as an
+// Offer shown when the user EXPLICITLY asked to be coached. Worded as an
 // acknowledgement so it doesn't feel like the bot ignored the request.
-function offerExplicitMentoring() {
-    _renderMentorOffer("Siap! Aku bisa pandu kamu mikir step by step. Aktifin mode Mentor sekarang?");
+function offerExplicitCoaching() {
+    _renderCoachOffer("Siap! Aku bisa pandu kamu mikir step by step. Aktifin mode Coaching sekarang?");
 }
 
 // message) and re-ask their last question in mentoring mode so the answer
 // continues straight into Socratic coaching ON THAT topic — not a reset to
 // "apa yang bikin kamu bingung?". skipBubble: the question is already shown
 // above, don't duplicate it.
-function acceptMentoringOffer() {
-    removeMentorOffer();
-    setMentoring(true, false);   // green slider, no canned message
+function acceptCoachingOffer() {
+    removeCoachOffer();
+    setCoaching(true, false);   // green slider, no canned message
     const q = window._lastReflectiveQ;
     if (q) {
         window._lastReflectiveQ = null;
@@ -500,8 +501,8 @@ function showIntro() {
             <button class="ava-chip" onclick="chipTopik()">
                 <i class="fas fa-layer-group"></i> Topik
             </button>
-            <button class="ava-chip" onclick="chipMentoring()">
-                <i class="fas fa-graduation-cap"></i> Mentoring
+            <button class="ava-chip" onclick="chipCoaching()">
+                <i class="fas fa-graduation-cap"></i> Coaching
             </button>
         </div>
     `;
@@ -769,7 +770,7 @@ async function send(presetText, opts) {
     const text = (presetText != null ? presetText : textarea.value).trim();
     if (!text || isStreaming) return;
 
-    removeMentorOffer();
+    removeCoachOffer();
     if (!opts.skipBubble) {
         addMessage(text, "user");
     }
@@ -782,10 +783,10 @@ async function send(presetText, opts) {
     // is OFF — show the offer instead of answering in normal mode. skipBubble is
     // the "Ya, pandu aku" re-ask path; never intercept it or we'd loop. The user
     // request already shows as a bubble above; the offer card appears below it.
-    if (!window.MENTORING_MODE && !opts.skipBubble && _wantsMentoring(text)) {
-        const topic = _stripMentoringPhrase(text);
+    if (!window.COACHING_MODE && !opts.skipBubble && _wantsCoaching(text)) {
+        const topic = _stripCoachingPhrase(text);
         window._lastReflectiveQ = topic || null;
-        offerExplicitMentoring();
+        offerExplicitCoaching();
         return;
     }
 
@@ -813,7 +814,7 @@ async function send(presetText, opts) {
         conversation_id: getSessionId(),
         course_id: typeof MOODLE_COURSE_ID !== 'undefined' ? MOODLE_COURSE_ID : 0,
         course_name: typeof MOODLE_COURSE_NAME !== 'undefined' ? MOODLE_COURSE_NAME : '',
-        mentoring_mode: !!window.MENTORING_MODE
+        coaching_mode: !!window.COACHING_MODE
     });
 
     try {
@@ -843,7 +844,7 @@ async function send(presetText, opts) {
         let _displayedText = "";
         let _streamActive = true;
         let _finalized = false;
-        let _suggestMentoring = null;  // backend auto-hook signal (set in done event)
+        let _suggestCoaching = null;  // backend auto-hook signal (set in done event)
         let _doneSources = null;       // sources[] from done event (for topic-streak hook)
 
         function startStreamBubble() {
@@ -887,13 +888,13 @@ async function send(presetText, opts) {
                 _finalized = true;
                 finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
                 // Auto-hook: after the answer lands, offer mentoring. Backend
-                // signal (_suggestMentoring) is authoritative when present;
+                // signal (_suggestCoaching) is authoritative when present;
                 // regex _looksReflective is the fallback when it's absent.
-                maybeOfferMentoring(text, _suggestMentoring);
+                maybeOfferCoaching(text, _suggestCoaching);
                 // Topic-streak hook: if the per-question hook didn't already
                 // offer, and the user has asked about the SAME topic 3x in a
                 // row, offer to go deeper on that topic.
-                maybeOfferMentoringByTopicStreak(text, _doneSources);
+                maybeOfferCoachingByTopicStreak(text, _doneSources);
             }
         }
 
@@ -930,7 +931,7 @@ async function send(presetText, opts) {
 
                         if (currentEventType === "done") {
                             startStreamBubble();
-                            if (parsed.suggest_mentoring !== undefined) _suggestMentoring = parsed.suggest_mentoring;
+                            if (parsed.suggest_coaching !== undefined) _suggestCoaching = parsed.suggest_coaching;
                             if (parsed.sources !== undefined) _doneSources = parsed.sources;
                             _streamActive = false;
                             currentEventType = "";
@@ -1012,7 +1013,7 @@ async function send(presetText, opts) {
 
             const reply = data?.answer || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
             streamMessageFallback(reply, "ai");
-            maybeOfferMentoring(text);
+            maybeOfferCoaching(text);
 
         } catch (fallbackErr) {
             if (fallbackErr.name === 'AbortError') {

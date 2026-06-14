@@ -241,7 +241,7 @@ async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
             redis,
             conversation_id,
             llm=get_cheap_llm(),
-            max_fresh_turns=5,
+            max_fresh_turns=settings.max_fresh_turns,
             persist=True,  # LLM refine + atomic WATCH/MULTI persist
         )
         return {"status": "refreshed", "conversation_id": conversation_id}

@@ -157,7 +157,7 @@ def _is_bare_affirmation(query: str) -> bool:
 
 
 async def get_or_summarize_history(
-    conversation_id: str, llm, max_fresh_turns: int = 5, *, persist: bool = True
+    conversation_id: str, llm, max_fresh_turns: int = settings.max_fresh_turns, *, persist: bool = True
 ) -> tuple[str, list[dict]]:
     return await _cs.get_or_summarize_history(
         get_redis_client(),
@@ -174,7 +174,7 @@ async def _schedule_summary_refresh(conv_id: str) -> None:
     Wrapped so the hot path can `create_task` it without awaiting."""
     try:
         await _cs.schedule_summary_refresh(
-            get_redis_client(), conv_id, max_fresh_turns=5
+            get_redis_client(), conv_id, max_fresh_turns=settings.max_fresh_turns
         )
     except Exception:
         pass
@@ -218,10 +218,10 @@ DEV_BYPASS_USER_ID = "dev_user_123"
 
 # Intents whose answers don't go through the RAG generator — no faithfulness
 # signal worth measuring. GREETING/AMBIGUOUS are canned, MALICIOUS is a refusal,
-# TOPIC_LIST reads from Postgres metadata, MENTORING often returns a Socratic
+# TOPIC_LIST reads from Postgres metadata, COACHING often returns a Socratic
 # guiding question (not a standard answer to grade for faithfulness),
 # OFF_SCOPE is a canned redirect with no retrieval.
-_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING", "OFF_SCOPE"}
+_EVAL_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE"}
 
 
 def _should_eval_turn(
@@ -473,14 +473,14 @@ async def _prepare_rag_context(
     skip_cache = (
         _skip_embedding
         or _tier1_intent == "TOPIC_LIST"
-        or request.mentoring_mode
+        or request.coaching_mode
         or _is_bare_affirmation(resolved_query)
         or bool(_OPINION_REGEX.search(resolved_query))
         or bool(_META_CONVO_RE.search(resolved_query))
     )
     if skip_cache:
         logger.debug(
-            "Cache lookup skipped — greeting/filler, mentoring mode, "
+            "Cache lookup skipped — greeting/filler, coaching mode, "
             "opinion/synthesis, or meta-conversation recall pattern",
             query=resolved_query[:60],
         )
@@ -579,7 +579,7 @@ async def _prepare_rag_context(
         get_or_summarize_history(
             conversation_id=conversation_id,
             llm=get_cheap_llm(),
-            max_fresh_turns=5,
+            max_fresh_turns=settings.max_fresh_turns,
             persist=False,  # C7: no LLM, no write on the hot path
         ),
         _load_ltm_if_eligible(),
@@ -659,9 +659,9 @@ async def _prepare_rag_context(
         # retrieval query can differ). None when embedding failed (C5 degrade).
         "query_embedding": query_embedding,
         "query_embedding_text": resolved_query if query_embedding is not None else None,
-        # Socratic mentoring toggle (opt-in via UI). When True, _pre_processor
-        # promotes a real question to MENTORING → SOCRATIC_PROMPT.
-        "mentoring_mode": request.mentoring_mode,
+        # Socratic coaching toggle (opt-in via UI). When True, _pre_processor
+        # promotes a real question to COACHING → SOCRATIC_PROMPT.
+        "coaching_mode": request.coaching_mode,
     }
 
     # ── Cross-user cache-leak guard (FIX 1 + C1) ──────────────────────────────
@@ -859,16 +859,16 @@ async def _run_chat(
     # so they can't leak to another user but still provide cache hits for this user.
     #
     # Cache only KNOWLEDGE-class answers (not greeting/ambiguous/malicious/
-    # mentoring) that actually found relevant context and aren't a bare
+    # coaching) that actually found relevant context and aren't a bare
     # affirmation. NOTE: the former MENTOR-shape exclusion (skip-cache when
     # learning_context >= threshold) was dropped when the pre-processor was
     # slimmed to intent-only — step-by-step how-to answers are now cacheable
     # too. Collision-safe: the cache is Redis exact-match only, so a "gimana
     # cara X" answer is only ever re-served to a byte-identical re-ask, never a
-    # paraphrase. MENTORING is excluded: a Socratic guiding question is
+    # paraphrase. COACHING is excluded: a Socratic guiding question is
     # conversational and turn-dependent, never a reusable answer.
     if (
-        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING")
+        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
         and not is_low_relevance
         and not _is_bare_affirmation(request.query)
     ):
@@ -1294,26 +1294,26 @@ async def chat_stream(
             )
             full_answer = cleaned_answer
 
-        # Auto-hook (fase-2): should we OFFER mentoring after this answer? Only
-        # for a normal KNOWLEDGE turn when mentoring is OFF. Reuses the embedding
+        # Auto-hook: should we OFFER coaching after this answer? Only for a
+        # normal KNOWLEDGE turn when coaching is OFF. Reuses the embedding
         # already computed for LTM (no extra embed call). Never gates/hijacks the
         # answer — just a soft signal the frontend turns into a clickable offer.
         # Wrapped so a scoring hiccup can never break the stream.
-        suggest_mentoring = False
+        suggest_coaching = False
         try:
-            if (not request.mentoring_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
-                from app.graph.intent_classifier import mentoring_affinity
-                _aff = await mentoring_affinity(resolved_query, query_embedding=query_embedding)
-                suggest_mentoring = _aff >= settings.mentoring_suggest_threshold
+            if (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
+                from app.graph.intent_classifier import coaching_affinity
+                _aff = await coaching_affinity(resolved_query, query_embedding=query_embedding)
+                suggest_coaching = _aff >= settings.coaching_suggest_threshold
                 logger.info(
-                    f"mentoring auto-hook: affinity={_aff:.3f} "
-                    f"thr={settings.mentoring_suggest_threshold} suggest={suggest_mentoring} "
+                    f"coaching auto-hook: affinity={_aff:.3f} "
+                    f"thr={settings.coaching_suggest_threshold} suggest={suggest_coaching} "
                     f"q={resolved_query[:50]!r}"
                 )
         except Exception as exc:
-            logger.debug(f"mentoring auto-hook scoring skipped: {exc}")
+            logger.debug(f"coaching auto-hook scoring skipped: {exc}")
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_mentoring': suggest_mentoring})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
@@ -1340,7 +1340,7 @@ async def chat_stream(
             # cache is Redis exact-match only (no semantic layer), so a cached
             # answer is only ever re-served to a byte-identical re-ask.
             if (
-                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "MENTORING")
+                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
                 and not is_low_relevance_stream
                 and not _is_bare_affirmation(request.query)
             ):

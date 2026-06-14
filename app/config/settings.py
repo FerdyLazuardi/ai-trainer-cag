@@ -310,15 +310,15 @@ class Settings(BaseSettings):
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
     intent_semantic_threshold: float = 0.55
     intent_semantic_margin: float = 0.10
-    # Auto-hook (fase-2): cosine threshold for OFFERING mentoring after a normal
-    # answer (intent_classifier.mentoring_affinity vs the MENTORING centroid).
-    # This is NOT a routing gate — it only decides whether to show a one-line
+    # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
+    # (intent_classifier.coaching_affinity vs the COACHING centroid). This is
+    # NOT a routing gate — it only decides whether to show a one-line
     # "mau ngulik bareng?" offer the user can click; a false positive just shows
     # an ignorable offer, never hijacks the answer. CALIBRATED 2026-06-10 against
     # the bge-m3 centroids: diagnostic/work questions scored 0.747-0.839,
     # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
-    # margin each side. Re-check if the MENTORING seeds in intent_seed.yaml change.
-    mentoring_suggest_threshold: float = 0.70
+    # margin each side. Re-check if the COACHING seeds in intent_seed.yaml change.
+    coaching_suggest_threshold: float = 0.70
     # Master switch for the Tier-1.5 semantic gate (app/graph/intent_classifier.
     # classify_semantic), wired into _pre_processor between the regex Tier-1 and
     # the LLM pre-processor. DEFAULT OFF: the threshold above (0.55) is a
@@ -326,7 +326,7 @@ class Settings(BaseSettings):
     # production turn — so the gate stays dormant until calibrated against real
     # traffic via scripts/calibrate_intent_threshold.py, then flipped on by env.
     # When enabled, the gate ONLY short-circuits the canned, score-free intents
-    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/MENTORING
+    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/COACHING
     # (they need the LLM's 4-axis scores) and never MALICIOUS (injection
     # detection stays on the deterministic regex + LLM path), so it can never
     # strip a safety/vent turn's escalation scores. Off → behaviour is
@@ -442,18 +442,24 @@ class Settings(BaseSettings):
     # now rides this same HASH (B1), so it inherits this lifetime too.
     conversation_ttl_seconds: int = 43200
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
-    # Max fresh (un-summarized) conversation turns fed to generate_node. 5
-    # (was 2): the old value was tuned for the multi-call architecture where a
-    # separate pre-processor LLM rewrote queries. In the conversational single-
-    # call design the generate LLM IS the memory — so it must SEE enough raw
-    # turns to answer "udah bahas apa aja" accurately instead of fabricating from
-    # freshly-retrieved KB chunks. STM already loads 5 fresh turns (chat.py
-    # get_or_summarize_history max_fresh_turns=5), so 5 here ALIGNS generate's
-    # window with what STM provides (was a mismatch: STM kept 5, generate saw 2).
-    # Older turns beyond 5 are still covered by the rolling summary
-    # (<previous_context>). Costs ~+700 non-cached input tok/turn on a long
-    # session — acceptable for accurate recall.
-    max_fresh_turns: int = 5
+    # Max fresh (un-summarized) conversation turns fed to generate_node. 8
+    # (was 5, originally 2): the generate LLM IS the memory in the single-call
+    # design, so it must SEE enough raw turns to answer "udah bahas apa aja"
+    # and to support multi-turn COACHING (Socratic) loops, which build up
+    # over many turns and lose the most when early turns get compressed away.
+    # 8 widens the verbatim window for BOTH chat and coaching without the
+    # read/trim "gap" bug a per-intent split would introduce (the worker trim
+    # floor and the hot-path read MUST use the same value).
+    # THIS IS THE SINGLE SOURCE OF TRUTH: the hot-path read (chat.py), the
+    # overflow-schedule check (chat.py _schedule_summary_refresh), the worker
+    # refresh+trim (worker.py summarize_refresh_task), and generate's window
+    # (pipeline.py _window_generate_history) all read THIS knob. Do NOT hardcode
+    # the number anywhere — keep read == trim or turns fall into a limbo gap.
+    # (The LTM-sync worker reads 10 deliberately; that path is persist=False and
+    # never trims, so it does not participate in this invariant.) Older turns
+    # beyond 8 are covered by the rolling summary (<previous_context>). Costs a
+    # few hundred extra non-cached input tok/turn only on long sessions (rare).
+    max_fresh_turns: int = 8
     # Per-AI-reply char cap for STM history sent to generate_node. 600 (was 250):
     # 250 truncated Ava's own list answers mid-way (an 8-principle reply is
     # ~400-500 chars), so on a later "what were the principles?" the model saw a

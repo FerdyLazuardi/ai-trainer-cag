@@ -16,15 +16,16 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional course ID to scope the semantic cache and retrieval",
     )
-    mentoring_mode: bool = Field(
+    coaching_mode: bool = Field(
         default=False,
         description=(
-            "When true, Ava enters Socratic mentoring mode: for diagnostic / "
+            "When true, Ava enters Socratic coaching mode: for diagnostic / "
             "reasoning questions ('kenapa', 'gimana caranya') she opens with ONE "
-            "grounded guiding question to make the user think before answering, "
-            "then confirms + teaches. Pure factual lookups are still answered "
-            "directly. User opts in via a UI toggle; default false = normal "
-            "direct answers."
+            "grounded guiding question to make the user think, keeps each turn "
+            "light, then confirms + teaches in full at the wrap-up. Pure factual "
+            "lookups are still answered directly. User opts in via a UI toggle; "
+            "default false = normal direct answers (Ava still acts as an L&D "
+            "trainer by default, just without the Socratic guiding questions)."
         ),
     )
 

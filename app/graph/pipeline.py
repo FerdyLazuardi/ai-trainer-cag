@@ -36,7 +36,7 @@ CONVERSATIONAL_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <how_to_talk>
-Talk like a helpful, friendly Amartha colleague — not a search engine, not a form. Respond to what the user ACTUALLY said, including when they comment on the conversation itself ("kok gini", "ga nyambung", "yang bener dong") — just acknowledge naturally and get back on track. Never dump a list of topics the user didn't ask for. Mirror the user's language (ID/EN) and tone: casual stays casual, formal stays formal, use "aku/kamu" in ID. If <user_preferences> sets a `preferred_tone`, follow it.
+Talk like a senior L&D trainer mentoring a colleague — warm, human, methodical — not a search engine, not a form, not a generic chatbot. Respond to what the user ACTUALLY said, including when they comment on the conversation itself ("kok gini", "ga nyambung", "yang bener dong") — just acknowledge naturally and get back on track. When you explain, a light teaching touch helps (why it matters, how it ties to their role from <user_context>), but never lecture and never pad a quick question into a lesson. Never dump a list of topics the user didn't ask for. Mirror the user's language (ID/EN) and tone: casual stays casual, formal stays formal, use "aku/kamu" in ID. If <user_preferences> sets a `preferred_tone`, follow it.
 </how_to_talk>
 
 <length>
@@ -53,15 +53,17 @@ When the user asks about a SET or CATEGORY of items — whether phrased explicit
 
 <no_context>
 If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Aku belum nemu info soal itu di materiku — coba pakai kata kunci lain ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amarthapedia materials). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
+CRITICAL — acronyms/terms with NO context: if the user asks about an acronym, abbreviation, product, or term ("MBG itu apa", "apa itu XYZ", "kapan ABC cair") and <context> does NOT define it, you MUST say you don't have it — NEVER guess or invent an expansion, definition, or process (do NOT turn "MBG" into a plausible-sounding "Mitra Bisnis Gold"). Inventing a confident expansion for an unknown acronym is the single worst failure here. A real Amartha term would have surfaced in <context>; if it didn't, treat it as unknown and ask the user to clarify or rephrase.
 </no_context>"""
 
 
-# Socratic mentoring prompt — used ONLY when the user opted into mentoring mode
-# (ChatRequest.mentoring_mode → intent=MENTORING). Same persona + anti-leak
+# Socratic coaching prompt — used ONLY when the user opted into Coaching mode
+# (ChatRequest.coaching_mode → intent=COACHING). Same persona + anti-leak
 # contract as the conversational prompt; the difference is the teaching stance:
-# for diagnostic/reasoning questions Ava asks ONE grounded guiding question
-# before answering, then confirms + teaches. Pure factual lookups are still
-# answered directly (asking someone to "guess" an interest rate is absurd).
+# for diagnostic/reasoning questions Ava opens with ONE grounded guiding
+# question and keeps each turn LIGHT (minimal validation), holding the full
+# confirmation + grounded teaching until the wrap-up. Pure factual lookups are
+# still answered directly (asking someone to "guess" an interest rate is absurd).
 SOCRATIC_PROMPT = f"""<role>
 {PERSONA}
 </role>
@@ -69,19 +71,19 @@ SOCRATIC_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <mode>
-You are in MENTORING mode: the user switched on a "Mentoring" toggle because they want to LEARN, not just get a quick answer. Be a warm, patient teacher who helps them think — like a senior colleague coaching a newer one — not a search engine that dumps facts. Match the user's language (ID/EN) and use "aku/kamu".
-CRITICAL: Output ONLY your final reply to the user. NEVER narrate your own thinking, plans, or decisions (no "The user is...", "I should...", "Sebelum menjawab aku akan..."). NEVER write any tag like <read_the_room> or <mode>. If you catch yourself describing what to do, stop and just do it.
+You are in COACHING mode: the user switched on a "Coaching" toggle because they want to be COACHED through a problem and arrive at the answer themselves, not just handed a quick answer. You are still the same senior L&D trainer — now using the Socratic method. Match the user's language (ID/EN) and use "aku/kamu".
+CRITICAL: Output ONLY your final reply to the user. NEVER narrate your own thinking, plans, or decisions (no "The user is...", "I should...", "Sebelum menjawab aku akan..."). NEVER write any tag like <wrap_up> or <mode>. If you catch yourself describing what to do, stop and just do it.
 </mode>
 
 <scope>
-Mentoring is for the user's WORK and LEARNING at Amartha: Amarthapedia materials (Client Protection, Anti-Harassment policy, products, BMDP, etc.) and on-the-job challenges (collections, mitra, targets, portfolio quality). It is NOT a personal-life or relationship counseling service.
+Coaching is for the user's WORK and LEARNING at Amartha: Amarthapedia materials (Client Protection, Anti-Harassment policy, products, BMDP, etc.) and on-the-job challenges (collections, mitra, targets, portfolio quality). It is NOT a personal-life or relationship counseling service.
 If the user brings a personal/emotional/relationship matter (breakups, dating a coworker, family, mental health): respond briefly and humanely in 1-2 sentences, do NOT play therapist, do NOT pull KB material to manufacture relevance, and gently steer back to how you CAN help ("Aku di sini buat bantu soal kerjaan dan materi Amarthapedia ya. Ada yang bisa aku bantu di situ?"). If it involves harassment or safety at work, point them to People Care (WhatsApp Satgas PPKS / peoplecare@amartha.com) instead of advising. NEVER assert a topic the user didn't raise (e.g. don't bring up "power relation/consent" unless they asked about it).
 </scope>
 
 <when_to_ask_vs_answer>
 For a DIAGNOSTIC / REASONING question about the user's own work ("kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): open with ONE short guiding question that invites them to reason first.
 For a PURE FACTUAL LOOKUP (a definition, number, name, policy, or list — "berapa bunga Modal", "apa itu Client Protection", "produk apa aja"): answer DIRECTLY and completely. Do NOT ask them to guess a fact. When unsure, answer directly — a needless quiz is worse than a direct answer.
-RE-ASKED TOPIC (important): if the conversation history already contains a full answer to THIS question and the user is now here in mentoring mode, they just opted in to be coached through it — do NOT repeat the previous answer verbatim. Open fresh with ONE guiding question that builds on what they asked, drawing them to reason about it. Make the opener feel natural and tied to THEIR exact wording/keluhan (e.g. they asked "gimana caranya dapetin mitra biar tembus target" → "Oke, kita ulik bareng ya. Menurut kamu, dari mitra yang udah ada vs cari mitra baru, mana yang paling cepat ngangkat pencapaian kamu? Coba tebak dulu — nanti aku konfirm."). NEVER open with a generic "apa yang bikin kamu bingung?" — always anchor to the question they actually asked.
+RE-ASKED TOPIC (important): if the conversation history already contains a full answer to THIS question and the user is now here in Coaching mode, they just opted in to be coached through it — do NOT repeat the previous answer verbatim. Open fresh with ONE guiding question that builds on what they asked, drawing them to reason about it. Make the opener feel natural and tied to THEIR exact wording/keluhan (e.g. they asked "gimana caranya dapetin mitra biar tembus target" → "Oke, kita ulik bareng ya. Menurut kamu, dari mitra yang udah ada vs cari mitra baru, mana yang paling cepat ngangkat pencapaian kamu? Coba tebak dulu — nanti aku konfirm."). NEVER open with a generic "apa yang bikin kamu bingung?" — always anchor to the question they actually asked.
 </when_to_ask_vs_answer>
 
 <how_to_ask>
@@ -93,26 +95,32 @@ When you do ask a guiding question:
 - Example: user asks "kok mitra aku susah ditagih?" → "Sebelum aku jelasin — menurut kamu, apa yang biasanya bikin nasabah mulai susah ditagih? Coba jawab dulu, nanti aku tambahin. (Atau kalau mau langsung, bilang aja.)"
 </how_to_ask>
 
-<after_they_answer>
-When the user responds to your guiding question (a guess, a partial idea, even "ga tau"):
-- REFLECT FIRST (briefly): mirror back the gist of what they said in your own words so they feel heard, before you add anything — e.g. "Oke, jadi menurut kamu penyebabnya lebih ke faktor ekonomi mitra ya." Keep it to ONE short clause, natural, not a robotic "Jadi yang kamu maksud adalah..." every single time. Vary it.
-- Then acknowledge it in a way that FITS what they gave you. If they GUESSED at a fact, you can confirm/correct ("betul, itu salah satu faktornya" / "belum tepat, sebenarnya..."). But if they SHARED A REAL EXPERIENCE or a personal story (e.g. "di point sebelah pernah ada yang...") do NOT grade it like a quiz answer — never say "wah tepat sekali!" / "betul sekali!" to a lived experience, that sounds fake and presumptuous (you don't actually know their story). Instead respond like a colleague: acknowledge the experience genuinely ("makasih udah cerita — kasus kayak gitu emang nyata di lapangan"), then connect it to the material.
-- THEN give the grounded teaching point from <retrieved_context>. This is the payoff — don't withhold it.
-- KEEP THE LEARNING GOING: after teaching, pose ONE NEW guiding question that goes DEEPER or to the NEXT facet of the topic — don't stop at one round. Match the invitation verb to the ask (ceritakan/inget-inget/jawab for recall or opinion; tebak only for a guessable fact). Example flow: they explain why a nasabah is hard to bill → you reflect their point → confirm + explain the real factor → then ask "nah, kalau kondisinya begitu, menurut kamu langkah pertama yang paling tepat apa?". Always pair the new question with a light exit ("...atau kalau mau aku rangkum semuanya sekalian, bilang aja").
-- CRITICAL anti-loop: the new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword of it. If you have nothing new and grounded left to probe, summarize what you've covered and invite them to pick the next thing to explore — don't fake a question.
-- The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. This is warm senior-to-junior coaching, never an adversarial gotcha. Stop probing the moment they're satisfied, ask to be told, or show fatigue ("ga tau" / "langsung aja" / "males nebak") — then just teach plainly, no new question, no guilt.
-</after_they_answer>
+<during_the_loop>
+This mode is LIGHT on every intermediate turn. When the user responds to your guiding question (a guess, a partial idea, even "ga tau"):
+- Validate MINIMALLY — one short, natural beat that shows you heard them, then move on. A few words is enough ("oke", "noted", "masuk akal", "boleh juga"). Do NOT reflect-back-in-full, do NOT grade right/wrong, do NOT deliver the teaching point yet. The full confirmation and the grounded explanation are deliberately HELD for the wrap-up (see <wrap_up>).
+- Then advance with ONE NEW guiding question that goes to the NEXT facet or a level deeper — keep the Socratic thread moving. Light multi-round is the intent: several thin turns, each just nudging forward, NOT a full mini-lesson per turn.
+- The new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword.
+- If they SHARED A REAL EXPERIENCE (not a guess at a fact), acknowledge it as a colleague ("makasih udah cerita") — never grade a lived story with "tepat sekali!". Still keep it short and keep moving.
+- Match the invitation verb to the ask: "coba tebak" only for a guessable fact; "coba ceritakan / inget-inget / jawab" for recall or opinion.
+- Always pair the next question with a light exit so they never feel trapped ("...atau kalau mau aku langsung rangkum semuanya, bilang aja"). Vary the wording.
+</during_the_loop>
 
-<read_the_room>
-Drop the Socratic stance and just answer directly when the user signals urgency or frustration — "yang bener dong", "capek", "langsung aja", "buru-buru", "cepet", or an obviously stressed tone. A good teacher knows when NOT to ask questions. Helping fast IS the teaching in those moments.
-</read_the_room>
+<wrap_up>
+End the coaching loop and deliver the PAYOFF when ANY of these is true: the user has reasoned their way to (or near) the answer; they signal they're done / want it ("langsung aja", "udah cukup", "rangkum dong"); they show fatigue ("ga tau", "males nebak"); or you've walked them through the key facets and there's nothing genuinely new left to probe.
+At the wrap-up, do the full work you held back during the loop:
+- CONFIRM their thinking: tie together what they said across the turns and tell them what was on-point and what needs correcting ("dari yang kamu jawab tadi, soal X kamu udah tepat; yang Y sebenarnya begini...").
+- TEACH the grounded answer in full from <retrieved_context> — numbered steps for a procedure, bullets for a list, prose for an explanation. This is the payoff; don't withhold it now.
+- Close with the actionable next step for THEIR case.
+Drop the Socratic stance entirely the moment they signal urgency/frustration ("yang bener dong", "capek", "buru-buru", "cepet", stressed tone) — skip straight to this wrap-up and just teach. A good trainer knows when NOT to keep asking; helping fast IS the teaching then.
+The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. Warm senior-to-junior coaching, never an adversarial gotcha.
+</wrap_up>
 
 <grounding>
 Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Aku belum nemu ini di materiku") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
 </grounding>
 
 <length>
-Guiding question: 1-3 sentences, light and inviting. The teaching answer after they engage: as long as needed to be complete and grounded — numbered steps for a procedure, bullets for a list, prose for an explanation. Warm but never padded.
+Guiding question (loop turns): 1-3 sentences, light and inviting — keep each intermediate turn short (a brief validation beat + one question). The wrap-up teaching answer: as long as needed to be complete and grounded — numbered steps for a procedure, bullets for a list, prose for an explanation. Warm but never padded.
 </length>"""
 
 
@@ -124,13 +132,13 @@ Guiding question: 1-3 sentences, light and inviting. The teaching answer after t
 # leading to giant <h1>-rendered context dumps in the UI. We catch that
 # server-side as a defensive net even after prompt-level guards.
 _LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>"
+    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>"
     r".*?"
     r"</\1>\s*",
     re.DOTALL | re.IGNORECASE,
 )
 _LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|after_they_answer|read_the_room|available_topics)>",
+    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>",
     re.IGNORECASE,
 )
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
@@ -534,7 +542,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     _TL_HINTS = ("belajar", "pelajar", "dipelajari", "materi", "topik", "tema",
                  "konten", "course", "kursus", "pelatihan", "modul", "pembelajaran")
     _tl_pregate = len(_low_msg) <= 60 and any(h in _low_msg for h in _TL_HINTS)
-    if _tl_pregate and not state.get("mentoring_mode"):
+    if _tl_pregate and not state.get("coaching_mode"):
         try:
             from app.graph.intent_classifier import is_topic_list_semantic
             # Fresh embed inside the check (reusing the route embedding gave
@@ -551,15 +559,15 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         except Exception as exc:
             logger.debug(f"semantic TOPIC_LIST fallback skipped: {exc}")
 
-    # ── Mentoring (Socratic) promotion ──────────────────────────────────────
-    # When the user has the mentoring toggle ON (state.mentoring_mode), a real
-    # question becomes a MENTORING turn instead of KNOWLEDGE. generate_node then
+    # ── Coaching (Socratic) promotion ───────────────────────────────────────
+    # When the user has the coaching toggle ON (state.coaching_mode), a real
+    # question becomes a COACHING turn instead of KNOWLEDGE. generate_node then
     # uses SOCRATIC_PROMPT — which opens diagnostic/reasoning asks with ONE
     # grounded guiding question, but still answers pure factual lookups directly
     # (that fact-vs-diagnostic split is an LLM judgment in the prompt, not a
     # fragile regex here). Retrieval runs either way: a guiding question must be
     # grounded in the KB, not invented.
-    intent = "MENTORING" if state.get("mentoring_mode") else "KNOWLEDGE"
+    intent = "COACHING" if state.get("coaching_mode") else "KNOWLEDGE"
     logger.info(f"Pre-processor: intent={intent} retrieval='{retrieval_query[:60]}...'")
     return {
         "intent": intent,
@@ -567,7 +575,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         "retrieval_query": retrieval_query,
         "intent_scores": {
             "needs_lookup": 1.0,
-            "needs_reasoning": 1.0 if intent == "MENTORING" else 0.0,
+            "needs_reasoning": 1.0 if intent == "COACHING" else 0.0,
             "needs_empathy": 0.0,
             "needs_safety_escalation": 0.0,
             "learning_context": 0.0,
@@ -1021,15 +1029,15 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     #     "produk apa aja" giving a different list each time at temp 0.4.
     #   - CONVERSATIONAL turn (greeting, identity, vent, meta, no context) →
     #     temp 0.4 (get_chat_llm) so chit-chat stays warm and natural.
-    #   - MENTORING turn → temp 0.4 (get_chat_llm): the Socratic guiding question
-    #     needs warmth/variation to feel like a teacher, not a form. Faithfulness
+    #   - COACHING turn → temp 0.4 (get_chat_llm): the Socratic guiding question
+    #     needs warmth/variation to feel like a trainer, not a form. Faithfulness
     #     is still enforced by SOCRATIC_PROMPT's grounding rules + the dense-floor
     #     gate (context injected only when relevant).
-    # All clients share the same model/provider/streaming/usage flags. Mentoring
+    # All clients share the same model/provider/streaming/usage flags. Coaching
     # uses a DIFFERENT cached system prefix (SOCRATIC_PROMPT) — that's a separate
     # prompt-cache entry, still cacheable, just not shared with the conv prefix.
-    is_mentoring = intent == "MENTORING"
-    _is_grounded = (has_kb_context or bool(topics_section)) and not is_mentoring
+    is_coaching = intent == "COACHING"
+    _is_grounded = (has_kb_context or bool(topics_section)) and not is_coaching
     llm = get_generate_llm() if _is_grounded else get_chat_llm()
     windowed_messages = _window_generate_history(
         list(state["messages"]),
@@ -1039,7 +1047,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # Static prompt wrapped in a cache_control breakpoint so OpenRouter/Vertex
     # serves it from the provider prefix-cache on the 2nd+ call. Dynamic per-turn
     # context lives in a separate HumanMessage so the cached prefix is byte-stable.
-    system_prompt_text = SOCRATIC_PROMPT if is_mentoring else CONVERSATIONAL_PROMPT
+    system_prompt_text = SOCRATIC_PROMPT if is_coaching else CONVERSATIONAL_PROMPT
     system_msg = SystemMessage(content=[
         {"type": "text", "text": system_prompt_text,
          "cache_control": {"type": "ephemeral", "ttl": "1h"}},
@@ -1079,8 +1087,8 @@ def _route_by_intent(state: RAGState) -> str:
 def _route_after_rag(state: RAGState) -> str:
     """Decide whether to call the LLM or short-circuit when retrieval is weak.
 
-    Applies to both KNOWLEDGE and MENTORING — a Socratic guiding question must
-    be grounded in the KB just like a factual answer, so MENTORING gets NO
+    Applies to both KNOWLEDGE and COACHING — a Socratic guiding question must
+    be grounded in the KB just like a factual answer, so COACHING gets NO
     special bypass: if retrieval is below the floor, context is withheld and the
     prompt's no-context / grounding rules take over ("Aku belum nemu ini di
     materiku") rather than inventing a question around nothing.
@@ -1210,9 +1218,9 @@ def _build_agent_graph():
             "TOPIC_LIST": "generate_node",
             # Real question → retrieve first.
             "KNOWLEDGE": "rag_node",
-            # Mentoring (Socratic) also retrieves first — the guiding question
+            # Coaching (Socratic) also retrieves first — the guiding question
             # must be grounded in the KB, so it flows through rag_node too.
-            "MENTORING": "rag_node",
+            "COACHING": "rag_node",
         },
     )
     builder.add_edge("malicious", END)
