@@ -46,3 +46,6 @@ tmp/
 # Covers both the live-run output and the offline relabel output.
 data/eval/*_judge_run.json
 data/eval/*_judge_run_relabeled.json
+
+# Ad-hoc SQL audit scripts (one-off DB probes, not part of the app source).
+scripts_audit_*.sql

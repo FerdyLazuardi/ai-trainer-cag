@@ -1,0 +1,456 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# INTENT PATTERNS — rule-based gating (loaded by app/graph/intent_rules.py)
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is the "negative/keyword" layer: substring + regex patterns used
+# for fast rule-based gating BEFORE any embedding similarity runs.
+#
+#   • off_scope_keywords      — substring trip-wires; if any matches, route to
+#                                OFF_SCOPE without calling the LLM/centroid.
+#   • identity_phrases        — user asking WHO Ava is → GREETING (not TOPIC_LIST).
+#   • greeting_prefix_pattern — anchor regex for "halo|hai|pagi|…" prefixes.
+#   • greeting_words / thanks_tokens / thanks_fluff — token lists used by
+#                                rules.py to identify chit-chat turns after
+#                                stripping filler ("halo kaa", "makasih ya").
+#   • topic_list_phrases      — full-phrase trip-wires for "ada topik apa".
+#   • topic_list_regex        — EOM-anchored regex ("belajar apa" at end).
+#
+# KEPT SEPARATE FROM intent_seed.yaml ON PURPOSE:
+#   • intent_seed.yaml  = full UTTERANCES per intent → used by
+#     intent_classifier.py for embedding similarity (training centroids).
+#   • intent_patterns.yaml = KEYWORDS / REGEX → used by intent_rules.py
+#     for cheap pre-filtering.
+#   Different shapes, different consumers, different lifecycles — merging them
+#   would force one consumer to load data the other doesn't need.
+# ─────────────────────────────────────────────────────────────────────────────
+
+off_scope_keywords:
+- cuaca
+- weather
+- hujan deras
+- gempa
+- banjir
+- berita terkini
+- berita hari ini
+- headline berita
+- breaking news
+- resep
+- recipe
+- menu makan
+- restoran
+- resto
+- iphone
+- ipad
+- samsung
+- laptop
+- macbook
+- kamera
+- tv led
+- smartphone
+- hp baru
+- drakor
+- kdrama
+- drama korea
+- film
+- movie
+- netflix
+- lagu
+- musik
+- konser
+- taylor swift
+- coldplay
+- bts
+- kpop
+- nct
+- seventeen
+- selebriti
+- selebgram
+- gosip artis
+- timnas
+- sepak bola
+- bola
+- fifa
+- piala dunia
+- liga inggris
+- premier league
+- liga champions
+- messi
+- ronaldo
+- badminton
+- tanding
+- skor
+- mobile legend
+- mlbb
+- pubg
+- free fire
+- valorant
+- ml
+- ff
+- genshin
+- honkai
+- game online
+- main game
+- bitcoin
+- crypto
+- kripto
+- ethereum
+- dogecoin
+- saham
+- reksadana
+- deposito bank
+- obligasi
+- yield
+- dividen
+- harga rumah
+- properti
+- sewa apartemen
+- kpr
+- developer rumah
+- rumah dijual
+- diet
+- tips diet
+- menurunkan berat
+- kurusin
+- gejala
+- penyakit
+- obat
+- dokter
+- rs
+- rumah sakit
+- klinik
+- presiden
+- jokowi
+- prabowo
+- anies
+- politik
+- pemilu
+- partai
+- kursus bahasa
+- les
+- bimbel
+- tiket pesawat
+- liburan
+- hotel
+- villa
+- pantai
+- iphone 15
+- iphone 14
+- iphone 13
+- iphone 12
+- samsung s24
+- samsung s23
+- hp samsung
+- harga iphone
+- harga samsung
+- harga laptop
+- hp terbaik
+- laptop gaming
+- laptop kerja
+- hp xiaomi
+- hp oppo
+- hp vivo
+- taylor swift konser
+- coldplay jakarta
+- konser bts
+- tiket konser
+- jadwal konser
+- pertandingan bola
+- pertandingan liga
+- harga bitcoin
+- harga ethereum
+- harga kripto
+- harga emas
+- harga dollar
+- harga pertalite
+- gejala covid
+- gejala demam
+- gejala flu
+- tips sehat
+- tips tidur
+- resep rendang
+- resep sate
+- resep gulai
+- menu diet
+- menu sehat
+- menu buka puasa
+- berita politik
+- berita artis
+- berita selebriti
+- film bioskop
+- film terbaru
+- series netflix
+- lagu terbaru
+- lagu populer
+- lagu viral
+identity_phrases:
+- kamu siapa
+- lu siapa
+- lo siapa
+- elu siapa
+- siapa kamu
+- kamu bot apa
+- kamu apa sih
+- lu apa sih
+- lo apa sih
+- perkenalkan diri
+- kamu manusia
+- kamu asli
+- kamu asli ga
+- kamu manusia ga
+- kamu ciptaan siapa
+- kamu dibuat sama siapa
+- kamu diciptakan sama siapa
+- dibuat siapa kamu
+- developer kamu
+- pencipta kamu
+- siapa yg bikin kamu
+- siapa yang bikin kamu
+- kenalan dong
+- kenalan yuk
+- mau kenalan
+- lo bot ya
+- lo bot ya?
+- kamu bot ya
+- kamu bot ya?
+- kamu robot
+- kamu robot?
+- kamu ai
+- kamu ai?
+- ava itu apa
+- ava itu apa sih
+- ava siapa
+- siapa ava
+- ava bot
+- ava itu bot
+- ini apps apa
+- ini apps buat apa
+- ini aplikasi apa
+- ini bot apa
+- who are you
+- what are you
+- what is this app
+- what is this bot
+- introduce yourself
+- are you a bot
+- are you ai
+- are you human
+greeting_prefix_pattern: "^(\n  halo+|hai+|hei+|hi+|hey+|hello+|helo+\n  |yo+i*|yuhu+|hola|wo+i+|wo+y+\n\
+  \  |pagi|siang|sore|malam\n  |met\\s+(pagi|siang|sore|malam)\n  |mlem|malem|melek|mlm|metmalem|metmalam\n\
+  \  |good\\s+(morning|afternoon|evening)\n  |morning|evening\n  |selamat\n  |selamt\n\
+  \  |selmat\n  |slmat\n  |slmt\n  |permisi|punten|excuse\\s+me\n  |assalamu?'?\\\
+  s?alaikum|asalamualaikum|assalam|spada\n  |shalom|salam\\s+sejahtera|om\\s+swastiastu|namaste|namo\\\
+  s+buddhaya\n  |test|ping|p+(?![a-z])\n)[\\s,\\.!?]*\n"
+greeting_words:
+- halo
+- hai
+- hei
+- hi
+- hey
+- hello
+- pagi
+- siang
+- sore
+- malam
+- selamat
+- datang
+- test
+- good
+- morning
+- afternoon
+- evening
+- permisi
+- excuse
+- me
+- assalamualaikum
+- assalam
+- waalaikumsalam
+- waalaykum
+greeting_fluff:
+- ya
+- yaa
+- dong
+- donk
+- kak
+- ka
+- min
+- bang
+- gan
+- ges
+- gaes
+- nih
+- ni
+- aja
+- deh
+- sih
+- kok
+- aku
+- saya
+- gw
+- gue
+- wr
+- wb
+- semua
+- semuanya
+- teman
+- temen
+- guys
+- all
+- ava
+- bot
+- kakak
+- pak
+- bu
+- bapak
+- ibu
+- mas
+- mbak
+- mbn
+- pak/bu
+topic_list_phrases:
+- ada topik apa
+- topik apa aja
+- topik apa saja
+- ada materi apa
+- materi apa aja
+- materi apa saja
+- ada course apa
+- course apa aja
+- course apa saja
+- list topik
+- list materi
+- list course
+- list pelatihan
+- topik yang tersedia
+- materi yang tersedia
+- course yang tersedia
+- pelatihan yang tersedia
+- topik apa yang
+- materi apa yang
+- course apa yang
+- belajar apa aja
+- belajar apa saja
+- yang bisa dipelajari
+- materi ada apa
+- topik ada apa
+- apa yang bisa kamu bantu
+- apa yang bisa kamu jawab
+- apa yang bisa kamu lakukan
+- kamu bisa apa aja
+- kamu bisa apa
+- kemampuan kamu apa
+- fitur kamu apa aja
+- apa aja yang kamu bisa
+- apa yang bisa kamu kasih tahu
+- kira-kira apa yang bisa dijawab
+- kira-kira kamu bisa apa
+- kira-kira bisa jawab apa
+- kira2 apa yg bs dijwb
+- kamu bisa bantu apa
+- kamu bisa bantu apa aja
+- bisa bantu apa
+- bisa jawab apa
+- bantu aku dengan apa
+- tolong dengan apa
+# NOTE: deliberately NOT listing bare "topik", "materi", "pelajaran", "kursus",
+# "apa aja", "apa saja" — they're too greedy. As substrings they'd wrongly match
+# content questions like "value amartha apa aja" (which should be KNOWLEDGE).
+# The specific compound phrases above (e.g., "topik apa aja", "materi apa saja")
+# are sufficient; the END-anchored regex below catches "belajar apa" at EOM.
+- what topics
+- what courses
+- what materials
+- what training
+- available topics
+- available courses
+- available materials
+- list of topics
+- list of courses
+- list of materials
+- topics available
+- courses available
+- materials available
+- what do you have
+- what can i learn
+- what can you teach
+- what can you help
+- what can you help with
+- what can you answer
+- what can you do
+topic_list_regex: '(?:bisa|mau|ingin|boleh)\s+(?:belajar|tau|tanya|diskusi|tanya)\s+(?:apa|apasaja|apa\s+saja)\s*[?.!]?\s*$
+
+  '
+thanks_tokens:
+- makasih
+- makasi
+- makasihh
+- mksh
+- mkasih
+- trims
+- trim
+- suwun
+- nuhun
+- thanks
+- thank
+- thankyou
+- thx
+- tengkyu
+- tengkiu
+- tq
+- ty
+- terima
+- kasih
+- ok
+- oke
+- sip
+- yaudah
+- ya udah
+- terus
+- trs
+- trus
+- yg mana
+- yang mana
+- hah
+- hmm
+- hm
+- ohh
+- oh
+- gitu
+- oh gitu
+- ah
+- ahh
+- yoi
+- mantap
+- keren
+- asyik
+- asik
+- menarik
+- k
+thanks_fluff:
+- ya
+- yaa
+- yah
+- dong
+- deh
+- kak
+- ka
+- min
+- bang
+- bro
+- sis
+- gan
+- banget
+- bgt
+- banyak
+- bnyk
+- semua
+- ava
+- loh
+- atas
+- bantuannya
+- infonya
+- jawabannya
+- penjelasannya
+- om
+- you
+- so
+- much
+- very
