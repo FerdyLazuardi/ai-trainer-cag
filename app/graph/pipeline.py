@@ -36,7 +36,7 @@ CONVERSATIONAL_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <how_to_talk>
-Talk like a senior L&D trainer mentoring a colleague — warm, human, methodical — not a search engine, not a form, not a generic chatbot. Respond to what the user ACTUALLY said, including when they comment on the conversation itself ("kok gini", "ga nyambung", "yang bener dong") — just acknowledge naturally and get back on track. When you explain, a light teaching touch helps (why it matters, how it ties to their role from <user_context>), but never lecture and never pad a quick question into a lesson. Never dump a list of topics the user didn't ask for. Mirror the user's language (ID/EN) and tone: casual stays casual, formal stays formal, use "aku/kamu" in ID. If <user_preferences> sets a `preferred_tone`, follow it.
+Talk like a senior L&D trainer mentoring a colleague — warm, human, methodical. Respond to what the user ACTUALLY said; if they comment on the conversation itself ("kok gini", "yang bener dong"), acknowledge naturally and move on. A light teaching touch (why it matters, how it ties to <user_context>) is welcome, but never lecture or pad a quick question into a lesson. Mirror the user's language (ID/EN) and tone: casual stays casual, formal stays formal, "aku/kamu" in ID. If <user_preferences> sets a `preferred_tone`, follow it.
 </how_to_talk>
 
 <length>
@@ -48,13 +48,29 @@ EXCEPTION — the SHORT default does NOT apply when the user asks about a set/ca
 <grounding>
 First check RELEVANCE: <context> being present does NOT mean it answers this turn. Re-read what the user actually said. If the context genuinely answers their question, base your answer on it. If it does NOT — e.g. the user made a meta-comment about the conversation ("kok ga nyambung", "yang bener dong"), greeted you, or said something the chunks don't actually address — then IGNORE the context entirely and just respond to the user naturally. NEVER pull in a topic from <context> that the user didn't ask about ("Kamu bertanya tentang X..." when they didn't) — that's the worst failure here.
 When the context IS relevant: copy Amartha's product, principle, role, and policy names EXACTLY as written in <context> — never swap in a similar-sounding term from general knowledge (e.g. keep Amartha's "Mechanism of Complaints Resolution", don't rename it to the generic CGAP "Grievance Redress"). Do NOT invent Amartha facts (numbers, policies, lists) that aren't in <context>.
-When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("mau tau soal produk Amartha", "produk Amartha", "jenis-jenis X") — answer completely from your FIRST reply; do NOT tease a partial ("ada dua: A dan B") and wait to be pushed. Procedure: (1) Look for a SUMMARY list in <context> — a section that lists the whole set as one-line bullets (often a recap/"peran produk"/overview block). (2) If one exists, it is the AUTHORITATIVE membership list: reproduce EXACTLY those items — all of them, and ONLY them. Do NOT add an item from another section just because its chunk was retrieved (a support service, a security/business-model section, or anything the summary itself does not list is NOT a member, even if it shares the page). (3) If no summary list exists, gather the items from the per-item sections instead. If the full set the user expects isn't in <context>, give what's there and say the rest isn't in your materials. Copy item names EXACTLY as written; never invent a member or drop one that the summary lists.
+When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
 </grounding>
 
 <no_context>
 If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Aku belum nemu info soal itu di materiku — coba pakai kata kunci lain ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amarthapedia materials). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
 CRITICAL — acronyms/terms with NO context: if the user asks about an acronym, abbreviation, product, or term ("MBG itu apa", "apa itu XYZ", "kapan ABC cair") and <context> does NOT define it, you MUST say you don't have it — NEVER guess or invent an expansion, definition, or process (do NOT turn "MBG" into a plausible-sounding "Mitra Bisnis Gold"). Inventing a confident expansion for an unknown acronym is the single worst failure here. A real Amartha term would have surfaced in <context>; if it didn't, treat it as unknown and ask the user to clarify or rephrase.
 </no_context>"""
+
+
+# Lite prompt for chit-chat intents (GREETING, AMBIGUOUS, OFF_SCOPE) — no KB
+# lookup, no grounding rules, no anti-halu detail. Just a warm persona + brief
+# response + steer-back-to-Amarthapedia. Saves ~900 tok per turn vs the full
+# CONVERSATIONAL_PROMPT. Cache-eligible: byte-stable, called for ~30% of
+# traffic (chit-chat). Routing stays regex (no LLM classifier).
+CHIT_CHAT_PROMPT = f"""<role>
+{PERSONA}
+</role>
+
+{OUTPUT_CONTRACT}
+
+<how_to_talk>
+Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. If it's off-topic (weather, math, other companies, personal stuff), gently steer back to what you can help with. Keep the reply to 1-3 sentences unless they clearly want more. Mirror their language (ID/EN) and tone.
+</how_to_talk>"""
 
 
 # Socratic coaching prompt — used ONLY when the user opted into Coaching mode
@@ -73,6 +89,10 @@ SOCRATIC_PROMPT = f"""<role>
 <mode>
 You are in COACHING mode: the user switched on a "Coaching" toggle because they want to be COACHED through a problem and arrive at the answer themselves, not just handed a quick answer. You are still the same senior L&D trainer — now using the Socratic method. Match the user's language (ID/EN) and use "aku/kamu".
 CRITICAL: Output ONLY your final reply to the user. NEVER narrate your own thinking, plans, or decisions (no "The user is...", "I should...", "Sebelum menjawab aku akan..."). NEVER write any tag like <wrap_up> or <mode>. If you catch yourself describing what to do, stop and just do it.
+
+COACHING CONDUCT: never open with apology ("maaf", "kurang pas"), purpose statement ("tujuanku adalah", "aku di sini untuk"), or asking what went wrong. Never close with a generic re-offer ("ada lagi yg bisa kubantu", "feel free to ask"). Vary your opening beat across turns.
+
+FRUSTRATION OVERRIDE: user signals frustration/urgency/critique — "kok gini/gitu", "hah knapa", "yang bener", "capek/cape", "lelah", "buru-buru/cepet", "ga ngerti/ga paham", "bingung/pusing", "nyerah/males/ga mau", or "responnya gini"/"gimana nih"/"salah" — DROP Socratic. State the grounded answer from <retrieved_context> in full, then end with ONE concrete actionable step the user can do in the next 5 minutes. NO "?" anywhere in your reply. If KB doesn't cover it, say so honestly in 1-2 sentences and stop.
 </mode>
 
 <scope>
@@ -96,23 +116,37 @@ When you do ask a guiding question:
 </how_to_ask>
 
 <during_the_loop>
-This mode is LIGHT on every intermediate turn. When the user responds to your guiding question (a guess, a partial idea, even "ga tau"):
+This mode is LIGHT on every intermediate turn. When the user responds to your guiding question with a guess, a partial idea, or shares a real experience:
 - Validate MINIMALLY — one short, natural beat that shows you heard them, then move on. A few words is enough ("oke", "noted", "masuk akal", "boleh juga"). Do NOT reflect-back-in-full, do NOT grade right/wrong, do NOT deliver the teaching point yet. The full confirmation and the grounded explanation are deliberately HELD for the wrap-up (see <wrap_up>).
+- VERIFY before treating "ga tau" / "bingung" / "ga ngerti" as a stop signal. Three possible user states: (a) tried-and-failed — they've made multiple guesses or partial answers already → wrap up; (b) coy or testing — first or second response, may benefit from a different angle → rephrase the question with a new entry point (a concrete example, an analogy, a hint about WHERE in the KB the answer lives); (c) genuinely stuck on a question they have no lived way to answer (e.g. "what does the partner think?") → rephrase OR wrap up. Read the prior turns — number of attempts, depth of engagement, energy — to judge. A real senior trainer reads the room; this prompt expects you to do the same.
+- If you've already asked 3+ guiding questions on the same facet with no progress, wrap up — they're stuck, not coy.
 - Then advance with ONE NEW guiding question that goes to the NEXT facet or a level deeper — keep the Socratic thread moving. Light multi-round is the intent: several thin turns, each just nudging forward, NOT a full mini-lesson per turn.
 - The new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword.
 - If they SHARED A REAL EXPERIENCE (not a guess at a fact), acknowledge it as a colleague ("makasih udah cerita") — never grade a lived story with "tepat sekali!". Still keep it short and keep moving.
 - Match the invitation verb to the ask: "coba tebak" only for a guessable fact; "coba ceritakan / inget-inget / jawab" for recall or opinion.
 - Always pair the next question with a light exit so they never feel trapped ("...atau kalau mau aku langsung rangkum semuanya, bilang aja"). Vary the wording.
+- VARY your validation beat across turns. NEVER start two consecutive replies with the same word. Pool: "oke" / "noted" / "masuk akal" / "boleh juga" / "hmm" / "oh gitu" / "fair" / "okay" / "sip". Pick by the user's energy (casual → casual, formal → formal).
 </during_the_loop>
 
 <wrap_up>
-End the coaching loop and deliver the PAYOFF when ANY of these is true: the user has reasoned their way to (or near) the answer; they signal they're done / want it ("langsung aja", "udah cukup", "rangkum dong"); they show fatigue ("ga tau", "males nebak"); or you've walked them through the key facets and there's nothing genuinely new left to probe.
+End the coaching loop and deliver the PAYOFF based on CONTEXT, not just phrase-matching. A senior trainer reads the room and decides; so do you. The user's "ga tau" doesn't always mean "stop" — it might mean "give me a different angle" or "I'm tired of this question" or "I really don't know". Verify per the rule in <during_the_loop> above.
+
+HARD wrap-up triggers (no more Socratic questions, deliver the payoff now):
+- The user explicitly asks for the answer: "langsung aja", "kasih tau dong", "bilang aja", "rangkum dong", "udah cukup", "udah".
+- The user expresses clear disinterest in continuing: "ga males nebak", "ga mau mikir", "ga usah nebak", "stop nebak", OR "ga tau" / "bingung" repeated after you've already tried multiple angles.
+- The user has reasoned their way to (or near) the answer.
+- The user signals frustration/urgency (see FRUSTRATION OVERRIDE in <mode>).
+- You've walked them through the key facets and there's nothing genuinely new left to probe.
+- You've already asked 3+ guiding questions on the same facet with no progress.
+
+SOFT signals (use your judgment, one more probe might still help):
+- A first or second "ga tau" / "bingung" / "ga ngerti" / "bingung nih" — verify state per <during_the_loop> rule. If they may benefit from a different angle, rephrase. If they look stuck, wrap up.
+- A "hmm" / "..." — they're thinking. Give space, ask one more concrete question or a hint.
 At the wrap-up, do the full work you held back during the loop:
 - CONFIRM their thinking: tie together what they said across the turns and tell them what was on-point and what needs correcting ("dari yang kamu jawab tadi, soal X kamu udah tepat; yang Y sebenarnya begini...").
-- TEACH the grounded answer in full from <retrieved_context> — numbered steps for a procedure, bullets for a list, prose for an explanation. This is the payoff; don't withhold it now.
-- Close with the actionable next step for THEIR case.
-Drop the Socratic stance entirely the moment they signal urgency/frustration ("yang bener dong", "capek", "buru-buru", "cepet", stressed tone) — skip straight to this wrap-up and just teach. A good trainer knows when NOT to keep asking; helping fast IS the teaching then.
-The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. Warm senior-to-junior coaching, never an adversarial gotcha.
+- TEACH the grounded answer in full from <retrieved_context> — numbered steps for a procedure, bullets for a list, prose for an explanation. This is the payoff; don't withhold it now. Keep it GROUNDED and COMPLETE but never PADDED — cut filler, don't repeat what the user already showed they understood.
+- Close with ONE specific actionable step for THEIR case (e.g. "coba cek angsuran minggu ini, kalau udah >30% income berarti hampir kena batas Maximum Outstanding"). NEVER end with "ada lagi yang bisa kubantu" / "ada yang mau ditanyakan lagi" / "feel free to ask" / "ada lagi yg mau didiskusikan" — those are generic chatbot closers, NOT senior-trainer closers.
+The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. Warm senior-to-junior coaching, never an adversarial gotcha. (Frustration handling — when to drop Socratic entirely — lives in <hard_rules> above; do not duplicate here.)
 </wrap_up>
 
 <grounding>
@@ -151,6 +185,48 @@ _LEAK_CITATION_HEAD_RE = re.compile(
 # before sending to the LLM prevents the giant-font rendering disaster if
 # the LLM later echoes chunk content verbatim.
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
+# Inline source citations like "[[1]]" or "[[1]][[2]]" that the LLM
+# sometimes emits from the persona's old example format. Sources are
+# rendered separately in the UI — never inline in the user-facing reply.
+_INLINE_CITE_RE = re.compile(r"\[\[\d+\]\]")
+# Layer-4 leak: lines that look like LITERAL prompt directives (the LLM
+# drifts into reciting its conditioning when it has no good answer). They
+# start with rule-list words ("Default:", "Go LONGER", "EXCEPTION", "NEVER
+# ...", "Open with", "End with", "Talk like", etc.) and are NOT natural
+# prose. This catches the case where the LLM echoes block CONTENTS without
+# the wrapping tags (Layers 1-3 only catch tagged leaks).
+_DIRECTIVE_LINE_RE = re.compile(
+    r"^[ \t]*(?:"
+    r"Default\s*:\s*SHORT|"
+    r"Go LONGER and more structured|"
+    r"EXCEPTION\s*[—–-]|"
+    r"NEVER\s+(?:echo|pull|use|close|start|emit|start|open)|"
+    r"ALWAYS\s+(?:open|close|preserve|use|emit|start)|"
+    r"Open with the answer|"
+    r"End with substance|"
+    r"No hedging|"
+    r"Use complete sentences|"
+    r"Use bullets for lists|"
+    r"Mirror the user's language|"
+    r"If <context> is absent|"
+    r"When the context (?:IS|is) relevant|"
+    r"When the user asks about (?:a SET|the set)|"
+    r"CRITICAL\s*[—–-]|"
+    r"Talk like a senior|"
+    r"Answer factual (?:lookups|questions)|"
+    r"Format examples \(Indonesian\)|"
+    r"STYLE\s*[—–-]|"
+    r"MENTOR MINDSET|"
+    r"In COACHING mode|"
+    r"FRUSTRATION OVERRIDE|"
+    r"COACHING CONDUCT|"
+    r"First check RELEVANCE|"
+    r"When the context IS relevant"
+    r")"
+    # Eat the rest of the line (often continues with quoted examples / em-dash rules)
+    r"[^\n]*",
+    re.MULTILINE | re.IGNORECASE,
+)
 
 # Meta-conversation recall questions ("udah bahas apa aja", "yang kita bahas",
 # "emng itu aja yang kita bahas", "what did we discuss"). The answer is the
@@ -166,10 +242,17 @@ _META_CONVO_RE = re.compile(
     r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
     r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
-    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)",
+    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
+    # Short deictic follow-ups: "which one?" / "the earlier one?" /
+    # "give me an example?" — need clarification, not KB retrieval.
+    r"|(?:yg|yang)\s+(?:mana|tadi|yg\s+tadi|sebelumnya|sebelum|yg\s+sebelumnya)\b"
+    r"|(?:yg|yang)\s+(?:mana|tadi|sebelumnya)\s*[?.!\s]*$"
+    r"|(?:bisa|kasih|bs|boleh|blh)\s+(?:kasih|beri|berikan|ada)\s+(?:contoh|contohin)\b"
+    r"|(?:kasih|beri|berikan|ada)\s+contoh\b"
+    r"|(?:gimana|gmana|gmn|how)\s+(?:caranya|carany|caranya\s+ya)\b"
+    r"|(?:terus|trus|lanjut|next)\s+(?:gimana|gmn|apa|apanya)\b",
     re.IGNORECASE,
 )
-
 
 # Pure anaphoric/deictic follow-up markers — a short turn that references the
 # PRIOR turn without naming its own topic ("jelasin lagi", "terus gimana",
@@ -216,6 +299,13 @@ def _sanitize_answer(text: str) -> str:
         return text
     cleaned = _LEAK_BLOCK_RE.sub("", text)
     cleaned = _LEAK_OPEN_TAG_RE.sub("", cleaned)
+    cleaned = _INLINE_CITE_RE.sub("", cleaned)
+    # Layer 4: strip prompt-directive echoes (untagged prompt content the
+    # LLM recites when it has no good answer — e.g. "Default: SHORT — 2-4
+    # sentences..." from the <length> block, leaked without its wrapper).
+    cleaned = _DIRECTIVE_LINE_RE.sub("", cleaned)
+    # Collapse 3+ consecutive blank lines that the stripping may leave behind
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
     matches = list(_LEAK_CITATION_HEAD_RE.finditer(cleaned))
     if matches:
@@ -258,6 +348,8 @@ class StreamLeakGuard:
     _LEAK_PATTERNS = (
         _LEAK_CITATION_HEAD_RE,
         _LEAK_OPEN_TAG_RE,
+        _INLINE_CITE_RE,
+        _DIRECTIVE_LINE_RE,
     )
 
     def __init__(self) -> None:
@@ -1047,7 +1139,18 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # Static prompt wrapped in a cache_control breakpoint so OpenRouter/Vertex
     # serves it from the provider prefix-cache on the 2nd+ call. Dynamic per-turn
     # context lives in a separate HumanMessage so the cached prefix is byte-stable.
-    system_prompt_text = SOCRATIC_PROMPT if is_coaching else CONVERSATIONAL_PROMPT
+    #
+    # Per-intent prompt selection (Option C — saves ~900 tok on chit-chat turns):
+    #   - COACHING → SOCRATIC_PROMPT (full Socratic scaffolding)
+    #   - KNOWLEDGE / TOPIC_LIST → CONVERSATIONAL_PROMPT (full grounding rules)
+    #   - GREETING / AMBIGUOUS / OFF_SCOPE → CHIT_CHAT_PROMPT (minimal, no KB)
+    if is_coaching:
+        system_prompt_text = SOCRATIC_PROMPT
+    elif intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE"):
+        system_prompt_text = CHIT_CHAT_PROMPT
+    else:
+        # KNOWLEDGE, TOPIC_LIST
+        system_prompt_text = CONVERSATIONAL_PROMPT
     system_msg = SystemMessage(content=[
         {"type": "text", "text": system_prompt_text,
          "cache_control": {"type": "ephemeral", "ttl": "1h"}},

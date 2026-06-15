@@ -30,11 +30,31 @@ Design:
     the retrieval-query prepend in _pre_processor, not in this module.
 """
 from __future__ import annotations
+from pathlib import Path
 
 import re
 from typing import Literal, Optional
 
 Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"]
+
+
+# ── Load intent patterns from YAML (config-driven, no hardcode) ──────────────
+# All keyword/regex/tuple/set constants below are populated from
+# intent_patterns.yaml. To add or remove patterns, edit the YAML file
+# — DO NOT add them to this .py file. Single source of truth principle.
+import yaml as _yaml
+_PATTERNS_PATH = Path(__file__).parent / "intent_patterns.yaml"
+_PATTERNS = _yaml.safe_load(_PATTERNS_PATH.read_text(encoding="utf-8"))
+_OFF_SCOPE_KEYWORDS = tuple(_PATTERNS["off_scope_keywords"])
+_IDENTITY_PHRASES = tuple(_PATTERNS["identity_phrases"])
+_TOPIC_LIST_PHRASES = tuple(_PATTERNS["topic_list_phrases"])
+_THANKS_TOKENS = set(_PATTERNS["thanks_tokens"])
+_THANKS_FLUFF = set(_PATTERNS["thanks_fluff"])
+_GREETING_WORDS = set(_PATTERNS["greeting_words"])
+_GREETING_FLUFF = set(_PATTERNS["greeting_fluff"])
+_GREETING_PREFIX_RE = re.compile(_PATTERNS["greeting_prefix_pattern"], re.IGNORECASE | re.VERBOSE)
+_TOPIC_LIST_RE = re.compile(_PATTERNS["topic_list_regex"], re.IGNORECASE | re.VERBOSE)
+
 
 # ── Rule 0: prompt-injection / jailbreak / system-prompt extraction ──────────
 # Deterministic guard for ADVERSARIAL inputs that try to override the bot's
@@ -60,8 +80,12 @@ Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"
 #    or a multi-word anchor ("system prompt") alongside it.
 _INJECTION_RES = (
     # 1. instruction-override: (abaikan/lupakan/...) + (instruksi/aturan/prompt/...)
+    #    Trailing (?:mu|nya|ku|2)? absorbs Indonesian possessive/plural suffixes so
+    #    "abaikan semua aturanMU" / "lupakan instruksiNYA" fire (a bare \b after the
+    #    stem fails on the glued suffix). The override VERB is still the real guard,
+    #    so this stays false-positive-safe ("sebutkan aturan main CP" has no verb).
     re.compile(
-        r"\b(abaikan|lupakan|hiraukan|acuhkan)\b.{0,30}\b(instruksi|aturan|perintah|arahan|prompt)\b",
+        r"\b(abaikan|lupakan|hiraukan|acuhkan)\b.{0,30}\b(instruksi|aturan|perintah|arahan|prompt)(?:mu|nya|ku|2)?\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -105,7 +129,6 @@ _INJECTION_RES = (
     ),
     re.compile(r"\bdo\s+anything\s+now\b|\bact\s+as\s+(?:a\s+)?(?:dan|an?\s+unrestricted|jailbroken)\b", re.IGNORECASE),
 )
-
 # ── Rule 1: pure punctuation / filler ────────────────────────────────────────
 # Matches messages that are ONLY punctuation, whitespace, or a single short
 # emoji-like token. Things like "??", "...", ".", "??!", "🤔", "🙏".
@@ -134,23 +157,7 @@ _MATH_OP_RE = re.compile(r"\b\d+\s*[+\-*x×/÷]\s*\d+\b")
 # a genuinely off-scope competitor query when no in-scope chunk clears the
 # floor, so a hard regex block here (which can't tell an in-scope partnership
 # question from an off-scope one) would do more harm than good.
-_OFF_SCOPE_KEYWORDS = (
-    # Weather
-    "cuaca", "weather", "hujan deras",
-    # News / current affairs
-    "berita terkini", "berita hari ini", "headline berita", "breaking news",
-    # Food / recipes
-    "resep", "recipe", "menu makan", "restoran",
-    # Sports
-    "skor bola", "liga inggris", "premier league", "world cup", "piala dunia",
-    # Politics / world facts (national leaders — never an Amartha topic)
-    "siapa presiden", "presiden indonesia", "ibu kota negara",
-    # Celebrity / entertainment
-    "selebriti", "selebgram", "gosip artis",
-    # Crypto (never an Amartha topic — Amartha is grassroots microfinance, not
-    # a crypto exchange; safe to hard-block, unlike bank/e-wallet partners)
-    "bitcoin", "crypto", "kripto", "ethereum", "dogecoin",
-)
+    # (loaded from intent_patterns.yaml — see top of file)
 
 # ── Rule 4: bot-identity / app-purpose questions ─────────────────────────────
 # Exact-ish matches for "what/who is this" addressed to the bot/app.
@@ -160,15 +167,7 @@ _OFF_SCOPE_KEYWORDS = (
 # topic lookups ("modal ini apa", "celengan ini apa", "BP ini apa sih"), routing
 # them to a self-introduction instead of an answer. Anything genuinely
 # ambiguous ("ini apa?" alone) must fall through to KNOWLEDGE retrieval.
-_IDENTITY_PHRASES = (
-    # ID — anchored to bot/app reference
-    "kamu siapa", "lu siapa", "lo siapa", "elu siapa", "siapa kamu",
-    "ini apps apa", "ini apps buat apa", "ini aplikasi apa", "ini bot apa",
-    "kamu bot apa", "kamu apa sih", "lu apa sih", "perkenalkan diri",
-    # EN
-    "who are you", "what are you", "what is this app",
-    "what is this bot", "introduce yourself",
-)
+    # (loaded from intent_patterns.yaml — see top of file)
 
 # ── Rule 5: greeting prefixes ────────────────────────────────────────────────
 # Regex-based to catch common Indonesian typo elongations:
@@ -176,22 +175,7 @@ _IDENTITY_PHRASES = (
 # Also covers religious salaams, regional/slang openers, and chat shorthand
 # ("p", "pp" = the Indonesian "ping/halo"), since 13k FO greet in many forms.
 # Pattern anchored at start of string, case-insensitive applied at call site.
-_GREETING_PREFIX_RE = re.compile(
-    r"^("
-    r"halo+|hai+|hei+|hi+|hey+|hello+|helo+"   # salutations with elongation
-    r"|yo+i*|yuhu+|hola"                       # casual openers (yo/yoi/yoii)
-    r"|pagi|siang|sore|malam"                  # time-of-day greetings
-    r"|met\s+(pagi|siang|sore|malam)"          # "met pagi" (slang selamat)
-    r"|good\s+(morning|afternoon|evening)"     # English time greetings
-    r"|morning|evening"                        # bare English greeting
-    r"|selamat"                                # formal ID opener
-    r"|permisi|punten|excuse\s+me"             # polite openers (incl. Sundanese)
-    r"|assalamu?'?\s?alaikum|asalamualaikum|assalam|spada"  # Islamic salaam + variants
-    r"|shalom|salam\s+sejahtera|om\s+swastiastu|namaste|namo\s+buddhaya"  # other faiths
-    r"|test|ping|p+(?![a-z])"                  # test / chat-ping shorthand "p","pp"
-    r")[\s,\.!?]*",                            # optional trailing punct/space
-    re.IGNORECASE,
-)
+    # (loaded from intent_patterns.yaml — see top of file)
 
 # Keep tuple for backward compat (used in _handle_greeting language detect)
 _GREETING_PREFIXES = (
@@ -207,31 +191,8 @@ _GREETING_PREFIXES = (
 # are anchored to a meta-marker (topik/tema/materi/course/pelatihan/available)
 # to avoid false positives on real questions.
 #
-# Routing a qualifying query straight to TOPIC_LIST skips retrieval entirely;
-# the handler then injects the ground-truth topic list from Postgres.
-_TOPIC_LIST_PHRASES = (
-    # ID
-    "ada topik apa", "topik apa aja", "topik apa saja",
-    "ada materi apa", "materi apa aja", "materi apa saja",
-    "ada course apa", "course apa aja", "course apa saja",
-    "list topik", "list materi", "list course", "list pelatihan",
-    "topik yang tersedia", "materi yang tersedia",
-    "course yang tersedia", "pelatihan yang tersedia",
-    "topik apa yang", "materi apa yang", "course apa yang",
-    # EN
-    "what topics", "what courses", "what materials", "what training",
-    "available topics", "available courses", "available materials",
-    "list of topics", "list of courses", "list of materials",
-    "topics available", "courses available", "materials available",
-    "what do you have", "what can i learn", "what can you teach",
-    # ID — learning-oriented phrasings. NOTE: only NON-greedy entries here.
-    # Bare "bisa belajar apa" / "mau belajar apa" are deliberately NOT listed —
-    # as substrings they'd wrongly match content questions like "bisa belajar
-    # apa itu modal". The END-anchored regex (_TOPIC_LIST_RE) catches those
-    # precisely instead ("belajar apa" only at end-of-message).
-    "belajar apa aja", "belajar apa saja", "yang bisa dipelajari",
-    "materi ada apa", "topik ada apa",
-)
+# NOTE: phrase list is loaded from intent_patterns.yaml (see top of file). Do NOT
+# hardcode a tuple here, it will shadow the YAML source-of-truth.
 
 # Regex backstop for TOPIC_LIST phrasings the fixed-substring list above misses:
 # the `-nya` suffix ("topiknya apa aja", "materinya apa saja") and the reversed
@@ -283,25 +244,9 @@ _BARE_APAAJA_FLUFF = {
 # a greeting that PREFIXES a real question ("pagi, modal itu apa"). Only the
 # former should short-circuit to GREETING; the latter must fall through to
 # KNOWLEDGE so the actual question gets answered.
-_GREETING_WORDS = {
-    "halo", "hai", "hei", "hi", "hey", "hello", "pagi", "siang", "sore", "malam",
-    "selamat", "datang", "test", "good", "morning", "afternoon", "evening",
-    "permisi", "excuse", "me",
-    "assalamualaikum", "assalam", "waalaikumsalam", "waalaykum",
-}
+    # (loaded from intent_patterns.yaml — see top of file)
 # Conversational fluff that may trail a greeting without making it a question.
-_GREETING_FLUFF = {
-    "ya", "yaa", "dong", "donk", "kak", "ka", "min", "bang", "gan", "ges",
-    "gaes", "nih", "ni", "aja", "deh", "sih", "kok", "aku", "saya", "gw", "gue",
-    "wr", "wb", "semua", "semuanya", "teman", "temen", "guys", "all",
-    # Bot/assistant names — "selamat pagi ava" / "halo ava bot" is still a pure
-    # greeting, not a KNOWLEDGE lookup. Without these the trailing name leaked
-    # the turn to KNOWLEDGE (wasted retrieval; misclassified).
-    "ava", "bot", "kakak",
-    # Honorifics that commonly trail a greeting ("assalamualaikum pak",
-    # "halo bu", "pagi mas") — still a pure greeting, not a question.
-    "pak", "bu", "bapak", "ibu", "mas", "mbak", "mbn", "pak/bu",
-}
+    # (loaded from intent_patterns.yaml — see top of file)
 
 
 def _is_injection(text: str) -> bool:
@@ -326,6 +271,35 @@ def _is_pure_filler(low: str) -> bool:
     return bool(_PURE_PUNCT_RE.match(low))
 
 
+# ── Thanks / closing acknowledgment ───────────────────────────────────────────
+# Pure "thank you" / sign-off turns that END a thread. Routed to AMBIGUOUS so the
+# hot path skips embedding + retrieval and replies conversationally ("sama-sama").
+# DELIBERATELY NARROW: only thanks tokens (+ fluff). It does NOT include bare
+# "oke"/"iya"/"ya"/"lanjut"/"terus" — those can mean "okay, go on" in the middle
+# of a Coaching loop, and this regex tier has no mode/history context to tell the
+# difference, so hijacking them to AMBIGUOUS would silently break a coaching turn.
+# Those bare affirmations stay KNOWLEDGE (safe, just pay one wasted embed).
+    # (loaded from intent_patterns.yaml — see top of file)
+    # (loaded from intent_patterns.yaml — see top of file)
+
+
+def _is_thanks_closer(low: str) -> bool:
+    """Pure thanks/sign-off ('makasih', 'thanks ya', 'makasih banyak infonya').
+
+    Conservative: SHORT, must contain a thanks token, and every other token must
+    be fluff — so 'makasih tapi aku masih bingung soal X' (a real follow-up) does
+    NOT match. See _THANKS_TOKENS note on why 'oke'/'iya'/'lanjut' are excluded.
+    """
+    if len(low) > 40:
+        return False
+    tokens = re.findall(r"[a-zA-ZÀ-ſ]+", low)
+    if not tokens:
+        return False
+    if not any(t in _THANKS_TOKENS for t in tokens):
+        return False
+    return all(t in _THANKS_TOKENS or t in _THANKS_FLUFF for t in tokens)
+
+
 def _is_math(text: str) -> bool:
     """Pure arithmetic query — at least one digit-operator-digit, and the
     surrounding text is mostly numbers + a question word ("berapa", "=").
@@ -348,19 +322,13 @@ def _is_math(text: str) -> bool:
 
 
 def _is_off_scope_keyword(low: str) -> bool:
-    """Match any off-scope keyword. Whole-word match for both single and
-    multi-word keywords to avoid catching substrings of legitimate terms."""
-    padded = " " + low + " "
+    """Match any off-scope keyword. Uses regex word boundary (\b) so single-
+    word tokens like "iphone" match "iphone 15" (trailing digit is not a
+    word boundary) and multi-word phrases like "mobile legend" match
+    "main mobile legend yuk" (boundary at space)."""
     for kw in _OFF_SCOPE_KEYWORDS:
-        if " " in kw:
-            # Multi-word: pad with spaces so "berita terkini" doesn't match
-            # "soal berita terkininya" (the trailing "nya" would be caught
-            # by the unpadded `kw in low` check).
-            if f" {kw} " in padded:
-                return True
-        else:
-            if f" {kw} " in padded:
-                return True
+        if re.search(rf"\b{re.escape(kw)}\b", low):
+            return True
     return False
 
 
@@ -446,6 +414,8 @@ def classify(text: str) -> Optional[Intent]:
         return "MALICIOUS"
 
     if _is_pure_filler(low):
+        return "AMBIGUOUS"
+    if _is_thanks_closer(low):
         return "AMBIGUOUS"
     if _is_identity_question(low):
         return "GREETING"

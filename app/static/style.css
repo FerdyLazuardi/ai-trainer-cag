@@ -1,7 +1,32 @@
 :root {
     --primary-color: #7D50A1;
+    --primary-color-shadow: rgba(125, 80, 161, 0.4);
     --bg-light: #f8fafc;
     --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+/* Global smooth theme-swap: when body.coaching-active flips --primary-color
+   from purple → blue, all elements using it animate over 0.35s. */
+#chat-box,
+#chat-box *,
+#chat-toggle,
+#chat-toggle::before,
+#prompt,
+.send-btn,
+.kebab-switch,
+.kebab-btn {
+    transition: background-color 0.35s ease, color 0.35s ease,
+                border-color 0.35s ease, box-shadow 0.35s ease;
+}
+
+/* Coaching mode theme: full BLUE swap (so user sees they're in a different
+   mode, not just a button color change). All var(--primary-color) usages
+   flip to blue — header bg, send button, online dot, focus borders, FAB
+   shadow, etc. The coaching toggle ITSELF is the only one that stays
+   "blue" to show it's actively on. */
+body.coaching-active {
+    --primary-color: #2563eb;
+    --primary-color-shadow: rgba(37, 99, 235, 0.4);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -31,53 +56,81 @@ body {
 /* ================= FLOATING BUTTON ================= */
 #chat-toggle {
     position: fixed;
-    bottom: 25px;
-    right: 25px;
-    width: 60px;
-    height: 60px;
+    bottom: 20px;
+    right: 20px;
+    width: 50px;
+    height: 50px;
     border-radius: 50%;
     background: var(--primary-color);
     color: white;
     border: none;
-    font-size: 24px;
+    font-size: 21px;
     cursor: pointer;
-    box-shadow: 0 4px 15px rgba(125, 80, 161, 0.4);
+    box-shadow: 0 4px 15px var(--primary-color-shadow);
     z-index: 10000;
+    /* NO overflow:hidden here — that was clipping the pulse ring.
+       The morph icons are positioned absolute and stay within the
+       button naturally (22px inside a 50px circle). */
+    transition: background-color 0.35s ease, box-shadow 0.35s ease;
+}
+
+/* Two icons stacked; both positioned absolute, cross-fade + rotate on
+   body.chat-open. bg of #chat-toggle stays purple throughout. */
+.chat-toggle-icon {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    animation: pulseBtn 2.2s ease-in-out infinite;
-    transition: transform .3s;
+    color: white;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    pointer-events: none;
+}
+.icon-messenger { opacity: 1; transform: rotate(0deg) scale(1); }
+.icon-close     { opacity: 0; transform: rotate(-90deg) scale(0.5); }
+
+body.chat-open .icon-messenger { opacity: 0; transform: rotate(90deg) scale(0.5); }
+body.chat-open .icon-close     { opacity: 1; transform: rotate(0deg) scale(1); }
+body.chat-open #chat-toggle,
+body.chat-open #chat-toggle::before,
+body.chat-open #chat-toggle.pulse,
+body.chat-open #chat-toggle.pulse::before {
+    animation: none !important;
 }
 
-#chat-toggle:hover { transform: scale(1.08); }
+/* ================= PULSE: subtle button zoom + OUTWARD halo =================
+   Two layered animations:
+   1) Button itself: gentle scale 1 → 1.06 → 1 (the original pulseBtn)
+   2) ::before ring: purple shadow expands outward 0 → 18px → 0 (halo)
+   The ring is on ::before, NOT clipped (overflow:hidden removed above),
+   and uses pointer-events:none so it doesn't block clicks. */
+#chat-toggle.pulse {
+    animation: pulseBtn 2.2s ease-in-out infinite;
+}
 
-/* button zoom */
 @keyframes pulseBtn {
     0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.06); }
+    50%      { transform: scale(1.06); }
 }
 
-/* ================= PURPLE RING PULSE (NEW) ================= */
-#chat-toggle.pulse::after {
+#chat-toggle.pulse::before {
     content: "";
     position: absolute;
-    width: 100%;
-    height: 100%;
+    inset: 0;
     border-radius: 50%;
+    pointer-events: none;
+    z-index: -1;
     animation: purpleRing 2s infinite;
 }
 
 @keyframes purpleRing {
-    0% {
-        box-shadow: 0 0 0 0 rgba(125, 80, 161, 0.7);
-    }
-    70% {
-        box-shadow: 0 0 0 14px rgba(125, 80, 161, 0);
-    }
-    100% {
-        box-shadow: 0 0 0 0 rgba(125, 80, 161, 0);
-    }
+    0%   { box-shadow: 0 0 0 0 rgba(125, 80, 161, 0.6); }
+    70%  { box-shadow: 0 0 0 18px rgba(125, 80, 161, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(125, 80, 161, 0); }
 }
 
 /* BADGE */
@@ -117,8 +170,8 @@ body {
 /* ================= CHAT BOX ================= */
 #chat-box {
     position: fixed;
-    bottom: 100px;
-    right: 25px;
+    bottom: 85px;
+    right: 20px;
     width: min(400px, 90vw);
     height: min(600px, 80vh);
     background: white;
@@ -289,10 +342,57 @@ body {
     border-radius: 50%;
     cursor: pointer;
     transition: background-color 0.3s ease, transform 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .send-btn.cancel-mode {
     background: #94a3b8;
+}
+
+/* ── Coaching chip (small pill, right-aligned BELOW input area) ──────────── */
+#chat-actions {
+    padding: 4px 15px 10px;
+    background: white;
+    display: flex;
+    justify-content: flex-end;   /* right-align the chip */
+}
+
+.coaching-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 999px;          /* pill shape */
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+.coaching-chip:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #475569;
+    transform: translateY(-1px);
+}
+
+.coaching-chip i { font-size: 12px; }
+
+.coaching-chip.selected {
+    color: #fff;
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.coaching-chip.selected:hover {
+    filter: brightness(1.08);
+    color: #fff;
 }
 
 #chat-messages::-webkit-scrollbar { width: 4px; }
@@ -428,55 +528,256 @@ body {
     color: #64748b;
     margin: 0;
 }
-/* ── Coach toggle slider (header) — label sits INSIDE the track ─────────── */
-.coach-switch {
-    display: inline-flex;
-    align-items: center;
+/* ── Old coach toggle slider (header) — REMOVED, kept as no-op for safety ── */
+.coach-switch { display: none; }
+
+/* ── Coaching text button (next to delete + close in header) ────────────
+   Pure white button on the purple header. Inverted to purple when active
+   so the user sees coaching mode is ON. */
+.coaching-btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: #7D50A1;  /* purple text on white pill (default) */
+    background: white;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 10px;
     cursor: pointer;
-    user-select: none;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    line-height: 1.2;
 }
-.coach-switch input { display: none; }
-.coach-switch-track {
+
+.coaching-btn:hover {
+    background: #f4ecfa;  /* very light purple tint on hover */
+}
+
+.coaching-btn.selected {
+    color: white;
+    background: #7D50A1;  /* purple (inverted) when active */
+}
+
+.coaching-btn.selected:hover {
+    background: #6b3f8e;  /* darker purple */
+}
+
+/* ── Mobile (HP) responsive: keep things compact ─────────────────────── */
+@media (max-width: 600px) {
+    #chat-box {
+        width: calc(100vw - 20px) !important;
+        right: 10px !important;
+        bottom: 75px !important;
+        height: calc(100vh - 100px) !important;
+    }
+    #chat-toggle {
+        width: 44px;
+        height: 44px;
+        bottom: 15px;
+        right: 15px;
+        font-size: 18px;
+    }
+}
+
+/* ── Kebab menu (3-dot dropdown in header) ─────────────────────────── */
+.kebab-btn {
+    color: white;
+    background: transparent;
+    border: none;
+    padding: 4px 6px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: background-color 0.15s ease;
+    position: relative;       /* anchor for ::before glow */
+}
+.kebab-btn:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Icon stack: 4 magic-themed icons at the same spot, cross-faded via opacity
+   keyframe offset. 24s total cycle (6s per icon) — slow & smooth. */
+.kebab-icon-stack {
     position: relative;
-    width: 78px;
-    height: 24px;
-    border-radius: 999px;
-    background: #513469;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
-    transition: background-color 0.25s ease;
-    flex: 0 0 auto;
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
 }
-.coach-switch-text {
+.kebab-icon-slot {
     position: absolute;
     inset: 0;
+    margin: auto;
+    width: 18px;
+    height: 18px;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding-left: 18px;            /* clear the thumb on the left when off */
-    font-size: 11px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.85);
-    letter-spacing: 0.02em;
-    transition: padding 0.25s ease;
-    pointer-events: none;
+    opacity: 0;                       /* hidden by default — only the slot
+                                        whose keyframe is "active" shows */
+    /* 24s cycle (6s per icon), smooth standard easing. Each slot offset 6s. */
+    animation: kebab-icon-slot 24s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    will-change: opacity, transform;
 }
-.coach-switch-thumb {
+.kebab-icon-1 { animation-delay:  0s;   }
+.kebab-icon-2 { animation-delay: -6s;   }
+.kebab-icon-3 { animation-delay: -12s;  }
+.kebab-icon-4 { animation-delay: -18s;  }
+
+/* Slot keyframe: 6s "active" window inside the 24s cycle (= 25% of timeline).
+   Within that window: 1.5s fade-in + 3s hold + 1.5s fade-out. */
+@keyframes kebab-icon-slot {
+    0%    { opacity: 0; transform: scale(0.55) rotate(-25deg); }
+    6.25% { opacity: 1; transform: scale(1.06) rotate(0deg);   }   /* 0–1.5s: fade in */
+    12.5% { opacity: 1; transform: scale(1.0)  rotate(0deg);   }   /* 1.5–4.5s: hold */
+    18.75%{ opacity: 1; transform: scale(1.04) rotate(0deg);   }   /* 4.5–6s: fade out (actually fades 18.75%→25%) */
+    25%   { opacity: 0; transform: scale(0.55) rotate(25deg);  }   /* 6s: end active */
+    100%  { opacity: 0; transform: scale(0.55) rotate(-25deg); }   /* 6–24s: hidden */
+}
+
+/* Soft pulsing glow behind the icon stack. 6s slow cycle, white radial — stays
+   white in BOTH purple and blue themes. Paused when menu is open. */
+.kebab-btn::before {
+    content: "";
     position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 18px;
-    height: 18px;
+    inset: 2px;
+    border-radius: 6px;
+    background: radial-gradient(
+        circle at center,
+        rgba(255, 255, 255, 0.22) 0%,
+        rgba(255, 255, 255, 0.10) 50%,
+        rgba(255, 255, 255, 0)    75%
+    );
+    pointer-events: none;
+    animation: kebab-glow 6s ease-in-out infinite;
+    z-index: -1;
+    will-change: opacity, transform;
+}
+.kebab-btn.menu-open::before { animation-play-state: paused; }
+
+@keyframes kebab-glow {
+    0%, 100% { opacity: 0.55; transform: scale(1);    }
+    50%      { opacity: 1.0;  transform: scale(1.18); }
+}
+
+/* Icon-stack container pulses with the glow (6s, slow & smooth). Paused on
+   menu-open so the stack "freezes" mid-morph — no surprise icon swap while
+   the user is reading the menu. */
+.kebab-icon-stack {
+    animation: kebab-icon-pulse 6s ease-in-out infinite;
+    will-change: transform, filter;
+}
+.kebab-btn.menu-open .kebab-icon-stack { animation-play-state: paused; }
+
+@keyframes kebab-icon-pulse {
+    0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 0 rgba(255,255,255,0));    }
+    50%      { transform: scale(1.08); filter: drop-shadow(0 0 5px rgba(255,255,255,0.55)); }
+}
+
+/* Pause the cross-fade cycle too on menu-open (matches the freeze above so
+   nothing drifts while the user has the menu open). */
+.kebab-btn.menu-open .kebab-icon-slot { animation-play-state: paused; }
+
+/* IN animation (open) */
+.kebab-menu {
+    position: absolute;
+    top: 60px;
+    right: 12px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    min-width: 220px;
+    padding: 6px 0;
+    z-index: 1000;
+    transform-origin: top right;
+    /* No animation by default — driven by .opening / .closing classes
+       below so we can play a reverse anim on close. */
+}
+.kebab-menu[hidden] { display: none !important; }
+
+/* IN: smooth slide-down, slightly longer duration so it doesn't feel snappy */
+.kebab-menu.opening {
+    animation: kebab-menu-in 0.28s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+/* OUT: mirror of IN — plays then JS sets [hidden] after the duration */
+.kebab-menu.closing {
+    animation: kebab-menu-out 0.22s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes kebab-menu-in {
+    from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+@keyframes kebab-menu-out {
+    from { opacity: 1; transform: translateY(0)    scale(1);    }
+    to   { opacity: 0; transform: translateY(-8px) scale(0.96); }
+}
+
+.kebab-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    user-select: none;
+}
+.kebab-item:hover { background: #f8fafc; }
+
+.kebab-item-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.kebab-item-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+}
+.kebab-item-desc {
+    font-size: 11px;
+    color: #94a3b8;
+}
+.kebab-item-placeholder { cursor: default; opacity: 0.6; }
+.kebab-item-placeholder:hover { background: transparent; }
+
+.kebab-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+    background: #94a3b8;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Slide switch (iOS-style) — smooth slide for BOTH bg + thumb, in AND out */
+.kebab-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    background: #cbd5e1;
+    border-radius: 999px;
+    flex: 0 0 auto;
+    cursor: pointer;
+    /* bg color morph: gray ↔ primary, 0.3s both directions */
+    transition: background-color 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.kebab-switch.on { background: var(--primary-color); }
+.kebab-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
     border-radius: 50%;
-    background: #fff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    transition: transform 0.25s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    /* thumb slide: 0 ↔ 16px, 0.3s with smooth ease — applies on BOTH
+       on→off AND off→on (CSS transition is bidirectional by default). */
+    transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
-.coach-switch.on .coach-switch-track {
-    background: #3fa76e;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
-}
-.coach-switch.on .coach-switch-thumb { transform: translateX(54px); }
-.coach-switch.on .coach-switch-text { padding-left: 0; padding-right: 18px; color: #fff; }
+.kebab-switch.on .kebab-switch-thumb { transform: translateX(16px); }
 
 /* ── Welcome-screen chips ────────────────────────────────────────────────── */
 .ava-chips {

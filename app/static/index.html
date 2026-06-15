@@ -20,8 +20,8 @@
 <body>
 
     <button id="chat-toggle">
-        <i id="chat-icon" class="fas fa-comment-dots"></i>
-        <span id="chat-badge">1</span>
+        <i class="fas fa-comment-dots chat-toggle-icon icon-messenger"></i>
+        <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
     </button>
 
     <div id="chat-box" class="animate__animated">
@@ -29,23 +29,27 @@
             <div class="header-info">
                 <div class="online-dot"></div>
                 <div style="display:flex; flex-direction:column;">
-                    <span>Ava</span>
-                    <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
+                    <span>Ava AI Trainer</span>
+                    <small style="font-size:11px; opacity:.8;">AI Trainer can make mistake</small>
                 </div>
             </div>
-            <div style="display:flex; gap:16px; align-items:center;">
-                <label class="coach-switch" title="Mode Coaching (Socratic)">
-                    <input type="checkbox" id="coach-toggle" onchange="setCoaching(this.checked, true)">
-                    <span class="coach-switch-track">
-                        <span class="coach-switch-text">Coaching</span>
-                        <span class="coach-switch-thumb"></span>
-                    </span>
-                </label>
+            <div style="display:flex; gap:20px; align-items:center;">
                 <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat"
                     style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                <i class="fas fa-times header-icon" onclick="toggleChat()" title="Close chat"
-                    style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
+                <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur"
+                    style="background:none; border:none; padding:0; cursor:pointer; color:white; font-size:14px; opacity:0.85; line-height:1; background-color:transparent;">
+                    <span class="kebab-icon-stack">
+                        <i class="fas fa-wand-magic-sparkles kebab-icon-slot kebab-icon-1"></i>
+                        <i class="fas fa-star kebab-icon-slot kebab-icon-2"></i>
+                        <i class="fas fa-bolt kebab-icon-slot kebab-icon-3"></i>
+                        <i class="fas fa-gem kebab-icon-slot kebab-icon-4"></i>
+                    </span>
+                </button>
             </div>
+        </div>
+
+        <div id="kebab-menu" class="kebab-menu" hidden>
+            <!-- Menu items rendered dynamically by _renderKebabMenu() -->
         </div>
 
         <div id="chat-messages"></div>

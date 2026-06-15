@@ -16,8 +16,8 @@
 
     const html = `
         <button id="chat-toggle">
-            <i id="chat-icon" class="fas fa-comment-dots"></i>
-            <span id="chat-badge">1</span>
+            <i class="fas fa-comment-dots chat-toggle-icon icon-messenger"></i>
+            <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
         </button>
 
         <div id="chat-box" class="animate__animated">
@@ -26,21 +26,27 @@
                     <div class="online-dot"></div>
                     <div style="display:flex; flex-direction:column;">
                         <span>Ava AI Trainer</span>
-                        <small style="font-size:11px; opacity:.8;">Biasanya membalas &lt; 1 menit</small>
+                        <small style="font-size:11px; opacity:.8;">AI Trainer can make mistake</small>
                     </div>
                 </div>
-                <div style="display:flex; gap:16px; align-items:center;">
-                    <label class="coach-switch" title="Mode Coaching (Socratic)">
-                        <input type="checkbox" id="coach-toggle" onchange="setCoaching(this.checked, true)">
-                        <span class="coach-switch-track">
-                            <span class="coach-switch-text">Coaching</span>
-                            <span class="coach-switch-thumb"></span>
-                        </span>
-                    </label>
+                <div style="display:flex; gap:20px; align-items:center;">
                     <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                    <i class="fas fa-times header-icon" onclick="toggleChat()" title="Close chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
+                    <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur"
+                        style="background:none; border:none; padding:0; cursor:pointer; color:white; font-size:14px; opacity:0.85; line-height:1; background-color:transparent;">
+                        <span class="kebab-icon-stack">
+                            <i class="fas fa-wand-magic-sparkles kebab-icon-slot kebab-icon-1"></i>
+                            <i class="fas fa-star kebab-icon-slot kebab-icon-2"></i>
+                            <i class="fas fa-bolt kebab-icon-slot kebab-icon-3"></i>
+                            <i class="fas fa-gem kebab-icon-slot kebab-icon-4"></i>
+                        </span>
+                    </button>
                 </div>
             </div>
+
+            <div id="kebab-menu" class="kebab-menu" hidden>
+                <!-- Menu items rendered dynamically by _renderKebabMenu() -->
+            </div>
+
             <div id="chat-messages"></div>
             <div id="chat-input">
                 <button class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
@@ -68,6 +74,134 @@ const textarea = document.getElementById("prompt");
 let introduced = false;
 let isStreaming = false; // Prevent double-sends during streaming
 let currentAbortController = null;
+
+// ── Kebab menu config: extensible for future features (roleplay, etc.) ──
+// Each item:
+//   id      unique key
+//   label   user-facing text
+//   type    "toggle" (slide switch) | "placeholder" (disabled, "coming soon")
+//   value   current state (for toggle)
+//   desc    optional helper text shown under the label
+const _menuItems = [
+    {
+        id: "coaching",
+        label: "Coaching",
+        desc: "Pancing kamu mikir",
+        type: "toggle",
+        value: false,
+        onChange: (v) => setCoaching(v, true),
+    },
+    {
+        id: "roleplay",
+        label: "Roleplay",
+        desc: "Latihan simulasi",
+        type: "placeholder",
+    },
+];
+
+function _renderKebabMenu() {
+    const menu = document.getElementById("kebab-menu");
+    if (!menu) return;
+    menu.innerHTML = _menuItems.map((item) => {
+        if (item.type === "toggle") {
+            return `
+                <label class="kebab-item" data-id="${item.id}">
+                    <div class="kebab-item-label">
+                        <span class="kebab-item-title">${item.label}</span>
+                        ${item.desc ? `<span class="kebab-item-desc">${item.desc}</span>` : ""}
+                    </div>
+                    <span class="kebab-switch ${item.value ? "on" : ""}">
+                        <span class="kebab-switch-thumb"></span>
+                    </span>
+                </label>
+            `;
+        }
+        // placeholder
+        return `
+            <div class="kebab-item kebab-item-placeholder" data-id="${item.id}">
+                <div class="kebab-item-label">
+                    <span class="kebab-item-title">${item.label}</span>
+                    ${item.desc ? `<span class="kebab-item-desc">${item.desc}</span>` : ""}
+                </div>
+                <span class="kebab-badge">Soon</span>
+            </div>
+        `;
+    }).join("");
+
+    // Wire up toggle handlers
+    menu.querySelectorAll(".kebab-item").forEach((el) => {
+        const id = el.dataset.id;
+        const item = _menuItems.find((i) => i.id === id);
+        if (!item || item.type !== "toggle") return;
+        const sw = el.querySelector(".kebab-switch");
+        if (!sw) return;
+        sw.addEventListener("click", (e) => {
+            e.stopPropagation();
+            item.value = !item.value;
+            sw.classList.toggle("on", item.value);
+            item.onChange && item.onChange(item.value);
+        });
+    });
+}
+
+// Close kebab with OUT animation. Sets .closing, waits for the keyframe
+// duration to finish, then sets [hidden] so next open starts fresh.
+const KEBAB_OUT_MS = 220;
+function _closeKebabMenu(menu) {
+    if (!menu || menu.hidden) return;
+    menu.classList.remove("opening");
+    menu.classList.add("closing");
+    // Glow resumes AFTER the close anim finishes (else it pops back mid-fade)
+    const btn = document.getElementById("kebab-btn");
+    setTimeout(() => {
+        menu.classList.remove("closing");
+        menu.hidden = true;
+        if (btn) btn.classList.remove("menu-open");
+    }, KEBAB_OUT_MS);
+}
+
+function toggleKebabMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById("kebab-menu");
+    if (!menu) return;
+    const btn = document.getElementById("kebab-btn");
+    const isOpen = !menu.hidden;
+    if (isOpen) {
+        // Close with reverse anim
+        menu.classList.remove("opening");
+        menu.classList.add("closing");
+        setTimeout(() => {
+            menu.classList.remove("closing");
+            menu.hidden = true;
+            if (btn) btn.classList.remove("menu-open");
+        }, KEBAB_OUT_MS);
+    } else {
+        // Open: render content, then play IN animation. Removing [hidden]
+        // first lets the .opening class trigger the keyframe from the
+        // initial state (opacity 0, translateY -8px). Pause the glow while
+        // the menu is open — the icon is "claimed" until it closes again.
+        _renderKebabMenu();
+        menu.hidden = false;
+        menu.classList.remove("closing");
+        if (btn) btn.classList.add("menu-open");
+        // Force reflow so the animation restarts cleanly each time
+        void menu.offsetWidth;
+        menu.classList.add("opening");
+    }
+}
+
+// Close kebab on outside click (also with OUT animation)
+document.addEventListener("click", (e) => {
+    const menu = document.getElementById("kebab-menu");
+    const btn = document.getElementById("kebab-btn");
+    if (!menu || menu.hidden) return;
+    if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+    _closeKebabMenu(menu);
+});
+
+// Anchor the coaching tab to the chatbox's left edge. Re-run on resize
+// so the tab follows the chatbox on desktop ↔ mobile width changes.
+
 
 function setSendButtonState(streaming) {
     const btns = document.querySelectorAll(".send-btn");
@@ -118,10 +252,14 @@ if (toggleBtn) {
 // so the switch never flips silently.
 function setCoaching(on, showMsg) {
     window.COACHING_MODE = !!on;
-    const cb = document.getElementById("coach-toggle");
-    if (cb) cb.checked = !!on;
-    const sw = document.querySelector(".coach-switch");
-    if (sw) sw.classList.toggle("on", !!on);
+    document.body.classList.toggle("coaching-active", !!on);
+    // Sync the kebab menu's coaching toggle (in case toggle came from
+    // elsewhere, e.g. the future welcome-screen chip)
+    const item = _menuItems.find((i) => i.id === "coaching");
+    if (item) item.value = !!on;
+    // Re-render if menu is currently open so the switch state updates live
+    const menu = document.getElementById("kebab-menu");
+    if (menu && !menu.hidden) _renderKebabMenu();
     if (showMsg) {
         if (on) {
             addMessage(
@@ -285,7 +423,7 @@ function maybeOfferCoaching(userText, backendSuggest) {
 // turns in a row, that's a strong "I want to go deep here" signal — offer to
 // coach them through it. Topic is taken from the answer's `sources` (each chunk
 // carries its course/section title). Frontend-only: no backend change.
-const _TOPIC_STREAK_THRESHOLD = 2;   // offer after this many same-topic turns
+const _TOPIC_STREAK_THRESHOLD = 3;   // offer after this many same-topic turns; tolerates 1-2 topic shifts via cooldown (see else-branch below)
 window._topicStreak = { topic: null, count: 0 };
 
 function _dominantTopic(sources) {
@@ -306,13 +444,19 @@ function maybeOfferCoachingByTopicStreak(userText, sources) {
     if (window.COACHING_MODE) return;                        // already on
     if (document.getElementById("ava-coach-offer")) return;  // per-question hook already offered
     const topic = _dominantTopic(sources);
-    if (!topic) { window._topicStreak = { topic: null, count: 0 }; return; }
+    if (!topic) return;  // no topic info this turn (e.g. retrieval miss) — leave counter alone, don't kill a healthy streak
 
     const st = window._topicStreak;
     if (st.topic === topic) {
         st.count += 1;
     } else {
-        window._topicStreak = { topic: topic, count: 1 };
+        // Cooldown: when topic shifts, decay count by 1 instead of hard-reset.
+        // Streak fully dies only after 2 different-topic shifts in a row, so a
+        // user drifting across 1-2 related sections (e.g. CP → Mechanism of
+        // Complaints Resolution) doesn't lose the "in the zone" signal.
+        const newCount = Math.max(0, st.count - 1);
+        st.topic = newCount > 0 ? st.topic : topic;  // keep old topic while streak still alive
+        st.count = newCount > 0 ? newCount : 1;       // new topic seeds its own streak at 1
     }
     if (window._topicStreak.count < _TOPIC_STREAK_THRESHOLD) return;
 
@@ -411,47 +555,38 @@ function acceptCoachingOffer() {
 }
 
 function toggleChat() {
-    const icon = document.getElementById("chat-icon");
     const toggleBtn = document.getElementById("chat-toggle");
 
-    icon.classList.add("icon-animate");
+    if (chatBox.style.display === "none" || chatBox.style.display === "") {
+        // ===== OPEN =====
+        chatBox.style.display = "flex";
+        chatBox.classList.remove("animate__fadeOutDown");
+        chatBox.classList.add("animate__fadeInUp");
 
-    setTimeout(() => {
-        if (chatBox.style.display === "none" || chatBox.style.display === "") {
-            // ===== OPEN =====
-            chatBox.style.display = "flex";
-            chatBox.classList.remove("animate__fadeOutDown");
-            chatBox.classList.add("animate__fadeInUp");
+        // FAB stays visible but morphs into a CLOSE (X) icon. The morph
+        // is driven by .chat-open class on <body> (see CSS — both icons
+        // cross-fade + rotate). Hide the unread badge.
+        document.body.classList.add("chat-open");
+        const badge = document.getElementById("chat-badge");
+        if (badge) badge.style.display = "none";
 
-            // Sembunyikan bubble button saat chat dibuka
-            toggleBtn.style.opacity = "0";
-            toggleBtn.style.pointerEvents = "none";
-            toggleBtn.classList.remove("pulse");
-
-            const badge = document.getElementById("chat-badge");
-            if (badge) badge.style.display = "none";
-
-            if (!introduced) {
-                loadHistory();
-                introduced = true;
-            }
-
-        } else {
-            // ===== CLOSE =====
-            chatBox.classList.remove("animate__fadeInUp");
-            chatBox.classList.add("animate__fadeOutDown");
-
-            setTimeout(() => {
-                chatBox.style.display = "none";
-                // Tampilkan kembali bubble button saat chat ditutup
-                toggleBtn.style.opacity = "1";
-                toggleBtn.style.pointerEvents = "auto";
-                toggleBtn.classList.add("pulse");
-            }, 500);
+        if (!introduced) {
+            loadHistory();
+            introduced = true;
         }
+    } else {
+        // ===== CLOSE =====
+        chatBox.classList.remove("animate__fadeInUp");
+        chatBox.classList.add("animate__fadeOutDown");
 
-        icon.classList.remove("icon-animate");
-    }, 200);
+        setTimeout(() => {
+            chatBox.style.display = "none";
+            // FAB morphs back to messenger icon + resume the pulse loop
+            // so the user notices the (now-closed) chat is still available.
+            document.body.classList.remove("chat-open");
+            toggleBtn.classList.add("pulse");
+        }, 500);
+    }
 }
 
 // ============================================================
@@ -892,8 +1027,9 @@ async function send(presetText, opts) {
                 // regex _looksReflective is the fallback when it's absent.
                 maybeOfferCoaching(text, _suggestCoaching);
                 // Topic-streak hook: if the per-question hook didn't already
-                // offer, and the user has asked about the SAME topic 3x in a
-                // row, offer to go deeper on that topic.
+                // offer, and the user has stuck with a topic for 3+ turns
+                // (with 1-2 graceful topic shifts before the streak fully
+                // resets), offer to go deeper on that topic.
                 maybeOfferCoachingByTopicStreak(text, _doneSources);
             }
         }
