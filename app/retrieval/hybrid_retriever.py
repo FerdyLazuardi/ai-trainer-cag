@@ -51,9 +51,15 @@ _SPARSE_MODEL = "Qdrant/bm25"
 _sparse_semaphore: asyncio.Semaphore | None = None
 
 def _get_sparse_semaphore() -> asyncio.Semaphore:
+    # Module-global lazy-init (NOT lru_cache): a Semaphore must bind to the
+    # running loop on first use, so we create it on first call rather than at
+    # import. Concurrency is tunable via SPARSE_ENCODE_CONCURRENCY — default 1
+    # because each encode already spans both vCPUs via OMP_NUM_THREADS=2; see
+    # the field comment in settings.py before raising it.
     global _sparse_semaphore
     if _sparse_semaphore is None:
-        _sparse_semaphore = asyncio.Semaphore(1)
+        from app.config.settings import get_settings
+        _sparse_semaphore = asyncio.Semaphore(get_settings().sparse_encode_concurrency)
     return _sparse_semaphore
 
 
@@ -179,8 +185,9 @@ async def hybrid_search(
     encoder = _get_sparse_encoder()
 
     async def _encode_sparse():
-        # Semaphore limits concurrency to 1, preventing fastembed (onnxruntime)
-        # from saturating all CPU cores and starving the asyncio event loop.
+        # Semaphore bounds concurrent fastembed (onnxruntime) encodes so it
+        # doesn't saturate all CPU cores and starve the asyncio event loop.
+        # Bound is SPARSE_ENCODE_CONCURRENCY (default 1; see settings.py field).
         async with _get_sparse_semaphore():
             return await asyncio.to_thread(encoder, [query])
 

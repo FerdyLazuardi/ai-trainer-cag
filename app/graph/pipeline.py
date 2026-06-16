@@ -1136,9 +1136,13 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         max_fresh_turns=_settings.max_fresh_turns,
         max_ai_chars=_settings.max_history_ai_chars,
     )
-    # Static prompt wrapped in a cache_control breakpoint so OpenRouter/Vertex
-    # serves it from the provider prefix-cache on the 2nd+ call. Dynamic per-turn
-    # context lives in a separate HumanMessage so the cached prefix is byte-stable.
+    # Static system prompt kept byte-stable (dynamic per-turn context lives in a
+    # separate HumanMessage) so the upstream's automatic prefix cache can hit on
+    # the 2nd+ call. No explicit cache_control breakpoint: the configured
+    # generators (DeepSeek native, Gemini via Vertex) BOTH cache implicitly /
+    # server-side, where cache_control is a no-op — it's an Anthropic-style lever
+    # (also honored by Alibaba on OpenRouter). If you ever pin the generator to a
+    # provider that requires explicit breakpoints, re-add it here.
     #
     # Per-intent prompt selection (Option C — saves ~900 tok on chit-chat turns):
     #   - COACHING → SOCRATIC_PROMPT (full Socratic scaffolding)
@@ -1151,10 +1155,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     else:
         # KNOWLEDGE, TOPIC_LIST
         system_prompt_text = CONVERSATIONAL_PROMPT
-    system_msg = SystemMessage(content=[
-        {"type": "text", "text": system_prompt_text,
-         "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-    ])
+    system_msg = SystemMessage(content=system_prompt_text)
     # Only inject the dynamic context message when there's actually something in
     # it (a greeting with no context/memory shouldn't get an empty block).
     msgs: list = [system_msg]

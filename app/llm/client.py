@@ -37,7 +37,15 @@ async def _strip_openai_ua(request: httpx.Request) -> None:
     request.headers["User-Agent"] = _LLM_USER_AGENT
 
 
-def _make_http_client() -> httpx.AsyncClient:
+@lru_cache(maxsize=1)
+def _shared_http_client() -> httpx.AsyncClient:
+    # ONE process-wide pool shared by all 7 LLM factories. Each factory used to
+    # build its own client → 7 independent httpx pools (httpx default = 100 max
+    # conns / 20 keepalive each), so ~140 idle keepalive sockets + 7× struct/FD
+    # overhead for what is really one OpenRouter upstream. httpx.AsyncClient is
+    # safe to share across concurrent coroutines, and OpenRouter rate-limits
+    # per-API-key (not per-connection), so a shared pool changes nothing about
+    # throttling — it just collapses the socket/FD footprint to one pool.
     return httpx.AsyncClient(
         timeout=httpx.Timeout(60.0, connect=10.0),
         event_hooks={"request": [_strip_openai_ua]},
@@ -210,7 +218,7 @@ def get_llm() -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         request_timeout=60,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         # usage:{include:true} makes OpenRouter return real accounting in the
         # response — including prompt_tokens_details.cached_tokens. Without it,
         # the cached_tokens field comes back 0 even when caching DID happen, so
@@ -246,7 +254,7 @@ def get_cheap_llm() -> ChatOpenAI:
         max_tokens=1000,
         request_timeout=30,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
@@ -299,7 +307,7 @@ def get_judge_llm() -> ChatOpenAI:
         max_tokens=1024,
         request_timeout=60,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         model_kwargs={
             "response_format": {"type": "json_object"},
         },
@@ -344,6 +352,11 @@ def assert_judge_model_distinct(
 def get_preprocessor_llm() -> ChatOpenAI:
     """Cheap LLM for the pre-processor's intent classification + query rewrite.
 
+    USED BY ASKFER ONLY (app/graph/askfer_pipeline.py). Ava's pre_processor
+    (app/graph/pipeline.py) is rule-based — deterministic regex Tier-1 routing,
+    NO LLM call — so it never reaches this factory. Keep this in mind before
+    assuming a change here affects Ava.
+
     The pre-processor is the single most expensive per-call system in the
     pipeline (~1.0K input tokens on every turn) and runs BEFORE retrieval —
     so its cost is paid on every request including off-topic/off-scope
@@ -369,7 +382,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
         max_tokens=500,
         request_timeout=30,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         extra_body=_provider_extra_body(settings.cheap_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
@@ -415,7 +428,7 @@ def get_generate_llm() -> ChatOpenAI:
         max_tokens=1024,
         request_timeout=30,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         # streaming=True makes ainvoke() stream tokens internally from Gemini,
         # so the graph's astream_events surfaces real per-token
         # on_chat_model_stream events (the SSE handler in chat.py already
@@ -455,7 +468,7 @@ def get_chat_llm() -> ChatOpenAI:
         max_tokens=1024,
         request_timeout=30,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         streaming=True,
         stream_usage=True,
         extra_body=_provider_extra_body(settings.cheap_llm_model),
@@ -490,7 +503,7 @@ def get_empathy_llm() -> ChatOpenAI:
         max_tokens=1024,
         request_timeout=30,
         max_retries=1,
-        http_async_client=_make_http_client(),
+        http_async_client=_shared_http_client(),
         # See get_generate_llm: real token streaming for the SSE path +
         # stream_usage so cache accounting still works while streaming.
         streaming=True,

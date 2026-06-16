@@ -331,6 +331,9 @@ class Settings(BaseSettings):
     # detection stays on the deterministic regex + LLM path), so it can never
     # strip a safety/vent turn's escalation scores. Off → behaviour is
     # byte-identical to today (regex Tier-1 → LLM).
+    # TODO: enable after calibration via scripts/calibrate_intent_threshold.py.
+    # Currently inert end-to-end — classify_semantic has no caller and this flag
+    # is read nowhere; wiring both is a prerequisite for flipping the env on.
     intent_semantic_gate_enabled: bool = Field(
         default=False, alias="INTENT_SEMANTIC_GATE_ENABLED"
     )
@@ -407,6 +410,18 @@ class Settings(BaseSettings):
     embedding_max_attempts: int = 3
     embedding_backoff_base_seconds: float = 0.5
     embedding_backoff_max_seconds: float = 4.0
+    # Max concurrent sparse BM25 (fastembed/onnxruntime) query encodings. The
+    # encode runs CPU-bound in a thread (asyncio.to_thread). DEFAULT 1, and it
+    # MUST stay coupled to OMP_NUM_THREADS in docker-compose.yml: each encode
+    # already fans out onnxruntime across OMP_NUM_THREADS=2 (both vCPUs), so a
+    # single in-flight encode already saturates the box. Allowing 2 concurrent
+    # would put 2x2=4 threads on 2 cores → oversubscription + context-switch
+    # thrash that raises P95 and starves the asyncio loop — the exact failure
+    # the OMP cap was added to prevent. Only raise this above 1 if you ALSO drop
+    # OMP_NUM_THREADS to 1 (so total threads stay <= vCPUs) and load-test P95.
+    sparse_encode_concurrency: int = Field(
+        default=1, ge=1, le=4, alias="SPARSE_ENCODE_CONCURRENCY"
+    )
 
     # ─── Conversational LLM ──────────────────────────────────────────────────
     # The collapsed pipeline uses ONE conversational LLM (get_chat_llm →
@@ -470,6 +485,14 @@ class Settings(BaseSettings):
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.
     ltm_afk_threshold_seconds: int = 36000
+    # Per-user episode cap for Qdrant LTM (app/agents/long_term_memory_qdrant.py
+    # _max_episodes_per_user). Qdrant has no native TTL/eviction, so each session
+    # writes a permanent vector; after every write the oldest episodes beyond this
+    # cap are pruned per user (~220k vectors/year at 13k users without it). 50
+    # balances recall vs unbounded growth. Guarded 1..200 against env typos.
+    ltm_max_episodes_per_user: int = Field(
+        default=50, ge=1, le=200, alias="LTM_MAX_EPISODES_PER_USER"
+    )
 
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
