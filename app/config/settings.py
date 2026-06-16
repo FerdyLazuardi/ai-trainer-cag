@@ -294,21 +294,19 @@ class Settings(BaseSettings):
 
     # ─── Intent Classification (Tier-0 semantic gate) ──────────────────────
     # Used by app/graph/intent_classifier.classify_semantic. Embedding-based
-    # cosine similarity against pre-computed intent centroids. Replaces the
-    # regex-only path for novel greeting variants (assalam, shalom, om
-    # swastiastu, etc.) so the LLM pre-processor is skipped for ~50%+ of
-    # greeting traffic that the regex misses. NO hardcoded language patterns.
+    # cosine similarity against pre-computed intent centroids. Catches novel
+    # greeting/ambiguous phrasings the regex Tier-1 misses (religious greetings,
+    # regional slang, novel fillers) so we SKIP retrieval for them — saves a
+    # Qdrant round-trip and a full CONVERSATIONAL_PROMPT pass per query.
     #
     # threshold: minimum best-centroid similarity to commit to an intent.
-    #   0.55 (bge-m3 cosine stopgap). Was 0.78 for text-embedding-3-small
-    #   which has a steeper cosine distribution. bge-m3 puts valid
-    #   matches lower in cosine space — re-measure on 50 centroids via
-    #   scripts/calibrate_intent_threshold.py and tune. Raise to 0.65+ if
-    #   you see false-positive intent commits.
+    #   Calibrated 2026-06-17 against app/eval/calibrate_intent_gate.py on the
+    #   hallucination_probe + intent_seed corpora. Raise to 0.65+ if you see
+    #   false-positive commits (gates mis-routing KNOWLEDGE queries as chit-chat).
     # margin: minimum gap between best and second-best centroid. Stops the
     #   gate from committing on ambiguous queries that sit between two
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
-    intent_semantic_threshold: float = 0.55
+    intent_semantic_threshold: float = 0.60
     intent_semantic_margin: float = 0.10
     # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
     # (intent_classifier.coaching_affinity vs the COACHING centroid). This is
@@ -319,23 +317,15 @@ class Settings(BaseSettings):
     # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
     # margin each side. Re-check if the COACHING seeds in intent_seed.yaml change.
     coaching_suggest_threshold: float = 0.70
-    # Master switch for the Tier-1.5 semantic gate (app/graph/intent_classifier.
+    # Master switch for the semantic gate (app/graph/intent_classifier.
     # classify_semantic), wired into _pre_processor between the regex Tier-1 and
-    # the LLM pre-processor. DEFAULT OFF: the threshold above (0.55) is a
-    # self-described uncalibrated stopgap, and a false-positive would mis-route a
-    # production turn — so the gate stays dormant until calibrated against real
-    # traffic via scripts/calibrate_intent_threshold.py, then flipped on by env.
-    # When enabled, the gate ONLY short-circuits the canned, score-free intents
+    # the no-retrieval bucket. Only short-circuits chit-chat intents
     # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/COACHING
-    # (they need the LLM's 4-axis scores) and never MALICIOUS (injection
-    # detection stays on the deterministic regex + LLM path), so it can never
-    # strip a safety/vent turn's escalation scores. Off → behaviour is
-    # byte-identical to today (regex Tier-1 → LLM).
-    # TODO: enable after calibration via scripts/calibrate_intent_threshold.py.
-    # Currently inert end-to-end — classify_semantic has no caller and this flag
-    # is read nowhere; wiring both is a prerequisite for flipping the env on.
+    # (they need retrieval) and never MALICIOUS (injection detection stays on
+    # the deterministic regex path). Defaults ON; calibrated against
+    # app/eval/calibrate_intent_gate.py on 2026-06-17.
     intent_semantic_gate_enabled: bool = Field(
-        default=False, alias="INTENT_SEMANTIC_GATE_ENABLED"
+        default=True, alias="INTENT_SEMANTIC_GATE_ENABLED"
     )
 
     # ─── Context Engineering ────────────────────────────────────────────────

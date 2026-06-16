@@ -3,3 +3,4 @@ pandas
 plotly
 python-dotenv
 requests
+tzdata

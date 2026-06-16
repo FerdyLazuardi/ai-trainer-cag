@@ -82,12 +82,11 @@ class _LRU(OrderedDict):
 
 from app.config.settings import get_settings
 
-# Must match the union in intent_rules.Intent + extra graph-only intents
-# (MALICIOUS / KNOWLEDGE / COACHING aren't handled by regex; they are
-# gate-eligible so the LLM pre-processor can be skipped for clear cases).
+# Gate-eligible intents the semantic classifier can commit. Mirrors the
+# no-retrieval buckets in _pre_processor (regex Tier-1) — never KNOWLEDGE/
+# COACHING (those need retrieval) and never MALICIOUS (stays on the regex guard).
 Intent = Literal[
     "GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST",
-    "KNOWLEDGE", "COACHING", "MALICIOUS",
 ]
 
 
@@ -266,25 +265,20 @@ def _cosine(a: list[float], b: list[float]) -> float:
 async def classify_semantic(text: str) -> Optional[Intent]:
     """Classify intent via embedding similarity to pre-computed centroids.
 
-    Returns the best-matching intent ONLY IF:
-      1. ``best_sim >= settings.intent_semantic_threshold`` (default 0.78)
-      2. ``best_sim - second_sim >= settings.intent_semantic_margin`` (default 0.10)
+    Returns the best-matching gate-eligible intent (GREETING/AMBIGUOUS/OFF_SCOPE/
+    TOPIC_LIST) ONLY IF:
+      1. ``best_sim >= settings.intent_semantic_threshold``
+      2. ``best_sim - second_sim >= settings.intent_semantic_margin``
 
     Otherwise returns None — caller falls through to regex Tier-1, then
-    the LLM pre-processor.
-
-    Args:
-        text: The raw user query (any language, any length).
-
-    Returns:
-        The intent label, or None if the gate is uncertain.
+    retrieval. NEVER classifies to KNOWLEDGE/COACHING/MALICIOUS: those need
+    retrieval / structured-output / injection detection, not centroid match.
     """
     if not text or not text.strip():
         return None
     text = text.strip()
     settings = get_settings()
 
-    # Compute centroids (cached; cheap if already done)
     try:
         centroids = await _compute_centroids()
     except Exception as e:
@@ -293,7 +287,6 @@ async def classify_semantic(text: str) -> Optional[Intent]:
     if not centroids:
         return None
 
-    # Embed user query (cached on repeat)
     try:
         user_vec = await _embed_one(text)
     except Exception as e:
@@ -301,12 +294,18 @@ async def classify_semantic(text: str) -> Optional[Intent]:
         return None
     user_vec = _l2_normalize(user_vec)
 
-    # Cosine sim to each centroid
     sims = {intent: _cosine(user_vec, c) for intent, c in centroids.items()}
     ranked = sorted(sims.items(), key=lambda kv: kv[1], reverse=True)
     best_intent, best_sim = ranked[0]
     second_sim = ranked[1][1] if len(ranked) > 1 else 0.0
     margin = best_sim - second_sim
+
+    # Defensive: the local Intent union is the 4 gate-eligible ones, but the
+    # centroids dict may carry KNOWLEDGE/COACHING/MALICIOUS from seed — those
+    # must never win via this gate. Filter to gate-eligible only.
+    _GATE_OK = {"GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"}
+    if best_intent not in _GATE_OK:
+        return None
 
     if best_sim >= settings.intent_semantic_threshold and margin >= settings.intent_semantic_margin:
         logger.info(

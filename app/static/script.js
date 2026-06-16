@@ -1446,20 +1446,27 @@ const TOUR_CUTOUT_RADIUS = 8;
 
 const tourSteps = [
     {
+        // Intro step: no target — full-dim overlay, tooltip centered. Explains
+        // what Ava is before walking through the UI.
+        intro: true,
+        title: "Hai, aku Ava 👋",
+        body: "Aku akan bantu kamu belajar di Amarthapedia. Yuk aku pandu cara menggunakannya.",
+    },
+    {
         title: "Fitur",
-        body: "Klik ikon ☰ di pojok kanan atas buat akses mode Coaching & fitur spesial lainnya.",
+        body: "Klik ikon ☰ di pojok kanan atas buat akses Coaching & fitur spesial lainnya.",
         target: "#kebab-btn",
         anchor: "left",
     },
     {
         title: "Akses cepat",
-        body: "Cek daftar materi Amarthapedia atau aktifkan mode Coaching buat aku pandu kamu mikir.",
+        body: "Cek daftar materi Amarthapedia atau aktifkan mode Coaching buat aku pandu kamu menemukan solusi permasalahanmu.",
         target: "#ava-welcome-chips",
         anchor: "below",
     },
     {
         title: "Topic list & materi",
-        body: "Klik ikon daftar di sebelah kiri kolom chat buat liat semua topik & materi lengkap yang tersedia di Amarthapedia.",
+        body: "Klik ikon daftar di sebelah kiri kolom chat buat liat semua topik & materi yang tersedia.",
         target: "#topics-btn",
         anchor: "above",
     },
@@ -1622,6 +1629,27 @@ function showTourStep(step) {
     // Update button label
     tourNext.textContent = step === tourSteps.length - 1 ? "Selesai ✓" : "Lanjut →";
 
+    // Intro step: no target element. Full-dim overlay (no SVG hole), no
+    // cutout box, tooltip centered on the chatbox.
+    if (s.intro) {
+        tourOverlay.style.webkitMaskImage = "none";
+        tourOverlay.style.maskImage = "none";
+        tourCutout.hidden = true;
+        const ttW = 260;
+        const ttH = 140;
+        // Center on the chatbox, not the viewport. Fall back to screen center
+        // if the chatbox isn't laid out yet.
+        const box = document.getElementById("chat-box");
+        const r = box ? box.getBoundingClientRect() : null;
+        const cx = r && r.width ? r.left + r.width / 2 : window.innerWidth / 2;
+        const cy = r && r.height ? r.top + r.height / 2 : window.innerHeight / 2;
+        tourTooltip.style.top = Math.max(10, cy - ttH / 2) + "px";
+        tourTooltip.style.left = Math.max(10, cx - ttW / 2) + "px";
+        tourOverlay.hidden = false;
+        tourTooltip.hidden = false;
+        return;
+    }
+
     // Wait a frame so layout is settled (especially for welcome chips
     // which are rendered async after showIntro).
     requestAnimationFrame(() => {
@@ -1656,7 +1684,7 @@ function hideTour() {
     // Persist "seen" to the DB (follows the user across devices). localStorage
     // is kept as a same-device fast-path so a network blip doesn't re-show the
     // tour before the POST lands.
-    try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) {}
+    try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) { }
     fetch(`${_tourApiBase()}/api/v1/user/onboarding/complete`, {
         method: "POST",
         headers: _tourApiHeaders(),
@@ -1687,7 +1715,7 @@ function maybeStartTour(force) {
             if (data && data.completed) {
                 // Already seen on another device — sync the local flag so we
                 // don't re-check on every open from here on.
-                try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) {}
+                try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) { }
                 return;
             }
             _beginTour();

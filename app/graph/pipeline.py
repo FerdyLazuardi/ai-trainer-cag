@@ -48,8 +48,17 @@ EXCEPTION — the SHORT default does NOT apply when the user asks about a set/ca
 <grounding>
 First check RELEVANCE: <context> being present does NOT mean it answers this turn. Re-read what the user actually said. If the context genuinely answers their question, base your answer on it. If it does NOT — e.g. the user made a meta-comment about the conversation ("kok ga nyambung", "yang bener dong"), greeted you, or said something the chunks don't actually address — then IGNORE the context entirely and just respond to the user naturally. NEVER pull in a topic from <context> that the user didn't ask about ("Kamu bertanya tentang X..." when they didn't) — that's the worst failure here.
 When the context IS relevant: copy Amartha's product, principle, role, and policy names EXACTLY as written in <context> — never swap in a similar-sounding term from general knowledge (e.g. keep Amartha's "Mechanism of Complaints Resolution", don't rename it to the generic CGAP "Grievance Redress"). Do NOT invent Amartha facts (numbers, policies, lists) that aren't in <context>.
-When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
+When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — FIRST run the <disambiguate> check: if the bare term could name SEVERAL DISTINCT sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), ask the clarifying question and STOP — do NOT dump all sets. Only when it resolves to ONE set do you list completely: answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
 </grounding>
+
+<disambiguate>
+This check runs BEFORE the <grounding> LIST rule and BEFORE you answer anything. If it fires, you ask and STOP — you do not also list.
+Check if the turn is UNDERSPECIFIED against <context>. Two cases:
+(1) A broad/bare term ("prinsip", "kebijakan", "prosedur", "cara lapor", "SOP", "nilai") where <context> shows it could mean SEVERAL DISTINCT things (e.g. chunks carry Prinsip Pencegahan Fraud AND Prinsip Client Protection AND Prinsip Penagihan — different sets, different courses).
+(2) A reference to an ITEM of a set by number/name ("prinsip 3", "tahap kedua", "poin pertama") where <context> shows MORE THAN ONE candidate set it could index into, and the conversation history has NOT already fixed which set is meant.
+In either case do NOT pick one and do NOT dump them all — ask ONE short clarifying question that names the distinct candidates you ACTUALLY see in <context> (2-4 options, exact verbatim names), then let the user choose. E.g. user "prinsip" → "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan. Mau bahas yang mana?" E.g. user "cara lapor" → ask WHAT they want to report, since each (kendala lapangan, fraud, harassment) punya kanal berbeda.
+Answer DIRECTLY (skip the question) only when <context> clearly points to ONE thing, OR the history already narrowed the set/topic (you established Client Protection earlier, then "prinsip 3" = Client Protection #3). The candidate options MUST come from <context>, never from general knowledge — if only one set is present, there's nothing to disambiguate, just answer. When genuinely in doubt, ask: one clarifying question beats a confident wrong-topic answer.
+</disambiguate>
 
 <no_context>
 If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Aku belum nemu info soal itu di materiku — coba pakai kata kunci lain ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amarthapedia materials). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
@@ -166,13 +175,13 @@ Guiding question (loop turns): 1-3 sentences, light and inviting — keep each i
 # leading to giant <h1>-rendered context dumps in the UI. We catch that
 # server-side as a defensive net even after prompt-level guards.
 _LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>"
+    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|disambiguate|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>"
     r".*?"
     r"</\1>\s*",
     re.DOTALL | re.IGNORECASE,
 )
 _LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>",
+    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|disambiguate|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>",
     re.IGNORECASE,
 )
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
@@ -566,6 +575,34 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # fragile (cross-language, content-noun collisions) and is no longer needed.
     # The full topic list ("topik apa aja") still routes via the regex/semantic
     # TOPIC_LIST path below.
+
+    # ── Semantic gate (Tier-0) — catch novel chit-chat the regex missed ─────
+    # Runs ONLY when the regex returned None (i.e. not already a chit-chat).
+    # When enabled (settings.intent_semantic_gate_enabled, default ON after
+    # 2026-06-17 calibration), the gate catches novel greeting/ambiguous
+    # phrasings the regex hasn't seen — and routes them to the no-retrieval
+    # bucket instead of KNOWLEDGE. Saves a Qdrant round-trip + a full
+    # CONVERSATIONAL_PROMPT pass on every catch.
+    #
+    # Cost: ~one fresh embed (cached on repeat) on the long-tail of queries
+    # the regex already filters out. The hot path (regex hits) is unaffected.
+    if _settings.intent_semantic_gate_enabled and rule_intent is None:
+        try:
+            from app.graph.intent_classifier import classify_semantic
+            gated_intent = await classify_semantic(user_msg_str)
+            if gated_intent is not None:
+                logger.info(
+                    f"Pre-processor: semantic gate → {gated_intent} "
+                    f"(regex miss, embedding gate caught it)"
+                )
+                return {
+                    "intent": gated_intent,
+                    "rewritten_query": user_msg_str,
+                    "retrieval_query": user_msg_str,
+                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                }
+        except Exception as exc:
+            logger.debug(f"semantic gate skipped: {exc}")
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):

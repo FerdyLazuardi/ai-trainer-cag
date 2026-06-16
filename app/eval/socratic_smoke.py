@@ -42,8 +42,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 import time
 from typing import Any
+
+# Force UTF-8 stdout on Windows (cp1252 can't encode ≤ → etc.)
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import httpx
 

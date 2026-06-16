@@ -123,8 +123,13 @@ with tab_overview:
     else:
         df_logs = pd.DataFrame(logs)
         if 'created_at' in df_logs.columns:
-            df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d/%m/%Y %H:%M:%S')
-        
+            # DB stores UTC (DateTime(timezone=True)); show in WIB/GMT+7.
+            df_logs['created_at'] = (
+                pd.to_datetime(df_logs['created_at'], utc=True)
+                .dt.tz_convert('Asia/Jakarta')
+                .dt.strftime('%d/%m/%Y %H:%M:%S')
+            )
+
         # Defensive programming: ensure new columns exist in case the backend API is outdated
         for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved']:
             if col not in df_logs.columns:
@@ -161,7 +166,12 @@ with tab_explorer:
     else:
         df_logs = pd.DataFrame(logs)
         if 'created_at' in df_logs.columns:
-            df_logs['created_at'] = pd.to_datetime(df_logs['created_at']).dt.strftime('%d/%m/%Y %H:%M:%S')
+            # DB stores UTC (DateTime(timezone=True)); show in WIB/GMT+7.
+            df_logs['created_at'] = (
+                pd.to_datetime(df_logs['created_at'], utc=True)
+                .dt.tz_convert('Asia/Jakarta')
+                .dt.strftime('%d/%m/%Y %H:%M:%S')
+            )
         if 'latency_ms' in df_logs.columns:
             df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         

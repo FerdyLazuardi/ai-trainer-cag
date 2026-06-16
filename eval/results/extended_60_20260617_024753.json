@@ -1,0 +1,923 @@
+{
+  "results": [
+    {
+      "n": 1,
+      "q": "berapa bunga Modal per bulan?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 11.77,
+      "in_tok": 2148,
+      "out_tok": 225,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu informasi soal bunga Pinjaman Modal per bulan di materi yang ada. Detail suku bunga biasanya tercantum di"
+    },
+    {
+      "n": 2,
+      "q": "pencairan Modal paling cepet berapa hari?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 3.36,
+      "in_tok": 2151,
+      "out_tok": 143,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Pencairan Pinjaman Modal biasanya 7–14 hari setelah survey. Kalau semua dokumen dan survei lancar, bisa dihitung mulai H"
+    },
+    {
+      "n": 3,
+      "q": "mitra boleh pinjam ke-2 kali ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.24,
+      "in_tok": 2151,
+      "out_tok": 261,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Boleh, Mitra bisa mengajukan pinjaman kedua selama total pinjaman aktifnya tidak melebihi Maximum Outstanding (MO), yait"
+    },
+    {
+      "n": 4,
+      "q": "MO dihitung dari apa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 9.65,
+      "in_tok": 2146,
+      "out_tok": 147,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "MO dihitung dari pendapatan mingguan mitra, umumnya sebesar 30%. Tujuannya agar mitra tidak terbebani cicilan berlebih d"
+    },
+    {
+      "n": 5,
+      "q": "kenapa MO 30% bukan 50%?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 10.26,
+      "in_tok": 2151,
+      "out_tok": 475,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "MO 30% ditetapkan untuk mencegah mitra terbebani cicilan berlebih dan menjaga keberlanjutan usahanya — angka ini umumnya"
+    },
+    {
+      "n": 6,
+      "q": "CP Amartha ikut standar siapa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.26,
+      "in_tok": 2149,
+      "out_tok": 324,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Materiku tidak menyebutkan standar eksternal spesifik yang diikuti Client Protection Amartha. Yang tercantum adalah 6 pr"
+    },
+    {
+      "n": 7,
+      "q": "syarat jadi mitra laki-laki boleh ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 5.79,
+      "in_tok": 2153,
+      "out_tok": 295,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, dari materi yang aku punya, syarat untuk produk Pinjaman Modal — produk utama Amartha — memang khusus untuk peremp"
+    },
+    {
+      "n": 8,
+      "q": "mitra boleh punya pembiayaan di tempat lain?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 9.99,
+      "in_tok": 2154,
+      "out_tok": 438,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, dari materi yang aku punya tidak ada informasi spesifik yang membahas apakah mitra boleh memiliki pembiayaan di le"
+    },
+    {
+      "n": 9,
+      "q": "FO boleh pegang uang mitra ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 19.01,
+      "in_tok": 2150,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": ""
+    },
+    {
+      "n": 10,
+      "q": "autodebit aktif kapan?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 4.83,
+      "in_tok": 2147,
+      "out_tok": 222,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu informasi soal autodebit di materi Amarthapedia yang ada. Coba periksa lagi — mungkin kamu bisa pakai kat"
+    },
+    {
+      "n": 11,
+      "q": "mitra telat bayar kena denda berapa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 8.0,
+      "in_tok": 2152,
+      "out_tok": 223,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, untuk nominal denda keterlambatan tidak aku temukan di materi Amarthapedia yang ada. Yang tercatat adalah prinsip "
+    },
+    {
+      "n": 12,
+      "q": "BMDP itu singkatan apa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 11.25,
+      "in_tok": 2148,
+      "out_tok": 375,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, aku belum nemu informasi soal singkatan BMDP di materi yang ada. Mungkin bisa kamu jelaskan konteksnya atau pastik"
+    },
+    {
+      "n": 13,
+      "q": "MUDHARABAH itu apa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 7.05,
+      "in_tok": 2148,
+      "out_tok": 191,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu informasi soal Mudharabah di materiku — istilah itu tidak ada di Amarthapedia yang aku akses. Mungkin kam"
+    },
+    {
+      "n": 14,
+      "q": "NPL bagusnya di bawah berapa persen?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.99,
+      "in_tok": 2152,
+      "out_tok": 353,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu angka spesifik soal batas NPL yang baik di materi yang tersedia. Biasanya standar industri keuangan mikro"
+    },
+    {
+      "n": 15,
+      "q": "SK Direksi no berapa soal pelecehan?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.78,
+      "in_tok": 2152,
+      "out_tok": 294,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu info nomor SK Direksi soal pelecehan di materiku. Yang ada baru prosedur pelaporannya — lewat WhatsApp Sa"
+    },
+    {
+      "n": 16,
+      "q": "Cabang Amartha ada di provinsi mana aja?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.03,
+      "in_tok": 2151,
+      "out_tok": 325,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, informasi tentang provinsi mana saja yang memiliki cabang Amartha tidak ada di materi yang aku punya. Coba gunakan"
+    },
+    {
+      "n": 17,
+      "q": "paket produk AmarthaLink apa aja?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 9.17,
+      "in_tok": 2149,
+      "out_tok": 250,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, dari materi yang aku punya belum ada informasi soal paket produk AmarthaLink. Coba cari dengan kata kunci lain ata"
+    },
+    {
+      "n": 18,
+      "q": "cek status pencairan lewat apa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 9.56,
+      "in_tok": 2149,
+      "out_tok": 437,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu info spesifik soal cara cek status pencairan di materiku, Mbak. Biasanya info status pencairan bisa kamu "
+    },
+    {
+      "n": 19,
+      "q": "Mitra telat 90 hari masuk kategori apa?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 4.33,
+      "in_tok": 2152,
+      "out_tok": 271,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, di materi Amarthapedia yang aku punya belum ada informasi spesifik soal kategori keterlambatan 90 hari (misalnya k"
+    },
+    {
+      "n": 20,
+      "q": "pengaduan ditindaklanjuti berapa lama?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 4.2,
+      "in_tok": 2153,
+      "out_tok": 130,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Setiap pengaduan akan ditindaklanjuti maksimal **7 hari kerja**."
+    },
+    {
+      "n": 21,
+      "q": "amartha kerja sama bri ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 5.63,
+      "in_tok": 2148,
+      "out_tok": 296,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Dari materi yang ada, aku belum nemu informasi tentang kerja sama Amartha dengan BRI. Coba cari pakai kata kunci lain ya"
+    },
+    {
+      "n": 22,
+      "q": "amartha bisa integrasi gopay?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 16.02,
+      "in_tok": 2149,
+      "out_tok": 312,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Di materi yang aku punya, belum ada informasi tentang integrasi Amartha dengan GoPay. Kalau kamu butuh tahu apakah fitur"
+    },
+    {
+      "n": 23,
+      "q": "cara daftar mitra yg ga punya rumah sendiri?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 7.93,
+      "in_tok": 2153,
+      "out_tok": 492,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Tidak ada syarat kepemilikan rumah dalam pendaftaran mitra Pinjaman Modal Amartha. Syaratnya: perempuan pelaku UMKM usia"
+    },
+    {
+      "n": 24,
+      "q": "mitra yg bekerja di pabrik boleh ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 5.63,
+      "in_tok": 2152,
+      "out_tok": 307,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, untuk **Pinjaman Modal**, targetnya spesifik untuk **ibu rumah tangga atau perempuan pelaku UMKM** yang memiliki u"
+    },
+    {
+      "n": 25,
+      "q": "amartha terdaftar di OJK?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 4.8,
+      "in_tok": 2149,
+      "out_tok": 209,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Amartha terdaftar dan diawasi oleh OJK (Otoritas Jasa Keuangan). Sayangnya, rincian nomor izin atau status spesifik pend"
+    },
+    {
+      "n": 26,
+      "q": "apakah amartha ada cabang di bali?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.58,
+      "in_tok": 2151,
+      "out_tok": 235,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu informasi soal cabang Amartha di Bali di materi yang ada. Coba cek langsung ke aplikasi atau tanyakan ke "
+    },
+    {
+      "n": 27,
+      "q": "apakah amartha bisa dicairkan di hari sabtu?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 7.8,
+      "in_tok": 2153,
+      "out_tok": 368,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Aku belum nemu info spesifik di materiku soal pencairan di hari Sabtu. Yang tercatat, pencairan Pinjaman Modal biasanya "
+    },
+    {
+      "n": 28,
+      "q": "amartha punya kerjasama dengan Telkom?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 7.63,
+      "in_tok": 2151,
+      "out_tok": 237,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Dari materi yang aku punya di Amarthapedia, nggak ada informasi soal kerja sama Amartha dengan Telkom. Coba pakai kata k"
+    },
+    {
+      "n": 29,
+      "q": "apakah modal amartha kena pajak?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.69,
+      "in_tok": 2150,
+      "out_tok": 360,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Belum ada informasi soal pajak untuk modal Amartha di Amarthapedia. Sebaiknya tanyakan langsung ke tim pajak atau branch"
+    },
+    {
+      "n": 30,
+      "q": "mitra boleh digabung dengan Bank Mandiri ga?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.37,
+      "in_tok": 2152,
+      "out_tok": 393,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, di materi yang aku punya belum ada info soal penggabungan atau kerja sama mitra Amartha dengan Bank Mandiri. Kalau"
+    },
+    {
+      "n": 31,
+      "q": "berita terbaru amartha hari ini",
+      "intent": "OFF_SCOPE",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 14.1,
+      "in_tok": 659,
+      "out_tok": 240,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:OFF_SCOPE->KNOWLEDGE"
+      ],
+      "answer_preview": "Maaf, aku nggak punya akses ke berita terbaru atau live update — informasiku terbatas pada konten Amarthapedia. Kalau ad"
+    },
+    {
+      "n": 32,
+      "q": "harga saham amartha",
+      "intent": "OFF_SCOPE",
+      "got": "OFF_SCOPE",
+      "route_ok": true,
+      "elapsed": 6.7,
+      "in_tok": 656,
+      "out_tok": 266,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, sebagai Learning & Development mentor, saya tidak memiliki akses ke data pasar saham real-time atau informasi harg"
+    },
+    {
+      "n": 33,
+      "q": "lowongan kerja di amartha",
+      "intent": "OFF_SCOPE",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 13.73,
+      "in_tok": 658,
+      "out_tok": 214,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:OFF_SCOPE->KNOWLEDGE"
+      ],
+      "answer_preview": "Untuk info lowongan kerja terbaru di Amartha, kamu bisa langsung cek di halaman karir resmi kita di **career.amartha.com"
+    },
+    {
+      "n": 34,
+      "q": "gaji field officer berapa",
+      "intent": "OFF_SCOPE",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 13.94,
+      "in_tok": 656,
+      "out_tok": 513,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:OFF_SCOPE->KNOWLEDGE"
+      ],
+      "answer_preview": "Gaji Field Officer di Amartha umumnya berkisar antara Rp4.000.000 hingga Rp6.000.000 per bulan, tergantung pada wilayah "
+    },
+    {
+      "n": 35,
+      "q": "cara apply jadi agent amarthalink",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 6.83,
+      "in_tok": 2148,
+      "out_tok": 318,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, dari materi yang ada, aku belum nemu info spesifik tentang cara apply jadi agent Amarthalink. Topik yang tercantum"
+    },
+    {
+      "n": 36,
+      "q": "apakah amartha buka cabang di papua?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 7.45,
+      "in_tok": 2152,
+      "out_tok": 191,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Maaf, dari materi yang aku punya, belum ada informasi soal pembukaan cabang Amartha di Papua. Untuk info lokasi cabang t"
+    },
+    {
+      "n": 37,
+      "q": "prodak modal bunga nya brp",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 11.69,
+      "in_tok": 2147,
+      "out_tok": 594,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Di materi yang aku punya untuk Pinjaman Modal, tidak disebutkan angka pasti untuk bunga atau bagi hasilnya. Informasi ya"
+    },
+    {
+      "n": 38,
+      "q": "amartha pakai uang kripto ga?",
+      "intent": "KNOWLEDGE",
+      "got": "OFF_SCOPE",
+      "route_ok": false,
+      "elapsed": 8.12,
+      "in_tok": 2151,
+      "out_tok": 272,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:KNOWLEDGE->OFF_SCOPE"
+      ],
+      "answer_preview": "Aku belum punya informasi di materi Amarthapedia soal penggunaan uang kripto di Amartha. Dari materi yang ada, fokus Ama"
+    },
+    {
+      "n": 39,
+      "q": "apakah ada cabang di jepang?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 8.25,
+      "in_tok": 2149,
+      "out_tok": 298,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Dari materi yang aku punya, nggak ada informasi soal cabang Amartha di Jepang. Amartha saat ini beroperasi di Indonesia "
+    },
+    {
+      "n": 40,
+      "q": "apakah amartha ada di korea?",
+      "intent": "KNOWLEDGE",
+      "got": "KNOWLEDGE",
+      "route_ok": true,
+      "elapsed": 5.47,
+      "in_tok": 2149,
+      "out_tok": 113,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [],
+      "answer_preview": "Tidak ada informasi di materi Amarthapedia yang menyebutkan kehadiran Amartha di Korea. Amartha berfokus pada pemberdaya"
+    },
+    {
+      "n": 41,
+      "q": "kok susah bgt dapet mitra baru",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 19.44,
+      "in_tok": 3893,
+      "out_tok": 442,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Coba inget-inget, selama ini pendekatan kamu pas nawarin Pinjaman Modal ke calon mitra baru tuh gimana? Mulai dari mana "
+    },
+    {
+      "n": 42,
+      "q": "aku udah coba tapi tetep ga bisa",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 15.97,
+      "in_tok": 3893,
+      "out_tok": 1086,
+      "flags": [],
+      "socr_fails": [
+        "no_question_in_loop"
+      ],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE",
+        "no_question_in_loop"
+      ],
+      "answer_preview": "Aku dengar kamu frustrasi. Coba jelaskan apa yang udah kamu coba dan bagian mana yang terasa mentok — aku bisa langsung "
+    },
+    {
+      "n": 43,
+      "q": "menurut ava gmn?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 10.67,
+      "in_tok": 3890,
+      "out_tok": 775,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Kita lagi bahas topik yang mana dari materi Amarthapedia? Coba inget-inget dulu — atau kalau mau langsung aku arahkan, b"
+    },
+    {
+      "n": 44,
+      "q": "berapa bunga modal?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 11.57,
+      "in_tok": 3889,
+      "out_tok": 486,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Aku belum nemu angka bunga spesifik untuk Pinjaman Modal di materi yang aku punya. Informasi yang tersedia mencakup fitu"
+    },
+    {
+      "n": 45,
+      "q": "apa itu NPL?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 21.17,
+      "in_tok": 3888,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "n": 46,
+      "q": "produk Amartha apa aja?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 20.73,
+      "in_tok": 3890,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "n": 47,
+      "q": "ribet bgt, kasih tau aja caranya",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 18.72,
+      "in_tok": 3895,
+      "out_tok": 686,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Oke, ini dia caranya. Ada 4 jalur pengaduan nasabah di Amartha:\n\n1. **Field Officer (FO)** setempat — langsung ke petuga"
+    },
+    {
+      "n": 48,
+      "q": "bodo amat, langsung jawab",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 10.63,
+      "in_tok": 3891,
+      "out_tok": 545,
+      "flags": [],
+      "socr_fails": [
+        "forbidden:?",
+        "frustration_has_qmark"
+      ],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE",
+        "forbidden:?",
+        "frustration_has_qmark"
+      ],
+      "answer_preview": "Oke, langsung.\n\n**Client Protection** adalah prinsip perlindungan nasabah yang menjamin perlakuan adil dan transparan da"
+    },
+    {
+      "n": 49,
+      "q": "btw kenapa langit biru?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 3.86,
+      "in_tok": 3891,
+      "out_tok": 158,
+      "flags": [],
+      "socr_fails": [
+        "no_question_in_loop"
+      ],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE",
+        "no_question_in_loop"
+      ],
+      "answer_preview": "Wah, menarik juga pertanyaannya. Tapi sayangnya aku di sini khusus buat bantu soal pekerjaan dan materi Amarthapedia aja"
+    },
+    {
+      "n": 50,
+      "q": "oke",
+      "intent": "COACHING",
+      "got": "AMBIGUOUS",
+      "route_ok": false,
+      "elapsed": 7.59,
+      "in_tok": 3885,
+      "out_tok": 317,
+      "flags": [],
+      "socr_fails": [
+        "no_question_in_loop"
+      ],
+      "all_fails": [
+        "route:COACHING->AMBIGUOUS",
+        "no_question_in_loop"
+      ],
+      "answer_preview": "Oke, berarti udah clear soal Maximum Outstanding.\n\nKalau ada aspek lain yang pengen kamu dalemin — misalnya gimana penga"
+    },
+    {
+      "n": 51,
+      "q": "trs?",
+      "intent": "COACHING",
+      "got": "AMBIGUOUS",
+      "route_ok": false,
+      "elapsed": 15.28,
+      "in_tok": 3886,
+      "out_tok": 493,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->AMBIGUOUS"
+      ],
+      "answer_preview": "Oke, kita udah bahas transparansi produk ya. Sekarang, kira-kira prinsip Client Protection apa lagi yang paling relevan "
+    },
+    {
+      "n": 52,
+      "q": "bingung",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 22.08,
+      "in_tok": 3886,
+      "out_tok": 1232,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Bingung soal apa, nih? Coba ceritain — soal materi Amarthapedia, kerjaan, atau yang lain? Nanti kita cari jalan keluarny"
+    },
+    {
+      "n": 53,
+      "q": "hah?",
+      "intent": "COACHING",
+      "got": "AMBIGUOUS",
+      "route_ok": false,
+      "elapsed": 27.87,
+      "in_tok": 3886,
+      "out_tok": 2292,
+      "flags": [],
+      "socr_fails": [
+        "no_question_in_loop"
+      ],
+      "all_fails": [
+        "route:COACHING->AMBIGUOUS",
+        "no_question_in_loop"
+      ],
+      "answer_preview": "Aku dengar kamu frustrasi. Langsung aja.\n\nClient Protection (Perlindungan Nasabah) adalah prinsip-prinsip yang menjamin "
+    },
+    {
+      "n": 54,
+      "q": "coba jelasin ulang soal MO",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 8.96,
+      "in_tok": 3893,
+      "out_tok": 727,
+      "flags": [],
+      "socr_fails": [
+        "no_question_in_loop"
+      ],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE",
+        "no_question_in_loop"
+      ],
+      "answer_preview": "MO (Maximum Outstanding) adalah batas maksimal total pinjaman yang bisa dimiliki seorang mitra dalam satu waktu. Perhitu"
+    },
+    {
+      "n": 55,
+      "q": "makasih udah cukup",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 6.52,
+      "in_tok": 3890,
+      "out_tok": 443,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Sama-sama. Kalau butuh diskusi lagi nanti, tinggal hubungi aku."
+    },
+    {
+      "n": 56,
+      "q": "ga tau aku males mikir",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 18.51,
+      "in_tok": 3889,
+      "out_tok": 1892,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Oke, aku langsung jelasin. Dari materi yang ada, ini intinya:\n\n**Client Protection** — 6 prinsip perlindungan nasabah: p"
+    },
+    {
+      "n": 57,
+      "q": "udah, stop",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 15.47,
+      "in_tok": 3887,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "n": 58,
+      "q": "apa beda NPL sama PAR?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 14.33,
+      "in_tok": 3891,
+      "out_tok": 900,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": "Aku belum nemu materi tentang NPL (Non-Performing Loan) dan PAR (Portfolio at Risk) di Amarthapedia yang tersedia. Dua i"
+    },
+    {
+      "n": 59,
+      "q": "kapan mitra disebut macet?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 20.92,
+      "in_tok": 3893,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "n": 60,
+      "q": "apa itu UK?",
+      "intent": "COACHING",
+      "got": "KNOWLEDGE",
+      "route_ok": false,
+      "elapsed": 21.1,
+      "in_tok": 3887,
+      "out_tok": 600,
+      "flags": [],
+      "socr_fails": [],
+      "all_fails": [
+        "route:COACHING->KNOWLEDGE"
+      ],
+      "answer_preview": ""
+    }
+  ],
+  "summary": {
+    "n": 60,
+    "route_ok": 36,
+    "halu": 0,
+    "socr_fail": 6,
+    "p50_lat": 8.96,
+    "avg_lat": 10.72,
+    "p95_lat": 21.17,
+    "total_in": 157832,
+    "total_out": 27681
+  }
+}
