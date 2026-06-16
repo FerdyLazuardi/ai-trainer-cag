@@ -24,6 +24,18 @@
         <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
     </button>
 
+    <!-- Pending-response popup. Shows the latest AI answer ABOVE the FAB when
+         the chatbox is closed at done-time. Single slot — new responses
+         REPLACE the previous preview, not stack. -->
+    <div id="ava-popup" class="ava-popup" hidden>
+        <div class="ava-popup-body">
+            <div class="ava-popup-text"></div>
+            <button class="ava-popup-close" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
     <div id="chat-box" class="animate__animated">
         <div id="chat-header">
             <div class="header-info">
@@ -36,14 +48,8 @@
             <div style="display:flex; gap:20px; align-items:center;">
                 <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat"
                     style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur"
-                    style="background:none; border:none; padding:0; cursor:pointer; color:white; font-size:14px; opacity:0.85; line-height:1; background-color:transparent;">
-                    <span class="kebab-icon-stack">
-                        <i class="fas fa-wand-magic-sparkles kebab-icon-slot kebab-icon-1"></i>
-                        <i class="fas fa-star kebab-icon-slot kebab-icon-2"></i>
-                        <i class="fas fa-bolt kebab-icon-slot kebab-icon-3"></i>
-                        <i class="fas fa-gem kebab-icon-slot kebab-icon-4"></i>
-                    </span>
+                <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur">
+                    <i class="fas fa-bars"></i>
                 </button>
             </div>
         </div>
@@ -55,13 +61,32 @@
         <div id="chat-messages"></div>
 
         <div id="chat-input">
-            <button class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
+            <button id="topics-btn" class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
                 <i class="fas fa-list-ul"></i>
             </button>
             <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
-            <button class="send-btn" onclick="handleSendClick()">
+            <button id="send-btn" class="send-btn" onclick="handleSendClick()">
                 <i class="fas fa-paper-plane"></i>
             </button>
+        </div>
+    </div>
+
+    <!-- ═══ ONBOARDING TUTORIAL ═══
+         4-step tour, first-time only (localStorage.ava_tour_done).
+         Dark overlay with SVG-mask rounded-rect HOLE around the target
+         step. Cutout area is fully visible (no dim) — target's natural
+         colors show through. Step tooltip floats next to the cutout. -->
+    <div id="ava-tour-overlay" class="ava-tour-overlay" hidden></div>
+    <div id="ava-tour-cutout" class="ava-tour-cutout" hidden></div>
+    <div id="ava-tour-tooltip" class="ava-tour-tooltip" hidden>
+        <strong id="ava-tour-title"></strong>
+        <div id="ava-tour-body"></div>
+        <div class="ava-tour-actions">
+            <div class="ava-tour-dots" id="ava-tour-dots"></div>
+            <div>
+                <button id="ava-tour-skip" class="ava-tour-btn ava-tour-btn-ghost">Skip</button>
+                <button id="ava-tour-next" class="ava-tour-btn ava-tour-btn-primary">Lanjut →</button>
+            </div>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

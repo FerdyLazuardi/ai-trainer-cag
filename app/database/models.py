@@ -140,6 +140,12 @@ class UserProfile(Base):
     preferred_tone: Mapped[str] = mapped_column(String(64), nullable=True)
     formatting_pref: Mapped[str] = mapped_column(String(64), nullable=True)
     custom_instructions: Mapped[str] = mapped_column(Text, nullable=True)
+    # First-run onboarding tour: set once when the user finishes (or skips) the
+    # tour. NULL = never seen it. DB-backed (not localStorage) so the tour shows
+    # exactly once per Moodle user, even across browsers/devices.
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

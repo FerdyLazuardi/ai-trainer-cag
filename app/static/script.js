@@ -20,6 +20,16 @@
             <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
         </button>
 
+        <!-- Pending-response popup (see index.html for full comment) -->
+        <div id="ava-popup" class="ava-popup" hidden>
+            <div class="ava-popup-body">
+                <div class="ava-popup-text"></div>
+                <button class="ava-popup-close" title="Dismiss">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
         <div id="chat-box" class="animate__animated">
             <div id="chat-header">
                 <div class="header-info">
@@ -31,14 +41,8 @@
                 </div>
                 <div style="display:flex; gap:20px; align-items:center;">
                     <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                    <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur"
-                        style="background:none; border:none; padding:0; cursor:pointer; color:white; font-size:14px; opacity:0.85; line-height:1; background-color:transparent;">
-                        <span class="kebab-icon-stack">
-                            <i class="fas fa-wand-magic-sparkles kebab-icon-slot kebab-icon-1"></i>
-                            <i class="fas fa-star kebab-icon-slot kebab-icon-2"></i>
-                            <i class="fas fa-bolt kebab-icon-slot kebab-icon-3"></i>
-                            <i class="fas fa-gem kebab-icon-slot kebab-icon-4"></i>
-                        </span>
+                    <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur">
+                        <i class="fas fa-bars"></i>
                     </button>
                 </div>
             </div>
@@ -49,13 +53,28 @@
 
             <div id="chat-messages"></div>
             <div id="chat-input">
-                <button class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
+                <button id="topics-btn" class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
                     <i class="fas fa-list-ul"></i>
                 </button>
                 <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
-                <button class="send-btn" onclick="handleSendClick()">
+                <button id="send-btn" class="send-btn" onclick="handleSendClick()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
+            </div>
+        </div>
+
+        <!-- Onboarding tutorial elements (see index.html for full comment) -->
+        <div id="ava-tour-overlay" class="ava-tour-overlay" hidden></div>
+        <div id="ava-tour-cutout" class="ava-tour-cutout" hidden></div>
+        <div id="ava-tour-tooltip" class="ava-tour-tooltip" hidden>
+            <strong id="ava-tour-title"></strong>
+            <div id="ava-tour-body"></div>
+            <div class="ava-tour-actions">
+                <div class="ava-tour-dots" id="ava-tour-dots"></div>
+                <div>
+                    <button id="ava-tour-skip" class="ava-tour-btn ava-tour-btn-ghost">Skip</button>
+                    <button id="ava-tour-next" class="ava-tour-btn ava-tour-btn-primary">Lanjut →</button>
+                </div>
             </div>
         </div>
     `;
@@ -86,7 +105,7 @@ const _menuItems = [
     {
         id: "coaching",
         label: "Coaching",
-        desc: "Pancing kamu mikir",
+        desc: "Brainstrom bareng AVA",
         type: "toggle",
         value: false,
         onChange: (v) => setCoaching(v, true),
@@ -96,6 +115,19 @@ const _menuItems = [
         label: "Roleplay",
         desc: "Latihan simulasi",
         type: "placeholder",
+    },
+    {
+        id: "panduan",
+        label: "Panduan",
+        desc: "Lihat tutorial lagi",
+        type: "action",
+        onClick: () => {
+            // Menu is already closed by the wire-up handler. Replay the tour
+            // (force=true skips the "already seen" gate).
+            const btn = document.getElementById("kebab-btn");
+            if (btn) btn.classList.remove("menu-open");
+            maybeStartTour(true);
+        },
     },
 ];
 
@@ -116,6 +148,17 @@ function _renderKebabMenu() {
                 </label>
             `;
         }
+        if (item.type === "action") {
+            return `
+                <div class="kebab-item kebab-item-action" data-id="${item.id}">
+                    <div class="kebab-item-label">
+                        <span class="kebab-item-title">${item.label}</span>
+                        ${item.desc ? `<span class="kebab-item-desc">${item.desc}</span>` : ""}
+                    </div>
+                    <i class="fas fa-circle-question kebab-item-icon"></i>
+                </div>
+            `;
+        }
         // placeholder
         return `
             <div class="kebab-item kebab-item-placeholder" data-id="${item.id}">
@@ -128,19 +171,27 @@ function _renderKebabMenu() {
         `;
     }).join("");
 
-    // Wire up toggle handlers
+    // Wire up handlers (toggle switches + action rows)
     menu.querySelectorAll(".kebab-item").forEach((el) => {
         const id = el.dataset.id;
         const item = _menuItems.find((i) => i.id === id);
-        if (!item || item.type !== "toggle") return;
-        const sw = el.querySelector(".kebab-switch");
-        if (!sw) return;
-        sw.addEventListener("click", (e) => {
-            e.stopPropagation();
-            item.value = !item.value;
-            sw.classList.toggle("on", item.value);
-            item.onChange && item.onChange(item.value);
-        });
+        if (!item) return;
+        if (item.type === "toggle") {
+            const sw = el.querySelector(".kebab-switch");
+            if (!sw) return;
+            sw.addEventListener("click", (e) => {
+                e.stopPropagation();
+                item.value = !item.value;
+                sw.classList.toggle("on", item.value);
+                item.onChange && item.onChange(item.value);
+            });
+        } else if (item.type === "action") {
+            el.addEventListener("click", (e) => {
+                e.stopPropagation();
+                _closeKebabMenu(menu);
+                item.onClick && item.onClick();
+            });
+        }
     });
 }
 
@@ -151,12 +202,9 @@ function _closeKebabMenu(menu) {
     if (!menu || menu.hidden) return;
     menu.classList.remove("opening");
     menu.classList.add("closing");
-    // Glow resumes AFTER the close anim finishes (else it pops back mid-fade)
-    const btn = document.getElementById("kebab-btn");
     setTimeout(() => {
         menu.classList.remove("closing");
         menu.hidden = true;
-        if (btn) btn.classList.remove("menu-open");
     }, KEBAB_OUT_MS);
 }
 
@@ -164,7 +212,6 @@ function toggleKebabMenu(e) {
     if (e) e.stopPropagation();
     const menu = document.getElementById("kebab-menu");
     if (!menu) return;
-    const btn = document.getElementById("kebab-btn");
     const isOpen = !menu.hidden;
     if (isOpen) {
         // Close with reverse anim
@@ -173,17 +220,15 @@ function toggleKebabMenu(e) {
         setTimeout(() => {
             menu.classList.remove("closing");
             menu.hidden = true;
-            if (btn) btn.classList.remove("menu-open");
         }, KEBAB_OUT_MS);
     } else {
         // Open: render content, then play IN animation. Removing [hidden]
         // first lets the .opening class trigger the keyframe from the
-        // initial state (opacity 0, translateY -8px). Pause the glow while
-        // the menu is open — the icon is "claimed" until it closes again.
+        // initial state (opacity 0, translateY -8px). Icon animation
+        // (cycle + glow + pulse) keeps running — see style.css: always-on.
         _renderKebabMenu();
         menu.hidden = false;
         menu.classList.remove("closing");
-        if (btn) btn.classList.add("menu-open");
         // Force reflow so the animation restarts cleanly each time
         void menu.offsetWidth;
         menu.classList.add("opening");
@@ -197,6 +242,30 @@ document.addEventListener("click", (e) => {
     if (!menu || menu.hidden) return;
     if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
     _closeKebabMenu(menu);
+});
+
+// ── Pending popup click handlers ──
+// Click the popup body → open the chatbox (the answer is already streamed
+// into the chat, but the user might have closed it mid-stream — re-opening
+// shows the full bubble). Click × → just dismiss.
+document.addEventListener("click", (e) => {
+    const popup = document.getElementById("ava-popup");
+    if (!popup || popup.hidden) return;
+
+    // × button: dismiss only, don't open chat
+    if (e.target.closest(".ava-popup-close")) {
+        e.stopPropagation();
+        dismissPendingPopup();
+        return;
+    }
+    // Anywhere else on popup: open chat + dismiss
+    if (popup.contains(e.target)) {
+        if (_isChatboxHidden()) {
+            toggleChat();
+        } else {
+            dismissPendingPopup();
+        }
+    }
 });
 
 // Anchor the coaching tab to the chatbox's left edge. Re-run on resize
@@ -536,6 +605,10 @@ function offerExplicitCoaching() {
     _renderCoachOffer("Siap! Aku bisa pandu kamu mikir step by step. Aktifin mode Coaching sekarang?");
 }
 
+function _isChatboxHidden() {
+    return chatBox.style.display === "none" || chatBox.style.display === "";
+}
+
 // message) and re-ask their last question in mentoring mode so the answer
 // continues straight into Socratic coaching ON THAT topic — not a reset to
 // "apa yang bikin kamu bingung?". skipBubble: the question is already shown
@@ -554,11 +627,104 @@ function acceptCoachingOffer() {
     }
 }
 
+// ── Pending-response popup ────────────────────────────────────────────────────
+// Shown ABOVE the FAB when the AI finishes answering while the chatbox is
+// closed. Single slot: each new pending response REPLACES the previous preview
+// (no stacking, no queue). FAB pulse intensifies (6s → 1.8s) so the
+// "something's waiting" cue is multi-channel.
+//
+// Triggers:
+//   - SSE `done` event fires while chatbox is hidden → showPendingPopup(text)
+//   - User clicks popup (anywhere) OR × button → open chatbox + dismiss
+//   - 12s idle → auto-dismiss (popup fades, FAB returns to normal pulse)
+//   - User manually opens chatbox (toggleChat) → also dismiss in case still up
+const POPUP_AUTO_HIDE_MS = 12000;
+let _popupHideTimer = null;
+
+function _stripMarkdownForPreview(text) {
+    // Crude but safe enough for a 2-line preview. Strips code fences, links,
+    // headers, list bullets, bold/italic markers. We DON'T use marked.parse()
+    // here because we'd be parsing into HTML and the popup-text is plain text
+    // (we want it to inherit font + word-break from the popup, not bubble styles).
+    if (!text) return "";
+    return text
+        .replace(/```[\s\S]*?```/g, "")           // code blocks
+        .replace(/`([^`]+)`/g, "$1")              // inline code
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, "")     // images
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")  // links → text only
+        .replace(/^#+\s+/gm, "")                  // headers
+        .replace(/^\s*[-*+]\s+/gm, "")            // list bullets
+        .replace(/^\s*\d+\.\s+/gm, "")            // ordered list
+        .replace(/\*\*([^*]+)\*\*/g, "$1")        // bold
+        .replace(/\*([^*]+)\*/g, "$1")            // italic
+        .replace(/__([^_]+)__/g, "$1")            // bold (underscore)
+        .replace(/_([^_]+)_/g, "$1")              // italic (underscore)
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function showPendingPopup(fullText) {
+    const popup = document.getElementById("ava-popup");
+    const fab = document.getElementById("chat-toggle");
+    if (!popup || !fab) return;
+
+    // Render preview (strip markdown, clamp via CSS line-clamp to 2 lines)
+    const preview = _stripMarkdownForPreview(fullText);
+    const textEl = popup.querySelector(".ava-popup-text");
+    if (textEl) textEl.textContent = preview || "(Ava udah jawab — buka chat buat liat)";
+
+    // Reveal with IN animation. If was hidden, set hidden=false then re-add class.
+    popup.classList.remove("fadeout");
+    popup.hidden = false;
+    // Force reflow so animation restarts cleanly on re-show
+    void popup.offsetWidth;
+
+    // Intensify FAB pulse (6s → 1.8s). This also overrides the regular
+    // .pulse class — they're mutually exclusive, .intensify wins.
+    fab.classList.remove("pulse");
+    fab.classList.add("intensify");
+
+    // Reset the auto-hide timer
+    if (_popupHideTimer) clearTimeout(_popupHideTimer);
+    _popupHideTimer = setTimeout(() => {
+        dismissPendingPopup();
+    }, POPUP_AUTO_HIDE_MS);
+}
+
+function dismissPendingPopup() {
+    const popup = document.getElementById("ava-popup");
+    const fab = document.getElementById("chat-toggle");
+    if (!popup || popup.hidden) return;
+
+    if (_popupHideTimer) {
+        clearTimeout(_popupHideTimer);
+        _popupHideTimer = null;
+    }
+
+    // Fade out then hide
+    popup.classList.add("fadeout");
+    setTimeout(() => {
+        popup.classList.remove("fadeout");
+        popup.hidden = true;
+    }, 220);
+
+    // Restore normal FAB pulse
+    if (fab) {
+        fab.classList.remove("intensify");
+        // Re-add the standard pulse so the icon feels "alive" again
+        fab.classList.add("pulse");
+    }
+}
+
 function toggleChat() {
     const toggleBtn = document.getElementById("chat-toggle");
 
     if (chatBox.style.display === "none" || chatBox.style.display === "") {
         // ===== OPEN =====
+        // Opening the chatbox also dismisses any pending popup — the user is
+        // looking at the full chat now, the popup is redundant.
+        dismissPendingPopup();
+
         chatBox.style.display = "flex";
         chatBox.classList.remove("animate__fadeOutDown");
         chatBox.classList.add("animate__fadeInUp");
@@ -632,7 +798,7 @@ function showIntro() {
     welcome.innerHTML = `
         <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
         <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
-        <div class="ava-chips">
+        <div class="ava-chips" id="ava-welcome-chips">
             <button class="ava-chip" onclick="chipTopik()">
                 <i class="fas fa-layer-group"></i> Topik
             </button>
@@ -814,9 +980,9 @@ function getSessionId() {
                 : '';
             return s || fallback;
         };
-        const nama  = slug(typeof MOODLE_USER_NAME !== 'undefined' ? MOODLE_USER_NAME : '', 'user');
-        const dept  = slug(typeof MOODLE_DEPT       !== 'undefined' ? MOODLE_DEPT       : '', 'general');
-        const point = slug(typeof MOODLE_POINT      !== 'undefined' ? MOODLE_POINT      : '', 'na');
+        const nama = slug(typeof MOODLE_USER_NAME !== 'undefined' ? MOODLE_USER_NAME : '', 'user');
+        const dept = slug(typeof MOODLE_DEPT !== 'undefined' ? MOODLE_DEPT : '', 'general');
+        const point = slug(typeof MOODLE_POINT !== 'undefined' ? MOODLE_POINT : '', 'na');
         return `${MOODLE_USER_ID}_${nama}_${dept}_${point}`;
     }
     let sid = sessionStorage.getItem("ava_sid");
@@ -1021,7 +1187,8 @@ async function send(presetText, opts) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                finalizeStreamBubble(contentDiv, bubble, _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊");
+                const finalText = _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
+                finalizeStreamBubble(contentDiv, bubble, finalText);
                 // Auto-hook: after the answer lands, offer mentoring. Backend
                 // signal (_suggestCoaching) is authoritative when present;
                 // regex _looksReflective is the fallback when it's absent.
@@ -1031,6 +1198,15 @@ async function send(presetText, opts) {
                 // (with 1-2 graceful topic shifts before the streak fully
                 // resets), offer to go deeper on that topic.
                 maybeOfferCoachingByTopicStreak(text, _doneSources);
+                // Pending-response popup: if the chatbox was closed BEFORE the
+                // answer finished streaming, show the answer as a popup above
+                // the FAB. This is the "user walked away while Ava was typing"
+                // case — they come back, FAB is pulsing fast, popup shows the
+                // answer preview, click → opens chatbox to full answer.
+                // Skip the empty-answer fallback (no point popping up an error).
+                if (_targetText && _isChatboxHidden()) {
+                    showPendingPopup(finalText);
+                }
             }
         }
 
@@ -1241,3 +1417,355 @@ if (promptNode) {
         this.style.height = (this.scrollHeight) + "px";
     });
 }
+
+// ════════════════════════════════════════════════════════════════════
+// ONBOARDING TUTORIAL — 4-step, first-time only
+// ════════════════════════════════════════════════════════════════════
+// Shown ONCE per browser (track via localStorage.ava_tour_done). Triggers
+// automatically the first time the user opens the chatbox. Each step has:
+//   - title: short label
+//   - body: 1-2 sentence explanation
+//   - target: CSS selector for the element to spotlight
+//   - anchor: tooltip position relative to cutout ("below"/"above"/"left")
+//
+// The visual: a single dark overlay (rgba 15,23,42,0.62) with an SVG-mask
+// rounded-rect HOLE around the target element. The cutout area is fully
+// visible (no dim, no border). A small tooltip card floats next to the
+// cutout with prev/next/skip navigation.
+
+// Per-USER key (not per-browser) so the tour shows once for each user even
+// when several people log into the same browser (e.g. shared Moodle kiosk).
+// Falls back to a generic key when no Moodle user id is present.
+function _tourStorageKey() {
+    if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
+        return `ava_tour_done_${MOODLE_USER_ID}`;
+    }
+    return "ava_tour_done";
+}
+const TOUR_CUTOUT_RADIUS = 8;
+
+const tourSteps = [
+    {
+        title: "Fitur",
+        body: "Klik ikon ☰ di pojok kanan atas buat akses mode Coaching & fitur spesial lainnya.",
+        target: "#kebab-btn",
+        anchor: "left",
+    },
+    {
+        title: "Akses cepat",
+        body: "Cek daftar materi Amarthapedia atau aktifkan mode Coaching buat aku pandu kamu mikir.",
+        target: "#ava-welcome-chips",
+        anchor: "below",
+    },
+    {
+        title: "Topic list & materi",
+        body: "Klik ikon daftar di sebelah kiri kolom chat buat liat semua topik & materi lengkap yang tersedia di Amarthapedia.",
+        target: "#topics-btn",
+        anchor: "above",
+    },
+    {
+        title: "Ngobrol sama Ava",
+        body: "Tulis pertanyaanmu di sini, lalu tekan Enter atau klik tombol kirim buat mulai percakapan.",
+        // Span from the input box to the send button (skips topics-btn
+        // on the far left). spanTargets unions the two elements' rects.
+        spanTargets: ["#prompt", "#send-btn"],
+        anchor: "above",
+    },
+];
+
+let tourStep = 0;
+let tourActive = false;
+
+const tourOverlay = document.getElementById("ava-tour-overlay");
+const tourCutout = document.getElementById("ava-tour-cutout");
+const tourTooltip = document.getElementById("ava-tour-tooltip");
+const tourTitle = document.getElementById("ava-tour-title");
+const tourBody = document.getElementById("ava-tour-body");
+const tourDots = document.getElementById("ava-tour-dots");
+const tourNext = document.getElementById("ava-tour-next");
+const tourSkip = document.getElementById("ava-tour-skip");
+
+// Build step dots once (4 dots)
+if (tourDots) {
+    tourDots.innerHTML = tourSteps
+        .map((_, i) => `<div class="ava-tour-dot${i === 0 ? " active" : ""}"></div>`)
+        .join("");
+}
+
+function _getTourTargetRect(step) {
+    let r;
+    // spanTargets: union the bounding boxes of multiple elements (e.g.
+    // input box → send button) so the cutout wraps them all.
+    if (step.spanTargets) {
+        const rects = step.spanTargets
+            .map((sel) => document.querySelector(sel))
+            .filter(Boolean)
+            .map((el) => el.getBoundingClientRect());
+        if (!rects.length) return null;
+        const top = Math.min(...rects.map((x) => x.top));
+        const left = Math.min(...rects.map((x) => x.left));
+        const right = Math.max(...rects.map((x) => x.right));
+        const bottom = Math.max(...rects.map((x) => x.bottom));
+        r = { top, left, width: right - left, height: bottom - top };
+    } else {
+        const el = document.querySelector(step.target);
+        if (!el) return null;
+        r = el.getBoundingClientRect();
+    }
+    const padding = 4;
+    // trimLeft / trimRight (0..1): cut out the left/right X% of the
+    // bounding box. extendUp (px): add N pixels to the top of the
+    // bounding box (useful for the kebab-btn so the cutout extends up
+    // into the header bar).
+    const trimLeftFrac = step.trimLeft || 0;
+    const trimRightFrac = step.trimRight || 0;
+    const trimLeftPx = r.width * trimLeftFrac;
+    const trimRightPx = r.width * trimRightFrac;
+    const extendUpPx = step.extendUp || 0;
+    return {
+        top: r.top - padding - extendUpPx,
+        left: r.left - padding + trimLeftPx,
+        width: r.width + padding * 2 - trimLeftPx - trimRightPx,
+        height: r.height + padding * 2 + extendUpPx,
+    };
+}
+
+function _setTourOverlayMask(rect) {
+    // Build inline SVG mask: white full-cover minus black rounded-rect hole.
+    // SVG is parsed as XML, so internal references use #m (not %23m).
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const x = rect.left;
+    const y = rect.top;
+    const w = rect.width;
+    const h = rect.height;
+    const r = TOUR_CUTOUT_RADIUS;
+    const svg =
+        "<svg xmlns='http://www.w3.org/2000/svg' width='" + W + "' height='" + H +
+        "' viewBox='0 0 " + W + " " + H + "'>" +
+        "<defs><mask id='m' maskUnits='userSpaceOnUse'>" +
+        "<rect x='0' y='0' width='" + W + "' height='" + H + "' fill='white'/>" +
+        "<rect x='" + x + "' y='" + y + "' width='" + w + "' height='" + h +
+        "' rx='" + r + "' ry='" + r + "' fill='black'/>" +
+        "</mask></defs>" +
+        "<rect x='0' y='0' width='" + W + "' height='" + H + "' fill='black' mask='url(#m)'/>" +
+        "</svg>";
+    const dataUrl = "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+    tourOverlay.style.webkitMaskImage = "url(\"" + dataUrl + "\")";
+    tourOverlay.style.maskImage = "url(\"" + dataUrl + "\")";
+    tourOverlay.style.webkitMaskSize = W + "px " + H + "px";
+    tourOverlay.style.maskSize = W + "px " + H + "px";
+    tourOverlay.style.webkitMaskRepeat = "no-repeat";
+    tourOverlay.style.maskRepeat = "no-repeat";
+    tourOverlay.style.webkitMaskPosition = "0 0";
+    tourOverlay.style.maskPosition = "0 0";
+}
+
+function _positionTourCutout(rect) {
+    tourCutout.style.top = rect.top + "px";
+    tourCutout.style.left = rect.left + "px";
+    tourCutout.style.width = rect.width + "px";
+    tourCutout.style.height = rect.height + "px";
+}
+
+function _positionTourTooltip(rect, anchor) {
+    const ttW = 260;
+    const ttH = 140; // approx
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const margin = 10;
+    let ttLeft, ttTop;
+
+    if (anchor === "above") {
+        if (rect.top - ttH - margin < 0) {
+            ttTop = rect.top + rect.height + margin;
+        } else {
+            ttTop = rect.top - ttH - margin;
+        }
+    } else if (anchor === "left") {
+        ttTop = rect.top + rect.height / 2 - ttH / 2;
+        ttLeft = rect.left - ttW - margin;
+        if (ttLeft < margin) ttLeft = rect.left + rect.width + margin;
+    } else {
+        // below (default)
+        if (rect.top + rect.height + ttH + margin > H) {
+            ttTop = rect.top - ttH - margin;
+        } else {
+            ttTop = rect.top + rect.height + margin;
+        }
+        ttLeft = rect.left + rect.width / 2 - ttW / 2;
+    }
+    if (anchor !== "left") {
+        ttLeft = Math.max(margin, Math.min(ttLeft, W - ttW - margin));
+    }
+    // Always clamp vertically so the tooltip never spills off the top
+    // (was happening on mobile for the "left"-anchored step 1 near the
+    // header) or bottom of the viewport.
+    ttTop = Math.max(margin, Math.min(ttTop, H - ttH - margin));
+    tourTooltip.style.top = ttTop + "px";
+    tourTooltip.style.left = ttLeft + "px";
+}
+
+function showTourStep(step) {
+    if (!tourSteps[step]) {
+        hideTour();
+        return;
+    }
+    tourStep = step;
+    const s = tourSteps[step];
+    tourTitle.textContent = s.title;
+    tourBody.textContent = s.body;
+    // Update dots
+    Array.from(tourDots.children).forEach((d, i) => {
+        d.classList.toggle("active", i === step);
+    });
+    // Update button label
+    tourNext.textContent = step === tourSteps.length - 1 ? "Selesai ✓" : "Lanjut →";
+
+    // Wait a frame so layout is settled (especially for welcome chips
+    // which are rendered async after showIntro).
+    requestAnimationFrame(() => {
+        const rect = _getTourTargetRect(s);
+        if (!rect) { hideTour(); return; }
+        _setTourOverlayMask(rect);
+        _positionTourCutout(rect);
+        _positionTourTooltip(rect, s.anchor);
+
+        tourOverlay.hidden = false;
+        tourCutout.hidden = false;
+        tourTooltip.hidden = false;
+    });
+}
+
+// Build base URL + headers for the onboarding endpoints, matching the
+// convention used by chipTopik/openSectionPanel (ngrok header + bearer JWT).
+function _tourApiBase() {
+    return (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+}
+function _tourApiHeaders() {
+    const h = { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) h["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    return h;
+}
+
+function hideTour() {
+    tourActive = false;
+    tourOverlay.hidden = true;
+    tourCutout.hidden = true;
+    tourTooltip.hidden = true;
+    // Persist "seen" to the DB (follows the user across devices). localStorage
+    // is kept as a same-device fast-path so a network blip doesn't re-show the
+    // tour before the POST lands.
+    try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) {}
+    fetch(`${_tourApiBase()}/api/v1/user/onboarding/complete`, {
+        method: "POST",
+        headers: _tourApiHeaders(),
+    }).catch((e) => console.warn("onboarding complete POST failed:", e));
+}
+
+// force=true skips the "seen already" gate — used by the kebab menu's
+// "Panduan" item so the user can replay the tour any time.
+function maybeStartTour(force) {
+    if (tourActive) return;
+    if (force) {
+        _beginTour();
+        return;
+    }
+    // Same-device fast-path: if we already marked it seen locally, skip the
+    // round-trip entirely.
+    try {
+        if (localStorage.getItem(_tourStorageKey()) === "1") return;
+    } catch (e) { /* localStorage unavailable — fall through to the DB check */ }
+    // Authoritative cross-device check: ask the backend whether THIS user has
+    // completed onboarding. Only auto-start when the server says completed=false.
+    fetch(`${_tourApiBase()}/api/v1/user/onboarding`, {
+        method: "GET",
+        headers: _tourApiHeaders(),
+    })
+        .then((r) => (r.ok ? r.json() : { completed: false }))
+        .then((data) => {
+            if (data && data.completed) {
+                // Already seen on another device — sync the local flag so we
+                // don't re-check on every open from here on.
+                try { localStorage.setItem(_tourStorageKey(), "1"); } catch (e) {}
+                return;
+            }
+            _beginTour();
+        })
+        .catch((e) => {
+            // Network/endpoint failure — fail closed (don't nag). The user can
+            // always replay via the "Panduan" menu item.
+            console.warn("onboarding status check failed:", e);
+        });
+}
+
+function _beginTour() {
+    if (tourActive) return;
+    tourActive = true;
+    // The chatbox plays a fadeInUp animation when it opens, so the
+    // kebab-btn's bounding rect keeps MOVING for ~0.5s. Starting the tour
+    // too early detects a mid-flight rect → step 1 highlight lands in the
+    // wrong place. Poll until the rect stops changing (two identical reads
+    // in a row) before showing step 1.
+    _whenRectStable("#kebab-btn", () => showTourStep(0));
+}
+
+// Poll an element's bounding rect until it stops moving (layout/animation
+// settled), then run cb. Falls back to firing after maxWait regardless.
+function _whenRectStable(selector, cb, maxWait) {
+    const started = Date.now();
+    maxWait = maxWait || 2000;
+    let last = null;
+    const tick = () => {
+        const el = document.querySelector(selector);
+        const r = el ? el.getBoundingClientRect() : null;
+        const key = r ? `${Math.round(r.top)},${Math.round(r.left)},${Math.round(r.width)}` : "none";
+        const stable = r && r.width > 0 && key === last;
+        if (stable || Date.now() - started > maxWait) {
+            cb();
+            return;
+        }
+        last = key;
+        setTimeout(() => requestAnimationFrame(tick), 80);
+    };
+    requestAnimationFrame(tick);
+}
+
+if (tourNext) {
+    tourNext.addEventListener("click", () => {
+        const next = tourStep + 1;
+        if (next >= tourSteps.length) hideTour();
+        else showTourStep(next);
+    });
+}
+if (tourSkip) {
+    tourSkip.addEventListener("click", hideTour);
+}
+
+// Dismiss tour when clicking outside the cutout (overlay is the click target)
+if (tourOverlay) {
+    tourOverlay.addEventListener("click", hideTour);
+}
+
+// Reposition on resize
+window.addEventListener("resize", () => {
+    if (tourActive && !tourOverlay.hidden) showTourStep(tourStep);
+});
+
+// Watch for the welcome screen being added to the DOM (it gets inserted
+// after the chatbox opens for the first time). The first time we see it,
+// fire the tour. Subsequent visits are gated by localStorage.
+(function hookFirstOpen() {
+    let alreadyStarted = false;
+    const observer = new MutationObserver(() => {
+        if (alreadyStarted) return;
+        const welcome = document.getElementById("ava-welcome");
+        if (welcome) {
+            alreadyStarted = true;
+            observer.disconnect();
+            maybeStartTour();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
+

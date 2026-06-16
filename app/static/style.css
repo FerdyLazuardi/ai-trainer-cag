@@ -593,48 +593,17 @@ body.chat-open #chat-toggle.pulse::before {
 }
 .kebab-btn:hover { background: rgba(255, 255, 255, 0.12); }
 
-/* Icon stack: 4 magic-themed icons at the same spot, cross-faded via opacity
-   keyframe offset. 24s total cycle (6s per icon) — slow & smooth. */
-.kebab-icon-stack {
-    position: relative;
-    display: inline-block;
-    width: 18px;
-    height: 18px;
+/* Hamburger icon: single fa-bars, centered, no cycle. Subtle 6s pulse via
+   the button's ::before for "alive" feel. Static — no morphing. */
+.kebab-btn i {
+    font-size: 15px;
     line-height: 1;
-}
-.kebab-icon-slot {
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 18px;
-    height: 18px;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;                       /* hidden by default — only the slot
-                                        whose keyframe is "active" shows */
-    /* 24s cycle (6s per icon), smooth standard easing. Each slot offset 6s. */
-    animation: kebab-icon-slot 24s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-    will-change: opacity, transform;
-}
-.kebab-icon-1 { animation-delay:  0s;   }
-.kebab-icon-2 { animation-delay: -6s;   }
-.kebab-icon-3 { animation-delay: -12s;  }
-.kebab-icon-4 { animation-delay: -18s;  }
-
-/* Slot keyframe: 6s "active" window inside the 24s cycle (= 25% of timeline).
-   Within that window: 1.5s fade-in + 3s hold + 1.5s fade-out. */
-@keyframes kebab-icon-slot {
-    0%    { opacity: 0; transform: scale(0.55) rotate(-25deg); }
-    6.25% { opacity: 1; transform: scale(1.06) rotate(0deg);   }   /* 0–1.5s: fade in */
-    12.5% { opacity: 1; transform: scale(1.0)  rotate(0deg);   }   /* 1.5–4.5s: hold */
-    18.75%{ opacity: 1; transform: scale(1.04) rotate(0deg);   }   /* 4.5–6s: fade out (actually fades 18.75%→25%) */
-    25%   { opacity: 0; transform: scale(0.55) rotate(25deg);  }   /* 6s: end active */
-    100%  { opacity: 0; transform: scale(0.55) rotate(-25deg); }   /* 6–24s: hidden */
 }
 
-/* Soft pulsing glow behind the icon stack. 6s slow cycle, white radial — stays
-   white in BOTH purple and blue themes. Paused when menu is open. */
+/* Soft pulsing glow (same as before, just kept for visual consistency) */
 .kebab-btn::before {
     content: "";
     position: absolute;
@@ -651,30 +620,11 @@ body.chat-open #chat-toggle.pulse::before {
     z-index: -1;
     will-change: opacity, transform;
 }
-.kebab-btn.menu-open::before { animation-play-state: paused; }
 
 @keyframes kebab-glow {
     0%, 100% { opacity: 0.55; transform: scale(1);    }
     50%      { opacity: 1.0;  transform: scale(1.18); }
 }
-
-/* Icon-stack container pulses with the glow (6s, slow & smooth). Paused on
-   menu-open so the stack "freezes" mid-morph — no surprise icon swap while
-   the user is reading the menu. */
-.kebab-icon-stack {
-    animation: kebab-icon-pulse 6s ease-in-out infinite;
-    will-change: transform, filter;
-}
-.kebab-btn.menu-open .kebab-icon-stack { animation-play-state: paused; }
-
-@keyframes kebab-icon-pulse {
-    0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 0 rgba(255,255,255,0));    }
-    50%      { transform: scale(1.08); filter: drop-shadow(0 0 5px rgba(255,255,255,0.55)); }
-}
-
-/* Pause the cross-fade cycle too on menu-open (matches the freeze above so
-   nothing drifts while the user has the menu open). */
-.kebab-btn.menu-open .kebab-icon-slot { animation-play-state: paused; }
 
 /* IN animation (open) */
 .kebab-menu {
@@ -738,6 +688,10 @@ body.chat-open #chat-toggle.pulse::before {
 }
 .kebab-item-placeholder { cursor: default; opacity: 0.6; }
 .kebab-item-placeholder:hover { background: transparent; }
+
+/* Action row (e.g. "Panduan" → replay tutorial). Whole row clickable. */
+.kebab-item-action { cursor: pointer; }
+.kebab-item-icon { font-size: 14px; color: var(--primary-color); flex: 0 0 auto; }
 
 .kebab-badge {
     font-size: 10px;
@@ -901,6 +855,117 @@ body.chat-open #chat-toggle.pulse::before {
 .ava-offer-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .ava-offer-btn i { font-size: 11px; }
 
+/* ── Pending-response popup (Varian 4: bubble + intensified FAB pulse) ──
+   Shown above the FAB when the AI finishes answering while the chatbox is
+   closed. Single slot — each new pending REPLACES the previous preview.
+   Click anywhere on the popup (or ×) opens the chatbox + dismisses. */
+.ava-popup {
+    position: fixed;
+    bottom: 80px;
+    right: 20px;
+    width: 280px;
+    max-width: calc(100vw - 60px);
+    background: #fafafa;
+    /* Match AI bubble exactly: no border, just shadow. */
+    border: none;
+    border-radius: 14px 14px 14px 4px;
+    padding: 11px 13px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    font-size: 13.5px;
+    line-height: 1.45;
+    color: #1e293b;
+    z-index: 10001;
+    cursor: pointer;
+    transform-origin: bottom right;
+    /* IN anim: 0.32s overshoot pop */
+    animation: ava-popup-in 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.ava-popup[hidden] { display: none !important; }
+
+/* Coaching theme: slightly tinted gray-blue bg to cue mode without screaming. */
+body.coaching-active .ava-popup {
+    background: #f5f7fb;
+}
+
+.ava-popup.fadeout {
+    animation: ava-popup-out 0.22s ease-out forwards;
+}
+
+@keyframes ava-popup-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.92); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+@keyframes ava-popup-out {
+    from { opacity: 1; transform: translateY(0)    scale(1);    }
+    to   { opacity: 0; transform: translateY(-4px) scale(0.96); }
+}
+
+/* Tail arrow pointing down to FAB — matches popup bg (no border) */
+.ava-popup::after {
+    content: "";
+    position: absolute;
+    bottom: -8px;
+    right: 14px;
+    width: 0;
+    height: 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 9px solid #fafafa;
+    filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.05));
+}
+body.coaching-active .ava-popup::after {
+    border-top-color: #f5f7fb;
+}
+
+.ava-popup-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.ava-popup-text {
+    flex: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.ava-popup-close {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    color: #94a3b8;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    margin-top: 2px;
+    transition: color 0.15s ease;
+}
+.ava-popup-close:hover { color: #475569; }
+
+/* ── FAB INTENSIFIED PULSE when there's a pending response ──
+   Triggered by adding .intensify class to #chat-toggle. Speed jumps from
+   6s → 1.8s (3.3x) and the glow expands further. The icon INSIDE the button
+   stays still — only the button itself pulses (the 6% scale is small
+   enough not to be visible on the child icon, so no counter-scale needed). */
+#chat-toggle.intensify {
+    animation: pulseBtn 1.8s ease-in-out infinite;
+}
+#chat-toggle.intensify::before {
+    animation: purpleRing 1.8s infinite;
+}
+
+/* When chatbox is open, kill BOTH normal and intensified pulse (existing rule
+   for body.chat-open covers the .pulse class; we extend it to .intensify). */
+body.chat-open #chat-toggle.intensify,
+body.chat-open #chat-toggle.intensify::before {
+    animation: none !important;
+}
+
 /* ── Topic-list button (slim gray, LEFT of textarea) ─────────────────────── */
 .topics-btn {
     flex: 0 0 auto;
@@ -992,3 +1057,120 @@ body.chat-open #chat-toggle.pulse::before {
 }
 .ava-panel-item:hover { background: #f4f0fa; }
 .ava-panel-empty { padding: 18px; text-align: center; font-size: 13px; color: #64748b; }
+
+/* ════════════════════════════════════════════════════════════════════
+   ONBOARDING TUTORIAL — 4-step, masked rounded cutout
+   ════════════════════════════════════════════════════════════════════
+   Single dark overlay whose mask-image (an inline SVG with a rounded-rect
+   HOLE) cuts a perfectly rounded window out of the dim layer. The cutout
+   area is fully visible (no dim, no border) so the target's natural
+   colors stay untouched. A small tooltip card floats next to the
+   cutout with prev/next/skip navigation. */
+
+.ava-tour-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.62);
+    z-index: 20000;
+    pointer-events: auto;
+    cursor: pointer;
+    /* mask-image is set inline via JS (needs target rect + radius) */
+    -webkit-mask-image: linear-gradient(#000, #000);
+    mask-image: linear-gradient(#000, #000);
+}
+.ava-tour-overlay[hidden] { display: none !important; }
+
+.ava-tour-cutout {
+    position: fixed;
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 20001;
+    /* No border / no fill — the surrounding overlay's mask has a hole
+       here, so the cutout is just a transparent positioning box. */
+}
+.ava-tour-cutout[hidden] { display: none !important; }
+
+.ava-tour-tooltip {
+    position: fixed;
+    background: white;
+    color: #1e293b;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    max-width: 260px;
+    font-size: 13px;
+    line-height: 1.5;
+    z-index: 20002;
+    animation: ava-tour-tooltip-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: auto;
+}
+.ava-tour-tooltip[hidden] { display: none !important; }
+
+.ava-tour-tooltip strong {
+    color: var(--primary-color);
+    display: block;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.ava-tour-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.ava-tour-dots {
+    display: flex;
+    gap: 4px;
+}
+
+.ava-tour-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    transition: background-color 0.2s ease, width 0.2s ease;
+}
+
+.ava-tour-dot.active {
+    background: var(--primary-color);
+    width: 18px;
+    border-radius: 3px;
+}
+
+.ava-tour-btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: filter 0.15s ease, background-color 0.15s ease;
+}
+
+.ava-tour-btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.ava-tour-btn-primary:hover { filter: brightness(1.1); }
+
+.ava-tour-btn-ghost {
+    background: transparent;
+    color: #94a3b8;
+}
+
+.ava-tour-btn-ghost:hover { color: #475569; }
+
+@keyframes ava-tour-tooltip-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.95); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+
+/* Make sure the tutorial sits above EVERYTHING (chatbox, FAB, popups). */
+#ava-tour-tooltip,
+#ava-tour-overlay,
+#ava-tour-cutout { z-index: 20000; }

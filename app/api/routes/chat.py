@@ -970,6 +970,49 @@ async def delete_history(
     return {"status": "success", "message": "Conversation history cleared"}
 
 
+@router.get("/user/onboarding", summary="Has the current user seen the onboarding tour?")
+async def get_onboarding_status(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return {completed: bool} for the authenticated user.
+
+    Drives the first-run tour: the frontend only auto-starts the tour when
+    completed=false. Stored in user_profiles.onboarding_completed_at so the
+    "seen it" state follows the user across browsers/devices (localStorage is
+    per-device). The dev-bypass user is treated as never-completed so local
+    iteration always sees the tour.
+    """
+    if not is_real_user(current_user.user_id, current_user.role):
+        return {"completed": False}
+    async with AsyncSessionLocal() as session:
+        profile = await session.get(UserProfile, current_user.user_id)
+    completed = bool(profile and profile.onboarding_completed_at is not None)
+    return {"completed": completed}
+
+
+@router.post("/user/onboarding/complete", summary="Mark the onboarding tour as seen")
+async def complete_onboarding(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Stamp user_profiles.onboarding_completed_at = now() for this user.
+
+    Idempotent: re-calling just refreshes the timestamp. Creates the
+    UserProfile row if it doesn't exist yet (first-ever interaction). No-op for
+    the dev-bypass user so we don't pollute the table with a synthetic row.
+    """
+    if not is_real_user(current_user.user_id, current_user.role):
+        return {"status": "skipped"}
+    from datetime import datetime, timezone
+    async with AsyncSessionLocal() as session:
+        profile = await session.get(UserProfile, current_user.user_id)
+        if not profile:
+            profile = UserProfile(user_id=current_user.user_id)
+            session.add(profile)
+        profile.onboarding_completed_at = datetime.now(timezone.utc)
+        await session.commit()
+    return {"status": "success"}
+
+
 @router.get("/chat/topics", summary="List available KB topics (instant, no LLM)")
 async def list_topics(
     current_user: Optional[User] = Depends(get_current_user),

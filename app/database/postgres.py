@@ -111,6 +111,14 @@ async def init_db() -> None:
                  "ON documents ((metadata->>'doc_type'))")
         )
 
+        # user_profiles predates the onboarding-tour flag. create_all won't ALTER
+        # an existing table, so add the column idempotently here (NULL = tour
+        # never seen). Drives the DB-backed first-run tour gate.
+        await conn.execute(
+            text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS "
+                 "onboarding_completed_at TIMESTAMPTZ")
+        )
+
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
