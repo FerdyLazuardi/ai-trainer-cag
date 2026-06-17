@@ -695,7 +695,7 @@ async def _run_intent_gate_calibration():
     import sys
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "scripts.auto_calibrate_intent_gate"],
+            [sys.executable, "-m", "app.eval.auto_calibrate_intent_gate"],
             capture_output=True, text=True, timeout=240,
         )
         if result.returncode != 0:
