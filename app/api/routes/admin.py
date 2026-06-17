@@ -55,26 +55,41 @@ async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dic
         trends = [{"date": str(row[0]), "queries": int(row[1])} for row in trends_result]
 
         # Recent Logs
+        # Exclude `cache_lookup` rows — they're cache observability events
+        # (no chat happened, intent is NULL, query is the same as the chat
+        # turn that triggered the lookup). Surfacing them alongside real
+        # turns makes the dashboard show the same query 3-4× with intent=None,
+        # which looks like a routing bug. They live in agent_logs for
+        # admin/cache-monitoring — not for Recent Logs.
         logs_result_exec = await conn.execute(text("""
             SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup, retrieved_context
             FROM agent_logs
-            WHERE endpoint != 'askfer' OR endpoint IS NULL
+            WHERE (endpoint != 'askfer' OR endpoint IS NULL)
+              AND endpoint != 'cache_lookup'
             ORDER BY created_at DESC
             LIMIT :limit
         """), {"limit": limit})
         logs_result = logs_result_exec.fetchall()
-        
+
         logs = [
             {
                 "created_at": str(row[0]),
-                "intent": str(row[1]),
+                "intent": str(row[1]) if row[1] else "UNKNOWN",
                 "latency_ms": float(row[2]) if row[2] is not None else 0.0,
                 "cache_hit": bool(row[3]),
                 "query": str(row[4]),
                 "answer": str(row[5]),
                 "session_id": str(row[6]) if row[6] else "Unknown",
-                "tokens": int(row[7]) if row[7] is not None else 0,
+                # `tokens` is the raw LLM token count (e.g. 24, 2124). It is
+                # NOT in thousands. Pre-format with thousands separator so
+                # the dashboard can display "1,234" instead of "1234", and
+                # "0" turns into "—" so empty rows don't look like a count
+                # of zero. Keep `tokens_raw` for any numeric use.
+                "tokens": (
+                    f"{int(row[7]):,}" if row[7] else "—"
+                ) if row[7] is not None else "—",
+                "tokens_raw": int(row[7]) if row[7] is not None else 0,
                 "retrieved": int(row[8]) if row[8] is not None else 0,
                 "faithfulness": float(row[9]) if row[9] is not None else None,
                 "empathy": float(row[10]) if row[10] is not None else None,

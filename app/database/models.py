@@ -118,8 +118,22 @@ class AgentLog(Base):
     needs_reasoning: Mapped[float] = mapped_column(Float, nullable=True)
     needs_empathy: Mapped[float] = mapped_column(Float, nullable=True)
     max_dense_score: Mapped[float] = mapped_column(Float, nullable=True)
+    # ── Semantic-gate trace (Jun 2026) ──
+    # gate_decision: "HIT" (gate committed an intent), "MISS" (gate ran but
+    #   stayed silent — caller fell through to KNOWLEDGE), or "SKIP" (gate
+    #   wasn't run because regex Tier-1 already returned an intent).
+    # gate_intent: the centroid that won (HIT only); None otherwise.
+    # gate_best_cosine / gate_second_cosine / gate_margin: the raw numbers
+    #   behind the decision, indexed together for histogram queries in the
+    #   Streamlit dashboard. Stored as the centroid-relative signal so a
+    #   future re-tune of centroids doesn't lose the trace.
+    gate_decision: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    gate_intent: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    gate_best_cosine: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gate_second_cosine: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gate_margin: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # Filled asynchronously by the LLM-as-judge eval task (sampled).
-    faithfulness_score: Mapped[float] = mapped_column(Float, nullable=True)
+    faithfulness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieved_context: Mapped[list[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

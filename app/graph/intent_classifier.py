@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -265,17 +266,59 @@ def _cosine(a: list[float], b: list[float]) -> float:
 async def classify_semantic(text: str) -> Optional[Intent]:
     """Classify intent via embedding similarity to pre-computed centroids.
 
-    Returns the best-matching gate-eligible intent (GREETING/AMBIGUOUS/OFF_SCOPE/
-    TOPIC_LIST) ONLY IF:
-      1. ``best_sim >= settings.intent_semantic_threshold``
-      2. ``best_sim - second_sim >= settings.intent_semantic_margin``
-
-    Otherwise returns None — caller falls through to regex Tier-1, then
-    retrieval. NEVER classifies to KNOWLEDGE/COACHING/MALICIOUS: those need
-    retrieval / structured-output / injection detection, not centroid match.
+    Thin wrapper kept for back-compat — returns only the committed intent
+    (or None). For per-decision telemetry (HIT/MISS + best/second cosine +
+    margin), call :func:`classify_semantic_with_scores` and inspect
+    ``result.decision`` + ``result.best_*``/``result.margin``.
     """
+    res = await classify_semantic_with_scores(text)
+    return res.committed
+
+
+@dataclass
+class GateScore:
+    """Per-decision telemetry from the semantic intent gate.
+
+    Returned by :func:`classify_semantic_with_scores`. The chat route writes
+    these to ``agent_logs.gate_*`` so the calibration harness and the
+    Streamlit dashboard can plot distributions and detect drift.
+
+    Fields
+    ------
+    decision: "HIT" if the gate committed an intent, "MISS" if it ran but
+      stayed silent (caller fell through), "SKIP" if the gate didn't run
+      at all (e.g. caller already had a regex match).
+    committed: the intent the gate committed to, or None on MISS/SKIP.
+    best_intent / best_cosine: the winning centroid + its cosine.
+    second_intent / second_cosine: runner-up; second_cosine defaults to
+      0.0 when there is no runner-up (single-centroid seeds).
+    margin: best_cosine - second_cosine.
+    """
+    decision: Literal["HIT", "MISS", "SKIP"]
+    committed: Optional[Intent]
+    best_intent: Optional[str]
+    best_cosine: float
+    second_intent: Optional[str]
+    second_cosine: float
+    margin: float
+
+
+async def classify_semantic_with_scores(text: str) -> GateScore:
+    """Classify intent AND return the full score breakdown.
+
+    Returns a :class:`GateScore`. The caller decides what to do with
+    ``decision`` — `_pre_processor` commits the intent on HIT; the chat
+    route writes all fields to ``agent_logs`` regardless of HIT/MISS so the
+    drift monitor can see *near-misses* too.
+    """
+    empty = GateScore(
+        decision="SKIP", committed=None,
+        best_intent=None, best_cosine=0.0,
+        second_intent=None, second_cosine=0.0,
+        margin=0.0,
+    )
     if not text or not text.strip():
-        return None
+        return empty
     text = text.strip()
     settings = get_settings()
 
@@ -283,21 +326,21 @@ async def classify_semantic(text: str) -> Optional[Intent]:
         centroids = await _compute_centroids()
     except Exception as e:
         logger.warning(f"Semantic gate: centroid computation failed, falling through: {e}")
-        return None
+        return empty
     if not centroids:
-        return None
+        return empty
 
     try:
         user_vec = await _embed_one(text)
     except Exception as e:
         logger.warning(f"Semantic gate: embedding failed for query, falling through: {e}")
-        return None
+        return empty
     user_vec = _l2_normalize(user_vec)
 
     sims = {intent: _cosine(user_vec, c) for intent, c in centroids.items()}
     ranked = sorted(sims.items(), key=lambda kv: kv[1], reverse=True)
     best_intent, best_sim = ranked[0]
-    second_sim = ranked[1][1] if len(ranked) > 1 else 0.0
+    second_intent, second_sim = (ranked[1][0], ranked[1][1]) if len(ranked) > 1 else (None, 0.0)
     margin = best_sim - second_sim
 
     # Defensive: the local Intent union is the 4 gate-eligible ones, but the
@@ -305,20 +348,35 @@ async def classify_semantic(text: str) -> Optional[Intent]:
     # must never win via this gate. Filter to gate-eligible only.
     _GATE_OK = {"GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"}
     if best_intent not in _GATE_OK:
-        return None
+        return GateScore(
+            decision="MISS", committed=None,
+            best_intent=best_intent, best_cosine=best_sim,
+            second_intent=second_intent, second_cosine=second_sim,
+            margin=margin,
+        )
 
     if best_sim >= settings.intent_semantic_threshold and margin >= settings.intent_semantic_margin:
         logger.info(
             f"Semantic gate HIT: intent={best_intent} sim={best_sim:.3f} "
             f"margin={margin:.3f} (2nd={second_sim:.3f}) query={text[:60]!r}"
         )
-        return best_intent  # type: ignore[return-value]
+        return GateScore(
+            decision="HIT", committed=best_intent,  # type: ignore[arg-type]
+            best_intent=best_intent, best_cosine=best_sim,
+            second_intent=second_intent, second_cosine=second_sim,
+            margin=margin,
+        )
     logger.debug(
         f"Semantic gate MISS: best={best_intent}@{best_sim:.3f} margin={margin:.3f} "
         f"(threshold={settings.intent_semantic_threshold}, "
         f"min_margin={settings.intent_semantic_margin}) — falling through"
     )
-    return None
+    return GateScore(
+        decision="MISS", committed=None,
+        best_intent=best_intent, best_cosine=best_sim,
+        second_intent=second_intent, second_cosine=second_sim,
+        margin=margin,
+    )
 
 
 # ── Coaching affinity (auto-hook) ─────────────────────────────────────────────

@@ -62,4 +62,11 @@ class RAGState(TypedDict):
     # question first, light loop, then confirm + teach at wrap-up). Pure factual
     # lookups stay direct.
     coaching_mode: Optional[bool]
+    # Semantic-gate telemetry (Jun 2026). The GateScore returned by
+    # classify_semantic_with_scores — chat.py reads this and writes the
+    # individual fields to agent_logs.gate_* so the calibration harness and
+    # dashboard can plot cosine distributions and detect drift. Optional
+    # because not every intent path populates it (e.g. cached turns skip
+    # the pre-processor entirely).
+    gate_score: Optional[dict]
 

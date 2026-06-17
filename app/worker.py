@@ -680,6 +680,34 @@ async def _run_ltm_prune():
     await prune_ltm_cron_task()
 
 
+# ── Daily intent-gate re-calibration (Jun 2026) ──────────────────────────────
+# Pulls last 2000 rows from agent_logs.gate_*, computes per-class
+# recommended thresholds, writes JSON to eval/results/. Drift > 0.05 vs
+# current setting triggers non-zero exit so the cron watcher can alert.
+# Scheduled 03:00 WIB to run after the 02:00 LTM prune (heavy jobs share
+# the 2-slot worker; spreading avoids simultaneous peak load).
+# ponytail: cron reads script via runpy; subprocess keeps the worker process
+# isolated from calibration errors (Postgres connect timeout, OOM on big
+# query, etc.) so a bad calibration run can't break the worker.
+@worker.cron("0 3 * * *", timeout=300)
+async def _run_intent_gate_calibration():
+    import subprocess
+    import sys
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.auto_calibrate_intent_gate"],
+            capture_output=True, text=True, timeout=240,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "intent-gate calibration drift detected (exit={}): {}",
+                result.returncode,
+                result.stdout[-500:] if result.stdout else "(no stdout)",
+            )
+    except Exception as exc:
+        logger.warning(f"intent-gate calibration cron failed: {exc}")
+
+
 # ── Task registration for the eval task (defined in app/eval/tasks.py) ─────
 # worker.task(fn) returns an AsyncRegisteredTask that is both callable
 # (runs the function directly) and exposes .enqueue() for the queueing

@@ -307,7 +307,14 @@ class Settings(BaseSettings):
     #   gate from committing on ambiguous queries that sit between two
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
     intent_semantic_threshold: float = 0.60
-    intent_semantic_margin: float = 0.10
+    # 2026-06-17: lowered from 0.10 -> 0.06 after the 70-query FO quality
+    # probe. At 0.10 the gate's margin floor was rejecting 4/20 chit-chat
+    # queries whose best_cosine was 0.7+ but whose margin to the runner-up
+    # was 0.02-0.07 (e.g. "tanya dong" margin=0.022, "bantuin" margin=0.008).
+    # At 0.06 all 4 are caught and FP stays 0 — knowledge queries had
+    # margins 0.04+ so they don't leak in. Tighten back if FP starts
+    # appearing in production.
+    intent_semantic_margin: float = 0.06
     # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
     # (intent_classifier.coaching_affinity vs the COACHING centroid). This is
     # NOT a routing gate — it only decides whether to show a one-line

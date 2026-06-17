@@ -551,6 +551,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": None,
         }
 
     # ── Meta-conversation question → answer from HISTORY, never the KB ───────
@@ -566,6 +567,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": None,
         }
 
     # NOTE: "apa aja di <section>" text-detection was REMOVED — structured
@@ -586,23 +588,52 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     #
     # Cost: ~one fresh embed (cached on repeat) on the long-tail of queries
     # the regex already filters out. The hot path (regex hits) is unaffected.
-    if _settings.intent_semantic_gate_enabled and rule_intent is None:
+    #
+    # The full GateScore (best/second cosine + margin) is attached to
+    # state["gate_score"] on EVERY outcome — HIT, MISS, or SKIP — so chat.py
+    # can persist the trace to agent_logs for the drift monitor regardless
+    # of which way the decision went. We do this on the path where the gate
+    # ACTUALLY runs (regex miss) AND on the path where the regex already won
+    # (so the dashboard can also see "what did the gate THINK of the regex
+    # hits, did it agree?" — useful for catching regex/gate disagreement).
+    gate_score_out = None
+    if _settings.intent_semantic_gate_enabled:
         try:
-            from app.graph.intent_classifier import classify_semantic
-            gated_intent = await classify_semantic(user_msg_str)
-            if gated_intent is not None:
+            from app.graph.intent_classifier import classify_semantic_with_scores
+            gate_score_out = await classify_semantic_with_scores(user_msg_str)
+            if rule_intent is None and gate_score_out.committed is not None:
                 logger.info(
-                    f"Pre-processor: semantic gate → {gated_intent} "
+                    f"Pre-processor: semantic gate → {gate_score_out.committed} "
                     f"(regex miss, embedding gate caught it)"
                 )
                 return {
-                    "intent": gated_intent,
+                    "intent": gate_score_out.committed,
                     "rewritten_query": user_msg_str,
                     "retrieval_query": user_msg_str,
                     "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
                 }
         except Exception as exc:
             logger.debug(f"semantic gate skipped: {exc}")
+            gate_score_out = None
+
+    # If the regex already won, still run the gate to capture its opinion
+    # (SKIP-tagged) for the dashboard. The "regex wins, gate agrees?" view
+    # is how ops spots regex/gate drift in production.
+    if (
+        gate_score_out is None
+        and _settings.intent_semantic_gate_enabled
+        and rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS")
+    ):
+        try:
+            from app.graph.intent_classifier import classify_semantic_with_scores
+            # Lazy mark: override decision to SKIP so the dashboard knows
+            # the gate ran but its verdict didn't change routing.
+            scored = await classify_semantic_with_scores(user_msg_str)
+            scored.decision = "SKIP"
+            gate_score_out = scored
+        except Exception as exc:
+            logger.debug(f"semantic gate agreement-check skipped: {exc}")
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
@@ -612,6 +643,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": gate_score_out,
         }
 
     # ── KNOWLEDGE: a real question → retrieve, then generate ────────────────
@@ -684,6 +716,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                     "rewritten_query": user_msg_str,
                     "retrieval_query": user_msg_str,
                     "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
                 }
         except Exception as exc:
             logger.debug(f"semantic TOPIC_LIST fallback skipped: {exc}")
@@ -709,6 +742,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "needs_safety_escalation": 0.0,
             "learning_context": 0.0,
         },
+        "gate_score": gate_score_out,
     }
 
 

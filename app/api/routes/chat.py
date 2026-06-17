@@ -306,11 +306,14 @@ def _quality_log_fields(
     intent: Optional[str],
     intent_scores: Optional[dict],
     max_dense_score: Optional[float],
+    gate_score: Optional[dict] = None,
 ) -> dict:
     """Build the durable quality-signal columns for an agent_logs row.
 
-    Persists intent + retrieval signal to Postgres so monitoring works
-    without any external tracing backend.
+    Persists intent + retrieval signal + semantic-gate trace to Postgres so
+    monitoring works without any external tracing backend. ``gate_score`` is
+    the dataclass-as-dict from ``classify_semantic_with_scores`` (or None
+    for cache hits / non-chat paths that skip the pre-processor).
     """
     scores = intent_scores or {}
 
@@ -318,12 +321,45 @@ def _quality_log_fields(
         v = scores.get(key)
         return float(v) if isinstance(v, (int, float)) else None
 
+    def _gf(key, cast=float):
+        if not gate_score:
+            return None
+        v = gate_score.get(key)
+        return cast(v) if v is not None else None
+
     return {
         "intent": intent,
         "needs_lookup": _f("needs_lookup"),
         "needs_reasoning": _f("needs_reasoning"),
         "needs_empathy": _f("needs_empathy"),
         "max_dense_score": float(max_dense_score) if isinstance(max_dense_score, (int, float)) else None,
+        # Semantic-gate trace (HIT/MISS/SKIP + the raw cosine numbers that
+        # drove the decision). The dashboard reads these directly to plot
+        # per-intent distributions and detect drift.
+        "gate_decision": _gf("decision", str),
+        "gate_intent": _gf("best_intent", str),
+        "gate_best_cosine": _gf("best_cosine"),
+        "gate_second_cosine": _gf("second_cosine"),
+        "gate_margin": _gf("margin"),
+    }
+
+
+def _serialize_gate_score(gs) -> Optional[dict]:
+    """Convert a GateScore dataclass (or None / dict) to a plain dict for
+    batch_logger pickling. Returns None when the gate didn't run (cache
+    hit, or pre-processor skipped it)."""
+    if gs is None:
+        return None
+    if isinstance(gs, dict):
+        return gs
+    return {
+        "decision": getattr(gs, "decision", None),
+        "committed": getattr(gs, "committed", None),
+        "best_intent": getattr(gs, "best_intent", None),
+        "best_cosine": getattr(gs, "best_cosine", None),
+        "second_intent": getattr(gs, "second_intent", None),
+        "second_cosine": getattr(gs, "second_cosine", None),
+        "margin": getattr(gs, "margin", None),
     }
 
 
@@ -907,7 +943,15 @@ async def _run_chat(
             "llm_tokens_used": llm_tokens_used,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
-            **_quality_log_fields(intent, result.get("intent_scores"), max_chunk_score),
+            **_quality_log_fields(
+                intent,
+                result.get("intent_scores"),
+                max_chunk_score,
+                # Serialize the GateScore dataclass (or None) to a dict so
+                # batch_logger can pickle it cleanly. The dashboard reads
+                # individual fields via _quality_log_fields.
+                _serialize_gate_score(result.get("gate_score")),
+            ),
         }
     )
     
@@ -1161,6 +1205,14 @@ async def chat_stream(
         stream_pool_max_dense = None
         stream_pool_max_sparse = None
         stream_dense_retrieval_ok = None
+        # Semantic-gate trace (Jun 2026) — captured from pre_processor's
+        # on_chain_end output. Mirrors the non-stream path's `result.gate_score`.
+        stream_gate_score = None
+        # Real total LLM tokens (input+output) from the final generate_node
+        # AIMessage's response_metadata.token_usage. Populated by the
+        # on_chain_end capture below; defaults to None (and falls back to
+        # token_count in the worst case where the provider omits usage).
+        stream_total_tokens: int | None = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
@@ -1236,11 +1288,39 @@ async def chat_stream(
                             intent = output["intent"]
                         if "intent_scores" in output:
                             stream_intent_scores = output.get("intent_scores") or {}
+                        if "gate_score" in output:
+                            stream_gate_score = output.get("gate_score")
                         if "rewritten_query" in output:
                             new_rewrite = output.get("rewritten_query")
                             if new_rewrite and new_rewrite != resolved_query:
                                 resolved_query = new_rewrite
                                 yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                # Real token usage for the agent_logs row. generate_node
+                # returns the AIMessage in its `messages` field; the OpenRouter
+                # / Gemini provider writes the final token_usage to the
+                # message's response_metadata. This is the SAME source the
+                # non-stream path reads on chat.py:839. Without this, stream
+                # rows log the chunk-event counter (1-3 per token emitted) and
+                # show 4-24 instead of the real 1000-3000 — a quiet data
+                # corruption that made the dashboard's token column useless.
+                if kind == "on_chain_end" and event.get("name") == "generate_node":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        msgs_out = output.get("messages") or []
+                        if msgs_out:
+                            last_msg = msgs_out[-1]
+                            tu = (getattr(last_msg, "response_metadata", None) or {}).get("token_usage") or {}
+                            real_total = tu.get("total_tokens")
+                            if isinstance(real_total, int) and real_total > 0:
+                                stream_total_tokens = real_total
+                            else:
+                                # Fallback to usage_metadata (LangChain-normalized).
+                                um = getattr(last_msg, "usage_metadata", None) or {}
+                                in_t = um.get("input_tokens") or 0
+                                out_t = um.get("output_tokens") or 0
+                                if in_t or out_t:
+                                    stream_total_tokens = int(in_t) + int(out_t)
 
                 # Canned-response nodes return an AIMessage directly without
                 # invoking an LLM, so no `on_chat_model_stream` event fires
@@ -1410,10 +1490,19 @@ async def chat_stream(
                 "answer": full_answer,
                 "chunks_retrieved": len(retrieved_context),
                 "latency_ms": round(latency_ms, 2),
-                "llm_tokens_used": token_count,
+                # Prefer the real total from the provider's response_metadata
+                # (captured at generate_node on_chain_end). Fall back to the
+                # chunk-event counter only if the provider didn't report
+                # usage (older Gemini/DeepSeek models occasionally omit it).
+                "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
                 "cache_hit": False,
                 "retrieved_context": retrieved_context,
-                **_quality_log_fields(intent, stream_intent_scores, stream_max_score),
+                **_quality_log_fields(
+                    intent,
+                    stream_intent_scores,
+                    stream_max_score,
+                    _serialize_gate_score(stream_gate_score),
+                ),
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
             await _track_session_courses(conversation_id, retrieved_context)
