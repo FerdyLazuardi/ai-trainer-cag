@@ -72,6 +72,20 @@ async def init_db() -> None:
             ("cache_score", "DOUBLE PRECISION"),
             ("cache_namespace", "VARCHAR(64)"),
             ("query_hash", "VARCHAR(64)"),
+            # Semantic-gate trace columns (Jun 2026 — written by chat.py
+            # via _quality_log_fields for every turn that ran the gate).
+            # gate_decision: "HIT" | "MISS" | "SKIP" — what the gate did.
+            # gate_intent: the centroid that won (HIT only); None otherwise.
+            # gate_best_cosine / gate_second_cosine / gate_margin: raw
+            # numbers behind the decision, indexed for histogram queries
+            # in the Streamlit dashboard. Migrated 2026-06-17 after a
+            # production error showed SQLAlchemy INSERT raised
+            # UndefinedColumnError on a fresh schema.
+            ("gate_decision", "VARCHAR(8)"),
+            ("gate_intent", "VARCHAR(32)"),
+            ("gate_best_cosine", "DOUBLE PRECISION"),
+            ("gate_second_cosine", "DOUBLE PRECISION"),
+            ("gate_margin", "DOUBLE PRECISION"),
         ]
         for col, col_type in agent_log_columns:
             await conn.execute(
@@ -88,6 +102,24 @@ async def init_db() -> None:
         )
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_query_hash ON agent_logs (query_hash)")
+        )
+        # gate_decision + gate_margin are the dashboard's primary filters
+        # (HIT vs MISS counts, margin histogram for threshold tuning).
+        # gate_intent supports per-intent break-downs.
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_agent_logs_gate_decision ON agent_logs (gate_decision)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_agent_logs_gate_margin ON agent_logs (gate_margin)")
+        )
+        # Composite (endpoint, created_at DESC) for admin dashboard queries
+        # that filter by endpoint (cache_lookup exclusion, askfer exclusion)
+        # AND sort/limit by created_at. Single-column created_at index
+        # already exists; this one covers the combined predicate without a
+        # sort step.
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_agent_logs_endpoint_created_at "
+                 "ON agent_logs (endpoint, created_at DESC)")
         )
 
         # documents.source: the ingest dedup path (moodle_sync / portfolio_sync)

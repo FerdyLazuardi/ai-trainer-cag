@@ -119,6 +119,15 @@ async def clear_conversation_history(conversation_id: str) -> None:
     await _cs.clear_conversation(get_redis_client(), conversation_id)
 
 
+async def bump_topic_streak(conversation_id: str, topic: str) -> Optional[str]:
+    return await _cs.bump_topic_streak(
+        get_redis_client(),
+        conversation_id,
+        topic,
+        threshold=settings.coaching_streak_threshold,
+    )
+
+
 async def resolve_numeric_query(query: str, conversation_id: str) -> str:
     return await _cs.resolve_numeric_query(
         get_redis_client(), query, conversation_id
@@ -833,7 +842,9 @@ async def _run_chat(
 
         latency_ms = (time.perf_counter() - start_time) * 1000
         final_message = result["messages"][-1]
+        from app.graph.pipeline import _sanitize_answer
         answer = final_message.content if hasattr(final_message, "content") else str(final_message)
+        answer = _sanitize_answer(answer)
         llm_tokens_used = 0
         if hasattr(final_message, "response_metadata"):
             llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
@@ -1099,9 +1110,12 @@ async def list_sections(
 @router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
 async def sync_memory(
     conversation_id: str,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
+    # ponytail: no-op. LTM sync is driven by the AFK worker (worker.py
+    # sync_ltm_task), not this route. Kept as a 200 so any legacy Moodle
+    # plugin POSTing here doesn't error; body says "ignored" so it's not
+    # mistaken for a real sync. Delete the route once no client calls it.
     return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
 
 
@@ -1417,14 +1431,28 @@ async def chat_stream(
             )
             full_answer = cleaned_answer
 
-        # Auto-hook: should we OFFER coaching after this answer? Only for a
-        # normal KNOWLEDGE turn when coaching is OFF. Reuses the embedding
-        # already computed for LTM (no extra embed call). Never gates/hijacks the
-        # answer — just a soft signal the frontend turns into a clickable offer.
-        # Wrapped so a scoring hiccup can never break the stream.
-        suggest_coaching = False
+        # Topic-streak auto-hook (moved from frontend): bump the same-topic
+        # counter; returns the topic once the user has stuck with one topic for
+        # `coaching_streak_threshold` turns, which drives a topic-specific offer.
+        coaching_topic = None
         try:
-            if (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
+            if (not request.coaching_mode) and intent == "KNOWLEDGE":
+                titles = [s["title"] for s in sources if s.get("title") and s["title"] != "Unknown"]
+                if titles:
+                    dominant = Counter(titles).most_common(1)[0][0]
+                    coaching_topic = await bump_topic_streak(conversation_id, dominant)
+        except Exception as exc:
+            logger.debug(f"topic-streak hook skipped: {exc}")
+
+        # Affinity auto-hook: should we OFFER coaching after this answer? Only for
+        # a normal KNOWLEDGE turn when coaching is OFF. Reuses the embedding
+        # already computed for LTM (no extra embed call). Skipped when the streak
+        # hook already fired. Never gates/hijacks the answer — a soft signal the
+        # frontend turns into a clickable offer. Wrapped so a scoring hiccup can
+        # never break the stream.
+        suggest_coaching = bool(coaching_topic)
+        try:
+            if (not suggest_coaching) and (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
                 from app.graph.intent_classifier import coaching_affinity
                 _aff = await coaching_affinity(resolved_query, query_embedding=query_embedding)
                 suggest_coaching = _aff >= settings.coaching_suggest_threshold
@@ -1436,7 +1464,7 @@ async def chat_stream(
         except Exception as exc:
             logger.debug(f"coaching auto-hook scoring skipped: {exc}")
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)

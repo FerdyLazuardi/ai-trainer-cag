@@ -49,3 +49,11 @@ data/eval/*_judge_run_relabeled.json
 
 # Ad-hoc SQL audit scripts (one-off DB probes, not part of the app source).
 scripts_audit_*.sql
+# Ad-hoc session scratch (Moodle md download + eval harness output, regenerable)
+_dl_md.py
+_eval40.py
+_eval40_out.json
+_moodle_md/
+
+# Intent-gate calibration run output (regenerable; overwritten each run)
+eval/results/*.json

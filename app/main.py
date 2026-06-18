@@ -136,6 +136,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "Unset DEV_BYPASS_ENABLED (or set APP_ENV to a non-production value) and restart."
             )
 
+        # Audit 3.5: STM TTL must outlive LTM AFK window, or the AFK-LTM worker
+        # tries to read history that has already expired — silent memory loss.
+        # The 2h margin (43200s STM vs 36000s AFK) is what lets the AFK worker
+        # tolerate a retry/defer cycle. Bumping STM down without bumping AFK
+        # is the realistic mistake (someone tuning TTL down for RAM); this
+        # guard catches it at boot instead of in production drift.
+        if settings.conversation_ttl_seconds <= settings.ltm_afk_threshold_seconds:
+            raise RuntimeError(
+                f"conversation_ttl_seconds ({settings.conversation_ttl_seconds}s) must be "
+                f"> ltm_afk_threshold_seconds ({settings.ltm_afk_threshold_seconds}s) — "
+                f"otherwise the AFK LTM worker reads expired STM history. "
+                f"Raise STM TTL or lower AFK threshold in settings."
+            )
+
         # Start BatchLogger background task
         await batch_logger.start()
 
@@ -262,19 +276,31 @@ def create_app() -> FastAPI:
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
     # ─── CORS ───────────────────────────────────────────────────────────────
+    # ngrok-free-domain invariants — DO NOT add any of the following without
+    # re-checking the Moodle plugin tunnel flow (settings.moodle_api_url):
+    #   1. Host-header validation: ngrok rotates subdomains, so any allowlist
+    #      tied to a specific Host header breaks the tunnel the moment the
+    #      free-tier subdomain changes.
+    #   2. IP allowlist: ngrok's exit IPs rotate within a wide NAT range;
+    #      allowlists block the tunnel intermittently.
+    #   3. Per-IP rate limit: same — shared ngrok NAT IPs would hammer the
+    #      limit and lock out legitimate Moodle traffic. Global `rate_limit`
+    #      in settings.py is fine; per-IP is not.
+    #   4. CSP / X-Frame-Options / Referrer-Policy: ngrok's first-visit
+    #      interstitial is a same-origin page; aggressive CSP would block
+    #      the click-through. Leave defaults.
+    #   5. Origin reflection (allow_origin_regex=".*"): CSRF exfil vector.
+    #      The explicit allowlist below is the correct posture — Moodle POSTs
+    #      are server-to-server (no Origin header) so they never trip CORS
+    #      anyway; only the dashboard frontend hits CORS preflight.
+    #
+    # The default allowlist below is localhost-only (dev). Production must
+    # set ALLOWED_ORIGINS env to the real frontend origins (dashboard,
+    # Askfer preview). Tunnel traffic (ngrok → api) is NOT affected by CORS
+    # because the Moodle plugin uses a server-side HTTP client, not a
+    # browser — CORS is a browser-only concern.
     app.add_middleware(
         CORSMiddleware,
-        # Reflect the explicit allowlist (settings.cors_allow_origins,
-        # defaults to localhost dev URLs in settings.py). The previous
-        # allow_origin_regex=".*" reflected ANY origin and combined with
-        # allow_credentials=True was a CSRF-style exfil vector: any
-        # malicious site could make credentialed cross-origin requests
-        # against the API. With the explicit allowlist, only the
-        # configured origins get Access-Control-Allow-Origin echoed back.
-        # In production, ALLOWED_ORIGINS env var must be set to the
-        # real frontend origins (dashboard, askfer, etc.) — the localhost
-        # dev defaults will not match a real prod origin and CORS will
-        # correctly block.
         allow_origins=settings.cors_allow_origins,
         allow_credentials=True,
         allow_methods=["*"],

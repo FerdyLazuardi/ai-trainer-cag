@@ -626,7 +626,7 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
 
     # ── Step 4+5: Upsert to Qdrant with course_names + unanswered_questions inline ───
     # course_names already extracted by the structured output above — no second LLM hop.
-    await qdrant_ltm.update(
+    qdrant_ok = await qdrant_ltm.update(
         user_id=user_id,
         session_summary=session_summary,
         new_course_names=course_names,
@@ -634,6 +634,12 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
         session_id=conversation_id,
         llm=cheap_llm,
     )
+    if not qdrant_ok:
+        logger.warning(
+            "LTM sync: Qdrant upsert did NOT persist — episode not added to long-term memory",
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
     # One DEL on the HASH drops all ephemeral fields (history, summary,
@@ -647,8 +653,13 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     await clear_conversation(redis, conversation_id)
     await release_ltm_lock(redis, conversation_id)
 
-    logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
-    return {"status": "synced"}
+    # Only log "persisted" when the Qdrant write actually succeeded. Earlier
+    # versions logged unconditionally right after clear_conversation(), which
+    # silently masked upsert failures because qdrant_ltm.update() ran with
+    # wait=True now and returns bool; check it before claiming success.
+    if qdrant_ok:
+        logger.info("LTM sync: episode persisted to Qdrant (AFK)", conversation_id=conversation_id)
+    return {"status": "synced" if qdrant_ok else "qdrant_failed"}
 
 async def prune_ltm_cron_task() -> dict[str, Any]:
     """Cron task: run daily to prune LTM vectors older than 60 days across all users."""
@@ -659,6 +670,35 @@ async def prune_ltm_cron_task() -> dict[str, Any]:
         return {"status": "pruned", "deleted_episodes": deleted}
     except Exception as exc:
         logger.error(f"Global LTM pruning failed: {exc}")
+        raise
+
+
+async def prune_agent_logs_cron_task() -> dict[str, Any]:
+    """Cron task: delete agent_logs rows older than `agent_log_retention_days`.
+
+    Single bounded DELETE on the indexed `created_at` column. Idempotent —
+    a no-op when nothing matches. VACUUM is left to autovacuum; on a
+    large deletion the table stays bloated until it runs. If retention
+    days is bumped from a small to a large value, run VACUUM FULL manually
+    to reclaim disk.
+    """
+    from sqlalchemy import text
+    from app.database.postgres import AsyncSessionLocal
+
+    days = settings.agent_log_retention_days
+    logger.info("Starting agent_logs retention prune", retention_days=days)
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                text("DELETE FROM agent_logs WHERE created_at < NOW() - make_interval(days => :days)"),
+                {"days": days},
+            )
+            deleted = result.rowcount or 0
+            await session.commit()
+        logger.info("agent_logs retention prune complete", deleted_rows=deleted)
+        return {"status": "pruned", "deleted_rows": deleted, "retention_days": days}
+    except Exception as exc:
+        logger.error(f"agent_logs retention prune failed: {exc}")
         raise
 
 
@@ -706,6 +746,17 @@ async def _run_intent_gate_calibration():
             )
     except Exception as exc:
         logger.warning(f"intent-gate calibration cron failed: {exc}")
+
+
+# ── Daily agent_logs retention prune ────────────────────────────────────────
+# Audit 5.6 P0: agent_logs grows unbounded (~65k rows/day @13k DAU). The
+# prune deletes rows older than `agent_log_retention_days` (default 90,
+# settings.py). Scheduled 04:00 WIB — after 02:00 LTM prune (Qdrant-bound)
+# and 03:00 intent-gate calibration (subprocess), so the 2-slot worker
+# never has two heavy crons overlapping.
+@worker.cron("0 4 * * *", timeout=300)
+async def _run_agent_logs_prune():
+    await prune_agent_logs_cron_task()
 
 
 # ── Task registration for the eval task (defined in app/eval/tasks.py) ─────

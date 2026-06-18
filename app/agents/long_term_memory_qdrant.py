@@ -65,6 +65,19 @@ def _max_episodes_per_user() -> int:
     return MAX_LTM_EPISODES_PER_USER
 
 
+def _recall_score_threshold() -> float:
+    """Min cosine for an episode to be recalled. Settings-driven, falls back to
+    the old hardcoded 0.70 on any lookup failure so recall stays safe."""
+    try:
+        from app.config.settings import get_settings
+        val = getattr(get_settings(), "ltm_recall_score_threshold", None)
+        if val is not None:
+            return float(val)
+    except Exception:
+        pass
+    return 0.70
+
+
 class QdrantLTMService:
     """Semantic long-term memory backed by Qdrant vector store."""
 
@@ -134,7 +147,7 @@ class QdrantLTMService:
                 query_filter=self._build_user_filter(user_id),
                 limit=_LTM_CANDIDATES,
                 with_payload=True,
-                score_threshold=0.70,  # only inject episodes with meaningful semantic similarity
+                score_threshold=_recall_score_threshold(),
             )
             results = response.points
         except Exception as exc:
@@ -233,9 +246,9 @@ class QdrantLTMService:
                                    structured LTM summarization in worker.py.
         """
         if not is_real_user(user_id=user_id, role="moodle_user"):
-            return
+            return False
         if not session_summary or not session_summary.strip():
-            return
+            return False
 
         course_names = (new_course_names or [])[:_MAX_COURSE_NAMES]
         unanswered = (unanswered_questions or [])[:_MAX_UNANSWERED]
@@ -245,7 +258,7 @@ class QdrantLTMService:
             vector = await self._embed(session_summary)
         except Exception as exc:
             logger.warning("LTM: failed to embed session summary", user_id=user_id, error=str(exc))
-            return
+            return False
 
         payload = {
             "user_id": user_id,
@@ -267,10 +280,16 @@ class QdrantLTMService:
                 vector=vector,
                 payload=payload,
             )
+            # wait=True so a Qdrant-side rejection (bad vector dim, payload
+            # schema mismatch, etc.) surfaces here instead of vanishing into
+            # the fire-and-forget queue. Cheap — single point per sync, well
+            # under the 30s client timeout, and lets the worker.py caller
+            # log the actual outcome instead of a misleading "persisted"
+            # line that printed before this return was added.
             await qdrant.client.upsert(
                 collection_name=_LTM_COLLECTION,
                 points=[point],
-                wait=False,   # fire-and-forget — non-blocking in background worker
+                wait=True,
             )
             logger.info(
                 "LTM: episode persisted to Qdrant",
@@ -282,8 +301,10 @@ class QdrantLTMService:
             # Enforce the per-user episode cap right after a successful write so
             # the collection can't grow unbounded. Self-guarded + fire-and-forget.
             await self.prune_user_episodes(user_id)
+            return True
         except Exception as exc:
             logger.warning("LTM: Qdrant upsert failed", user_id=user_id, error=str(exc))
+            return False
 
     async def prune_user_episodes(self, user_id: str) -> None:
         """Cap stored episodes per user — delete the oldest beyond the cap.

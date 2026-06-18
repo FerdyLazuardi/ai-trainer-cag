@@ -97,6 +97,23 @@ with tab_overview:
     col2.metric("Avg Latency", f"{kpis.get('avg_latency', 0.0)/1000:.2f} s")
     col3.metric("Cache Hit Rate", f"{kpis.get('hit_rate', 0.0):.1f}%")
 
+    # Rolling-7d KPIs — p95/p99 expose the latency tail that Avg hides, and
+    # faithfulness is the sampled judge quality score. "—" when no data.
+    col4, col5, col6 = st.columns(3)
+    col4.metric("P95 Latency (7d)", f"{kpis.get('p95_latency_7d', 0.0)/1000:.2f} s")
+    col5.metric("P99 Latency (7d)", f"{kpis.get('p99_latency_7d', 0.0)/1000:.2f} s")
+    _faith = kpis.get('faithfulness_avg_7d')
+    _faith_n = kpis.get('faithfulness_n_7d', 0)
+    _faith_fail = kpis.get('faithfulness_fail_7d', 0)
+    col6.metric(
+        "Faithfulness (7d)",
+        f"{_faith:.3f}" if _faith is not None else "—",
+        delta=f"-{_faith_fail} unfaithful" if _faith_fail else None,
+        delta_color="inverse",
+        help=f"Avg LLM-judge faithfulness over {_faith_n} evaluated turns (sampled). "
+             f"{_faith_fail} scored below the {0.75} pass threshold.",
+    )
+
     st.divider()
 
     # Charts Row
