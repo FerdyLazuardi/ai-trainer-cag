@@ -1377,6 +1377,11 @@ async def chat_stream(
                             # is a no-op on clean preambles so it's safe.
                             safe = leak_guard.feed(token)
                             if safe:
+                                # Model still emits em/en-dashes despite the prompt ban. Swap to a
+                                # comma (collapsing same-token surrounding spaces) so it reads
+                                # natural instead of a stray hyphen. Per-token: a dash split across
+                                # token boundaries is rare for this tokenizer.
+                                safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
                                 yield f"data: {json.dumps({'token': safe})}\n\n"
 
                             # Periodic disconnect check — bail out early if user closed the tab.

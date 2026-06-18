@@ -54,7 +54,7 @@
             <div id="chat-messages"></div>
             <div id="chat-input">
                 <button id="topics-btn" class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
-                    <i class="fas fa-list-ul"></i>
+                    <i class="fas fa-book"></i>
                 </button>
                 <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
                 <button id="send-btn" class="send-btn" onclick="handleSendClick()">
@@ -484,12 +484,12 @@ function maybeOfferCoaching(userText, backendSuggest, topic) {
     wrap.id = "ava-coach-offer";
     wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     const text = topic
-        ? 'Kamu udah beberapa kali ngebahas <b>' + _esc(topic) +
-          '</b> nih. Mau aku pandu ngulik lebih dalam soal ini?'
-        : 'Mau ngulik ini bareng? Aku bisa pandu kamu mikir step by step.';
+        ? 'Kayaknya kamu lagi tertarik banget sama <b>' + _esc(topic) +
+          '</b> nih. Mau brainstorming bareng?'
+        : 'Mau kita bahas ini lebih dalam bareng-bareng? Aku temani kamu brainstorming.';
     wrap.innerHTML =
         '<span class="ava-offer-text">' + text + '</span>' +
-        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Gas Coaching</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
@@ -545,7 +545,7 @@ function _renderCoachOffer(innerHtml) {
     wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     wrap.innerHTML =
         '<span class="ava-offer-text">' + innerHtml + '</span>' +
-        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Gas Coaching</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
