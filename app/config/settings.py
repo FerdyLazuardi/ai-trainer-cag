@@ -153,6 +153,18 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
+    # ⚠️  RUNTIME VALUES COME FROM `.env`, NOT THESE DEFAULTS.
+    # The defaults below (Gemini Flash Lite, empty provider order) are the
+    # settings.py fallback path — actual production / dev usage is in `.env`.
+    # Last verified live (2026-06-17) the `.env` overrides pin:
+    #   - LLM_MODEL=deepseek/deepseek-v4-flash (DeepSeek, NOT Gemini)
+    #   - CHEAP_LLM_MODEL=deepseek/deepseek-v4-flash (same)
+    #   - LLM_PROVIDER_ORDER=alibaba,baidu,novita (NOT empty → NOT deepseek native)
+    # Verified empirically on Alibaba Cloud Int. via OpenRouter:
+    #   Data policy = "No data training" (privacy-safe for internal docs),
+    #   cache discount ~54%, latency 306ms, throughput 75.9 tok/s.
+    # Do NOT change `.env` without re-checking this comment and the empirical
+    # evidence in `docs/audit/E2E_AUDIT_600DAU_2026-06-17.md`.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
     # OpenRouter is the SOLE LLM provider (no 9Router, no localhost, no Ollama).
@@ -160,33 +172,16 @@ class Settings(BaseSettings):
     # through a different OpenRouter-compatible gateway.
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_embedding_url: str | None = None
-    # Main model: Gemini 2.5 Flash Lite (Google) — 4-8x cheaper than
-    # gemini-2.5-flash with comparable quality on structured-output tasks.
-    # Supports OpenRouter prompt caching via cache_control content blocks.
-    llm_model: str = "google/gemini-2.5-flash-lite"
+    # Main model: DeepSeek V4 Flash — defaults aligned with `.env` so reading
+    # either file shows the SAME model (no Gemini/DeepSeek ambiguity). Run via
+    # the alibaba/baidu/novita provider pin (see llm_provider_order) for the
+    # "No data training" privacy posture; deepseek native trains on prompts.
+    llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="LLM_MODEL")
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
-    # Cheap-Lite pin for background tasks (memory summarization, eval judge,
-    # pre-processor intent classification, generate node). Same as the main
-    # model: Gemini 2.5 Flash Lite.
-    #
-    # Why not a cheaper model (Llama 3.1 8B $0.02/M, Mistral Nemo $0.02/M)?
-    # Every model cheaper than Flash Lite on OpenRouter (Qwen 2.5 7B, Llama
-    # 3.1 8B, Mistral Nemo, Phi-4 mini) SILENTLY IGNORES `cache_control`,
-    # which would make the cached_system_message() helper in
-    # app/llm/client.py:28 a no-op on the cheap slot. Pinning cheap to
-    # Flash Lite preserves the prompt-cache benefit on every call (1h TTL
-    # cache reads at $0.01/M vs $0.10/M full input — ~48% per-turn
-    # savings, ~$24/mo at 600 DAU, scales to $500+/mo at 13k DAU).
-    #
-    # The 10% cheaper Llama 3.1 8B class is technically cheaper on a
-    # like-for-like token basis, but intent classification runs on EVERY
-    # turn (not just non-cached) and the JSON-schema adherence on the
-    # structured-output slots regresses ~10% on the 7B class — not worth
-    # ~$12/mo in absolute savings vs the quality risk on the highest-
-    # traffic slot. If cost pressure grows, demote intent classification
-    # back to a 7B class and keep Flash Lite on judge + generate.
-    cheap_llm_model: str = "google/gemini-2.5-flash-lite"
+    # Cheap slot for background tasks (memory summarization, pre-processor,
+    # generate node). Same model as the main slot.
+    cheap_llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="CHEAP_LLM_MODEL")
 
     # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
     # Comma-separated OpenRouter provider SLUGS to pin the generator to, in
@@ -203,12 +198,21 @@ class Settings(BaseSettings):
     # atlas-cloud, akashml, novita, venice. (Verified 2026-06 for
     # deepseek-v4-flash.)
     #
+    # ⚠️  DO NOT leave this empty in `.env` for deepseek models.
+    # Empty here = default per-family = `deepseek` native, which trains on
+    # prompts by default and is NOT safe for Amartha's internal docs.
+    # The verified privacy-safe + cache-on pin is `alibaba,baidu,novita`
+    # (see `.env` for the empirical evidence block; cache discount ~54%,
+    # data policy "No data training", latency 306ms). The settings.py
+    # default of "" is a fallback only — the production deploy overrides
+    # it via `.env`.
+    #
     # CAUTION before pinning a cheaper provider:
     #   - quantization differs (deepinfra=fp4 aggressive, baidu=fp8) → can shift
     #     answer quality; RE-RUN the 71-Q groundedness suite after switching.
-    #   - implicit prompt caching exists ONLY on the `deepseek` native endpoint;
-    #     every other provider is no-cache, so a low base price can still be more
-    #     expensive in practice when the cached-prefix hit rate is high.
+    #   - cache behavior: alibaba caches implicitly via OpenRouter gateway
+    #     (verified live 2026-06-17); deepseek native also caches implicitly.
+    #     Other pinned providers (baidu, novita, deepinfra) are unverified.
     #   - data-privacy/training posture varies per provider.
     # allow_fallbacks stays True so a pinned provider's outage degrades to the
     # rest of the market instead of failing the request.
@@ -307,7 +311,14 @@ class Settings(BaseSettings):
     #   gate from committing on ambiguous queries that sit between two
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
     intent_semantic_threshold: float = 0.60
-    intent_semantic_margin: float = 0.10
+    # 2026-06-17: lowered from 0.10 -> 0.06 after the 70-query FO quality
+    # probe. At 0.10 the gate's margin floor was rejecting 4/20 chit-chat
+    # queries whose best_cosine was 0.7+ but whose margin to the runner-up
+    # was 0.02-0.07 (e.g. "tanya dong" margin=0.022, "bantuin" margin=0.008).
+    # At 0.06 all 4 are caught and FP stays 0 — knowledge queries had
+    # margins 0.04+ so they don't leak in. Tighten back if FP starts
+    # appearing in production.
+    intent_semantic_margin: float = 0.06
     # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
     # (intent_classifier.coaching_affinity vs the COACHING centroid). This is
     # NOT a routing gate — it only decides whether to show a one-line
@@ -317,6 +328,13 @@ class Settings(BaseSettings):
     # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
     # margin each side. Re-check if the COACHING seeds in intent_seed.yaml change.
     coaching_suggest_threshold: float = 0.70
+    # Topic-streak auto-hook: offer coaching once the user has asked about the
+    # SAME dominant topic this many turns in a row (counter lives in the
+    # conversation HASH, see conversation_state.bump_topic_streak). Moved from
+    # the frontend so the offer decision is server-side (Moodle plugin = dumb
+    # renderer). A topic shift decays the streak by 1 rather than hard-resetting,
+    # so drifting across 1-2 related sections doesn't kill an active streak.
+    coaching_streak_threshold: int = 3
     # Master switch for the semantic gate (app/graph/intent_classifier.
     # classify_semantic), wired into _pre_processor between the regex Tier-1 and
     # the no-retrieval bucket. Only short-circuits chit-chat intents
@@ -371,12 +389,17 @@ class Settings(BaseSettings):
     # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
     # Absolute [0, 1] cosine. bge-m3 cleanly separates scope on this KB:
     # off-scope tops out ≈ 0.36 (weather/recipe/trivia), in-scope floors ≈ 0.50.
-    # Set to 0.40 — safe band [0.40, 0.45], chosen toward the low end to protect
-    # legit in-scope queries (production not-found turns can land ≈ 0.45). Dense
-    # is now the SOLE normal-operation discriminator; sparse is NOT OR'd in (see
-    # kb_min_sparse_score). Re-derive after major KB growth or any embedding-model
-    # change via: python -m app.eval.run_retrieval_eval (reports gate margins).
-    kb_min_dense_score: float = 0.40
+    # Set to 0.46 — calibrated 2026-06-18 via `python -m app.eval.calibrate_dense_floor`
+    # against the live KB: 34 in-scope probes (17 ingested courses) floored at
+    # pool dense 0.469, while off-scope/un-ingested topics (BMDP, Basic Leadership,
+    # out-of-domain) topped out at 0.491. 0.46 is the highest floor with ZERO
+    # in-scope false-rejects (0.47 starts rejecting a real in-scope query) and
+    # leaks only 1 of 12 off-scope probes (EWS at 0.491, BMDP material not yet
+    # ingested). Was 0.40, which let 8/12 off-scope leak → "apa itu BMDP"-style
+    # hallucination from near-miss chunks. Re-run the calibrator after KB growth
+    # or an embedding-model swap. Dense is the SOLE normal-op discriminator;
+    # sparse is NOT OR'd in (see kb_min_sparse_score).
+    kb_min_dense_score: float = 0.46
     # DEGRADED-WINDOW ONLY sparse floor. This is NO LONGER an OR-rescue in normal
     # operation — raw BM25 does not separate scope on a small KB (off-scope
     # filler tokens like siapa/hari/jakarta accumulate BM25: "berita hari ini di
@@ -447,6 +470,16 @@ class Settings(BaseSettings):
     # now rides this same HASH (B1), so it inherits this lifetime too.
     conversation_ttl_seconds: int = 43200
     user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
+    # agent_logs retention window. agent_logs has no TTL (audit 5.6 P0) so
+    # it grows unbounded at ~65k rows/day @13k DAU. The daily cron in
+    # app/worker.py (prune_agent_logs_cron_task) DELETEs rows older than
+    # this. 90d matches the dashboard's useful horizon (Recent Logs query
+    # is bounded by LIMIT, but trends + retention queries scan the table).
+    # ponytail: bump to 180/365 only if the eval team needs longer history;
+    # Postgres table bloat is real (reclaim via VACUUM FULL after large DELETE).
+    agent_log_retention_days: int = Field(
+        default=90, ge=7, le=365, alias="AGENT_LOG_RETENTION_DAYS"
+    )
     # Max fresh (un-summarized) conversation turns fed to generate_node. 8
     # (was 5, originally 2): the generate LLM IS the memory in the single-call
     # design, so it must SEE enough raw turns to answer "udah bahas apa aja"
@@ -483,8 +516,25 @@ class Settings(BaseSettings):
     ltm_max_episodes_per_user: int = Field(
         default=50, ge=1, le=200, alias="LTM_MAX_EPISODES_PER_USER"
     )
+    # Min cosine for an LTM episode to be recalled into <user_history>
+    # (long_term_memory_qdrant.load). The episode VECTOR is the embedded
+    # session SUMMARY ("User asked about Amartha's vision and mission"), an
+    # English meta-sentence, while the live query is the user's raw Indonesian
+    # turn — so even an exact-topic re-ask lands ~0.67 cosine, below the old
+    # hardcoded 0.70 and was silently dropped. 0.55 clears that language/meta
+    # gap while still rejecting unrelated episodes (those sit <0.45).
+    # ponytail: raise toward 0.65 if irrelevant episodes start leaking in.
+    ltm_recall_score_threshold: float = Field(
+        default=0.55, ge=0.0, le=1.0, alias="LTM_RECALL_SCORE_THRESHOLD"
+    )
 
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
+    # Default points at the dev/free-tier ngrok tunnel (interstitial warning
+    # page on first visit, random subdomain, no custom domain, 1 tunnel at
+    # a time — see main.py CORS block for what NOT to add that would break it).
+    # Override MOODLE_API_URL in .env for production. Do NOT bake a fixed
+    # production domain here — operators switch tunnels and the URL must
+    # remain env-driven.
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
 

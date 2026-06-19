@@ -39,6 +39,15 @@ services:
       # with the worker's 10, total = 30 vs Postgres max_connections=50.
       POSTGRES_POOL_SIZE: '8'
       POSTGRES_MAX_OVERFLOW: '12'
+      # Single source of truth for uvicorn worker count: this env var AND the
+      # --workers flag below both interpolate from the SAME ${WEB_CONCURRENCY}
+      # (host/.env, default 1). They can't diverge, so the in-process pipeline
+      # semaphore guard in app/api/concurrency.py (which reads WEB_CONCURRENCY
+      # and raises if != 1) actually gates the real worker count. Bumping this
+      # to 2 makes --workers=2 AND trips the guard loud at boot — until the
+      # Redis token-bucket lands, multi-worker stays a fail-fast, not a silent
+      # 2×12=24-concurrent-LLM OOM.
+      WEB_CONCURRENCY: '${WEB_CONCURRENCY:-1}'
     restart: unless-stopped
     volumes:
       - .:/app
@@ -50,7 +59,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1" ]
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${WEB_CONCURRENCY:-1}" ]
 
   worker:
     build: .

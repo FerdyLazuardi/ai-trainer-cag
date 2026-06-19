@@ -54,7 +54,7 @@
             <div id="chat-messages"></div>
             <div id="chat-input">
                 <button id="topics-btn" class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
-                    <i class="fas fa-list-ul"></i>
+                    <i class="fas fa-book"></i>
                 </button>
                 <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
                 <button id="send-btn" class="send-btn" onclick="handleSendClick()">
@@ -332,11 +332,11 @@ function setCoaching(on, showMsg) {
     if (showMsg) {
         if (on) {
             addMessage(
-                "Oke, kita ulik bareng ya — aku pandu kamu sampai nemu jawabannya sendiri. Mau mulai dari mana, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
+                "Oke, kita brainstorming bareng ya. Aku pandu kamu sampai nemu jawabannya sendiri. Mau mulai dari mana, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
                 "ai"
             );
         } else {
-            addMessage("Oke, mode Coaching dimatiin. Aku balik jawab langsung ya — tetap aku temani kayak biasa.", "ai");
+            addMessage("Yuk, tanya apa aja soal materi Amarthapedia, aku temani kamu belajar.", "ai");
         }
     }
 }
@@ -467,10 +467,12 @@ function removeCoachOffer() {
 }
 
 // backendSuggest: the server's suggest_coaching flag (true/false), or null/
-// undefined when absent. When present it's AUTHORITATIVE (semantic affinity);
-// the regex _looksReflective is only the fallback when the backend didn't send
-// a signal (e.g. fallback/non-stream path or older backend).
-function maybeOfferCoaching(userText, backendSuggest) {
+// undefined when absent. When present it's AUTHORITATIVE (semantic affinity OR
+// topic-streak); the regex _looksReflective is only the fallback when the
+// backend didn't send a signal (e.g. fallback/non-stream path or older backend).
+// topic: when the server's offer was triggered by a topic streak, the dominant
+// topic name — used to word the offer around that topic.
+function maybeOfferCoaching(userText, backendSuggest, topic) {
     if (window.COACHING_MODE) return;                        // already on
     if (document.getElementById("ava-coach-offer")) return;  // one at a time
     const show = (backendSuggest === true || backendSuggest === false)
@@ -481,64 +483,13 @@ function maybeOfferCoaching(userText, backendSuggest) {
     const wrap = document.createElement("div");
     wrap.id = "ava-coach-offer";
     wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
+    const text = topic
+        ? 'Kayaknya kamu lagi tertarik banget sama <b>' + _esc(topic) +
+        '</b> nih. Mau brainstorming bareng?'
+        : 'Mau kita bahas ini lebih dalam bareng-bareng? Aku temani kamu brainstorming.';
     wrap.innerHTML =
-        '<span class="ava-offer-text">Mau ngulik ini bareng? Aku bisa pandu kamu mikir step by step.</span>' +
-        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
-    messages.appendChild(wrap);
-    messages.scrollTop = messages.scrollHeight;
-}
-
-// Topic-streak auto-hook: if the user keeps asking about the SAME topic several
-// turns in a row, that's a strong "I want to go deep here" signal — offer to
-// coach them through it. Topic is taken from the answer's `sources` (each chunk
-// carries its course/section title). Frontend-only: no backend change.
-const _TOPIC_STREAK_THRESHOLD = 3;   // offer after this many same-topic turns; tolerates 1-2 topic shifts via cooldown (see else-branch below)
-window._topicStreak = { topic: null, count: 0 };
-
-function _dominantTopic(sources) {
-    if (!sources || !sources.length) return null;
-    // Most frequent title among the retrieved chunks (ties → first/highest-rank).
-    const freq = {};
-    let best = null, bestN = 0;
-    for (const s of sources) {
-        const t = (s && s.title) ? s.title.trim() : "";
-        if (!t || t === "Unknown") continue;
-        freq[t] = (freq[t] || 0) + 1;
-        if (freq[t] > bestN) { bestN = freq[t]; best = t; }
-    }
-    return best;
-}
-
-function maybeOfferCoachingByTopicStreak(userText, sources) {
-    if (window.COACHING_MODE) return;                        // already on
-    if (document.getElementById("ava-coach-offer")) return;  // per-question hook already offered
-    const topic = _dominantTopic(sources);
-    if (!topic) return;  // no topic info this turn (e.g. retrieval miss) — leave counter alone, don't kill a healthy streak
-
-    const st = window._topicStreak;
-    if (st.topic === topic) {
-        st.count += 1;
-    } else {
-        // Cooldown: when topic shifts, decay count by 1 instead of hard-reset.
-        // Streak fully dies only after 2 different-topic shifts in a row, so a
-        // user drifting across 1-2 related sections (e.g. CP → Mechanism of
-        // Complaints Resolution) doesn't lose the "in the zone" signal.
-        const newCount = Math.max(0, st.count - 1);
-        st.topic = newCount > 0 ? st.topic : topic;  // keep old topic while streak still alive
-        st.count = newCount > 0 ? newCount : 1;       // new topic seeds its own streak at 1
-    }
-    if (window._topicStreak.count < _TOPIC_STREAK_THRESHOLD) return;
-
-    // Streak reached → offer, then reset so we don't nag every subsequent turn.
-    window._topicStreak = { topic: null, count: 0 };
-    window._lastReflectiveQ = userText;  // accept handler re-asks this in mentoring mode
-    const wrap = document.createElement("div");
-    wrap.id = "ava-coach-offer";
-    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
-    wrap.innerHTML =
-        '<span class="ava-offer-text">Kamu udah beberapa kali ngebahas <b>' + topic +
-        '</b> nih. Mau aku pandu ngulik lebih dalam soal ini?</span>' +
-        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<span class="ava-offer-text">' + text + '</span>' +
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Gas Coaching</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
@@ -594,7 +545,7 @@ function _renderCoachOffer(innerHtml) {
     wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     wrap.innerHTML =
         '<span class="ava-offer-text">' + innerHtml + '</span>' +
-        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Ya, pandu aku</button>';
+        '<button class="ava-offer-btn" onclick="acceptCoachingOffer()"><i class="fas fa-graduation-cap"></i> Gas Coaching</button>';
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
 }
@@ -625,6 +576,31 @@ function acceptCoachingOffer() {
         // to the canned guiding prompt.
         addMessage("Oke, aku pandu kamu belajar ya. Apa yang lagi pengen kamu ulik?", "ai");
     }
+}
+
+// ── Mirror of the coaching offer: OFFER to leave Coaching → back to Mentoring ──
+// Fires when the backend signals the Socratic loop is done (coaching_done): Ava
+// delivered a wrap-up/direct answer instead of a guiding question. Clicking
+// flips the toggle OFF, exactly symmetric to the "Gas Coaching" offer flipping
+// it ON. The signal is computed server-side (gated on the real COACHING intent),
+// so no marker ever streams to the user — nothing to leak.
+function maybeOfferBackToMentoring(coachingDone) {
+    if (!window.COACHING_MODE) return;                       // only while coaching ON
+    if (document.getElementById("ava-coach-offer")) return;  // one offer card at a time
+    if (!coachingDone) return;                               // still in the loop
+    const wrap = document.createElement("div");
+    wrap.id = "ava-coach-offer";
+    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
+    wrap.innerHTML =
+        '<span class="ava-offer-text">Kayaknya kita udah kelar ngulik bareng nih. Mau aku balik jawab langsung aja?</span>' +
+        '<button class="ava-offer-btn" onclick="acceptBackToMentoring()"><i class="fas fa-comments"></i> Balik ke Mentoring</button>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function acceptBackToMentoring() {
+    removeCoachOffer();
+    setCoaching(false, true);   // flip slider off + the canned "balik jawab langsung" message
 }
 
 // ── Pending-response popup ────────────────────────────────────────────────────
@@ -904,7 +880,6 @@ async function doClearChat() {
         });
         messages.innerHTML = '';
         introduced = false;
-        window._topicStreak = { topic: null, count: 0 };
         window._lastReflectiveQ = null;
         showIntro();
     } catch (e) {
@@ -1146,7 +1121,8 @@ async function send(presetText, opts) {
         let _streamActive = true;
         let _finalized = false;
         let _suggestCoaching = null;  // backend auto-hook signal (set in done event)
-        let _doneSources = null;       // sources[] from done event (for topic-streak hook)
+        let _coachingTopic = null;     // topic name when the offer was streak-triggered
+        let _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
 
         function startStreamBubble() {
             if (!_streamStarted) {
@@ -1187,17 +1163,15 @@ async function send(presetText, opts) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                const finalText = _targetText || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
+                const finalText = _targetText || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba kirim lagi pertanyaan yang sama ya 🙏";
                 finalizeStreamBubble(contentDiv, bubble, finalText);
-                // Auto-hook: after the answer lands, offer mentoring. Backend
-                // signal (_suggestCoaching) is authoritative when present;
-                // regex _looksReflective is the fallback when it's absent.
-                maybeOfferCoaching(text, _suggestCoaching);
-                // Topic-streak hook: if the per-question hook didn't already
-                // offer, and the user has stuck with a topic for 3+ turns
-                // (with 1-2 graceful topic shifts before the streak fully
-                // resets), offer to go deeper on that topic.
-                maybeOfferCoachingByTopicStreak(text, _doneSources);
+                // Auto-hook: after the answer lands, offer coaching. Backend
+                // signal (_suggestCoaching) is authoritative when present
+                // (semantic affinity OR topic-streak); regex _looksReflective is
+                // the fallback when it's absent. _coachingTopic words the offer
+                // around the streak topic when the streak triggered it.
+                maybeOfferCoaching(text, _suggestCoaching, _coachingTopic);
+                maybeOfferBackToMentoring(_coachingDone);
                 // Pending-response popup: if the chatbox was closed BEFORE the
                 // answer finished streaming, show the answer as a popup above
                 // the FAB. This is the "user walked away while Ava was typing"
@@ -1244,7 +1218,8 @@ async function send(presetText, opts) {
                         if (currentEventType === "done") {
                             startStreamBubble();
                             if (parsed.suggest_coaching !== undefined) _suggestCoaching = parsed.suggest_coaching;
-                            if (parsed.sources !== undefined) _doneSources = parsed.sources;
+                            if (parsed.coaching_topic !== undefined) _coachingTopic = parsed.coaching_topic;
+                            if (parsed.coaching_done !== undefined) _coachingDone = parsed.coaching_done;
                             _streamActive = false;
                             currentEventType = "";
                             continue;
@@ -1323,7 +1298,7 @@ async function send(presetText, opts) {
             const data = await fallbackRes.json();
             removeTyping(); // hapus dots SETELAH response tiba
 
-            const reply = data?.answer || "Wah, Ava bingung nih jawabnya. Coba tanya hal lain yuk! 😊";
+            const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba kirim lagi pertanyaan yang sama ya 🙏";
             streamMessageFallback(reply, "ai");
             maybeOfferCoaching(text);
 
@@ -1654,7 +1629,9 @@ function showTourStep(step) {
     // which are rendered async after showIntro).
     requestAnimationFrame(() => {
         const rect = _getTourTargetRect(s);
-        if (!rect) { hideTour(); return; }
+        // Target not in DOM (e.g. welcome chips are gone once a chat has
+        // started — coaching replay). Skip this step, don't kill the tour.
+        if (!rect) { showTourStep(step + 1); return; }
         _setTourOverlayMask(rect);
         _positionTourCutout(rect);
         _positionTourTooltip(rect, s.anchor);
@@ -1770,9 +1747,11 @@ if (tourSkip) {
     tourSkip.addEventListener("click", hideTour);
 }
 
-// Dismiss tour when clicking outside the cutout (overlay is the click target)
+// Overlay swallows outside clicks so the spotlighted element can't be
+// triggered mid-tour. Dismissal is Skip/Lanjut only — clicking the overlay
+// must NOT skip the tour.
 if (tourOverlay) {
-    tourOverlay.addEventListener("click", hideTour);
+    tourOverlay.addEventListener("click", (e) => e.stopPropagation());
 }
 
 // Reposition on resize

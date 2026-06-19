@@ -48,16 +48,17 @@ EXCEPTION — the SHORT default does NOT apply when the user asks about a set/ca
 <grounding>
 First check RELEVANCE: <context> being present does NOT mean it answers this turn. Re-read what the user actually said. If the context genuinely answers their question, base your answer on it. If it does NOT — e.g. the user made a meta-comment about the conversation ("kok ga nyambung", "yang bener dong"), greeted you, or said something the chunks don't actually address — then IGNORE the context entirely and just respond to the user naturally. NEVER pull in a topic from <context> that the user didn't ask about ("Kamu bertanya tentang X..." when they didn't) — that's the worst failure here.
 When the context IS relevant: copy Amartha's product, principle, role, and policy names EXACTLY as written in <context> — never swap in a similar-sounding term from general knowledge (e.g. keep Amartha's "Mechanism of Complaints Resolution", don't rename it to the generic CGAP "Grievance Redress"). Do NOT invent Amartha facts (numbers, policies, lists) that aren't in <context>.
+PARTIAL COVERAGE: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket") and <context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT stitch the steps together from adjacent facts. State plainly that the specific procedure isn't in your materials and suggest confirming with BM or tim terkait. Fabricating a plausible combined procedure for a money/payment flow is the worst failure here — a high-relevance retrieval does NOT mean the exact sub-case is covered.
 When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — FIRST run the <disambiguate> check: if the bare term could name SEVERAL DISTINCT sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), ask the clarifying question and STOP — do NOT dump all sets. Only when it resolves to ONE set do you list completely: answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
+If an <available_topics> block is present, the user asked what topics/materials exist: list ONLY the topics inside it, verbatim, and do NOT invent or rename any. If it says the list couldn't be loaded, say briefly you can't pull it up right now and ask them to retry — do NOT name or guess any topic.
+If a <section_materials> block is present, the user named a broad section/topic without a specific question: briefly say that section covers several materials, list them from the block verbatim, and ask which one they want to dig into. Do NOT dump the full content of every material — offer the menu first.
 </grounding>
 
 <disambiguate>
-This check runs BEFORE the <grounding> LIST rule and BEFORE you answer anything. If it fires, you ask and STOP — you do not also list.
-Check if the turn is UNDERSPECIFIED against <context>. Two cases:
-(1) A broad/bare term ("prinsip", "kebijakan", "prosedur", "cara lapor", "SOP", "nilai") where <context> shows it could mean SEVERAL DISTINCT things (e.g. chunks carry Prinsip Pencegahan Fraud AND Prinsip Client Protection AND Prinsip Penagihan — different sets, different courses).
-(2) A reference to an ITEM of a set by number/name ("prinsip 3", "tahap kedua", "poin pertama") where <context> shows MORE THAN ONE candidate set it could index into, and the conversation history has NOT already fixed which set is meant.
-In either case do NOT pick one and do NOT dump them all — ask ONE short clarifying question that names the distinct candidates you ACTUALLY see in <context> (2-4 options, exact verbatim names), then let the user choose. E.g. user "prinsip" → "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan. Mau bahas yang mana?" E.g. user "cara lapor" → ask WHAT they want to report, since each (kendala lapangan, fraud, harassment) punya kanal berbeda.
-Answer DIRECTLY (skip the question) only when <context> clearly points to ONE thing, OR the history already narrowed the set/topic (you established Client Protection earlier, then "prinsip 3" = Client Protection #3). The candidate options MUST come from <context>, never from general knowledge — if only one set is present, there's nothing to disambiguate, just answer. When genuinely in doubt, ask: one clarifying question beats a confident wrong-topic answer.
+Runs before answering. Output ONLY the clarifying question to the user — NEVER restate these rules, case numbers, or this block's text.
+Ask ONE short clarifying question (then STOP, don't also list) when the turn is underspecified against <context>: a bare term that maps to several distinct sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), an item reference ("prinsip 3") with more than one candidate set and no history to fix it, or a bare topic-name with no aspect asked (e.g. "modal", "kantor" — definition? variants? how to use? advantages?). The question names 2-4 candidates/facets taken verbatim from <context>, e.g. "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan."
+If <context> has nothing that coherently defines the bare term (chunks merely mention the word), do NOT stitch an answer — go to <no_context> and say you don't have it. NEVER invent a definition (e.g. don't fabricate "Kantor Pusat/Cabang/Point" if not in <context>).
+Answer directly (skip the question) when <context> points to ONE thing and the user said what they want, or history already narrowed it.
 </disambiguate>
 
 <no_context>
@@ -78,7 +79,7 @@ CHIT_CHAT_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <how_to_talk>
-Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. If it's off-topic (weather, math, other companies, personal stuff), gently steer back to what you can help with. Keep the reply to 1-3 sentences unless they clearly want more. Mirror their language (ID/EN) and tone.
+Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. If it's off-topic (weather, math, other companies, recipes, general knowledge, personal stuff), do NOT answer it — not even a quick definition or partial answer. EVEN IF you confidently know the answer (e.g. "apa itu bitcoin", "ibukota Prancis", "5x7 berapa"), you must NOT state it — refusing to define a well-known term you obviously know feels unnatural, but do it anyway: that one leaked sentence is exactly the failure to avoid. Briefly say it's outside Amarthapedia and steer back to what you can help with, WITHOUT providing the off-topic information itself. Keep the reply to 1-3 sentences unless they clearly want more. Mirror their language (ID/EN) and tone.
 </how_to_talk>"""
 
 
@@ -110,16 +111,17 @@ If the user brings a personal/emotional/relationship matter (breakups, dating a 
 </scope>
 
 <when_to_ask_vs_answer>
+CLARIFY FIRST when the user's message is genuinely ambiguous — a bare reference with no object ("lupa caranya" → cara APA?), a pronoun with no clear antecedent, or a complaint that could map to several different KB topics ("mitra susah" → bayar? pakai aplikasi? hadir kumpulan?). Do NOT guess one interpretation and launch a guiding question on it — that derails the whole loop if you guessed wrong. Ask ONE short clarifying question first ("Lupa caranya yang mana nih, cara bayar atau cara pakai aplikasinya?"), then coach once they pin it down. A real trainer asks "maksudnya yang muna?" before diagnosing — so do you. The retrieved context may have anchored on the wrong topic; trust the user's words over the chunks when they conflict.
 For a DIAGNOSTIC / REASONING question about the user's own work ("kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): open with ONE short guiding question that invites them to reason first.
 For a PURE FACTUAL LOOKUP (a definition, number, name, policy, or list — "berapa bunga Modal", "apa itu Client Protection", "produk apa aja"): answer DIRECTLY and completely. Do NOT ask them to guess a fact. When unsure, answer directly — a needless quiz is worse than a direct answer.
-RE-ASKED TOPIC (important): if the conversation history already contains a full answer to THIS question and the user is now here in Coaching mode, they just opted in to be coached through it — do NOT repeat the previous answer verbatim. Open fresh with ONE guiding question that builds on what they asked, drawing them to reason about it. Make the opener feel natural and tied to THEIR exact wording/keluhan (e.g. they asked "gimana caranya dapetin mitra biar tembus target" → "Oke, kita ulik bareng ya. Menurut kamu, dari mitra yang udah ada vs cari mitra baru, mana yang paling cepat ngangkat pencapaian kamu? Coba tebak dulu — nanti aku konfirm."). NEVER open with a generic "apa yang bikin kamu bingung?" — always anchor to the question they actually asked.
+RE-ASKED TOPIC (important): if the conversation history already contains a full answer to THIS question and the user is now here in Coaching mode, they just opted in to be coached through it — do NOT repeat the previous answer verbatim. Open fresh with ONE guiding question that builds on what they asked, drawing them to reason about it. Make the opener feel natural and tied to THEIR exact wording/keluhan (e.g. they asked "gimana caranya dapetin mitra biar tembus target" → "Oke, kita ulik bareng ya. Menurut kamu, dari mitra yang udah ada vs cari mitra baru, mana yang paling cepat ngangkat pencapaian kamu? Coba jawab dulu, nanti aku konfirm."). NEVER open with a generic "apa yang bikin kamu bingung?" — always anchor to the question they actually asked.
 </when_to_ask_vs_answer>
 
 <how_to_ask>
 When you do ask a guiding question:
 - Ask exactly ONE question, short and concrete — never a list of questions, never a wall of text before it.
 - The question must be GROUNDED in <retrieved_context>: hint toward what the materials actually say, don't fish for something not in the KB. You are nudging them toward the real answer, not testing trivia.
-- Match the INVITATION verb to what you're asking for. Only say "coba tebak" when there's a factual right answer to guess. If you're asking them to RECALL or SHARE an experience/opinion, invite with "coba ceritakan", "coba inget-inget", or "coba jawab" — NEVER "coba tebak" for something that isn't a guessable fact.
+- NEVER use the phrase "coba tebak" — it sounds like a quiz and feels off. Invite naturally instead: "coba jawab dulu", "menurut kamu", "kira-kira", "coba ceritakan", or "coba inget-inget" — pick the one that fits whether you're asking for reasoning, recall, or an opinion.
 - Always give a light exit so they never feel trapped: e.g. "...atau kalau mau langsung aku jelasin, bilang aja." Vary the wording naturally; don't repeat the exact same exit phrase every turn.
 - Example: user asks "kok mitra aku susah ditagih?" → "Sebelum aku jelasin — menurut kamu, apa yang biasanya bikin nasabah mulai susah ditagih? Coba jawab dulu, nanti aku tambahin. (Atau kalau mau langsung, bilang aja.)"
 </how_to_ask>
@@ -132,7 +134,7 @@ This mode is LIGHT on every intermediate turn. When the user responds to your gu
 - Then advance with ONE NEW guiding question that goes to the NEXT facet or a level deeper — keep the Socratic thread moving. Light multi-round is the intent: several thin turns, each just nudging forward, NOT a full mini-lesson per turn.
 - The new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword.
 - If they SHARED A REAL EXPERIENCE (not a guess at a fact), acknowledge it as a colleague ("makasih udah cerita") — never grade a lived story with "tepat sekali!". Still keep it short and keep moving.
-- Match the invitation verb to the ask: "coba tebak" only for a guessable fact; "coba ceritakan / inget-inget / jawab" for recall or opinion.
+- Match the invitation to the ask: "coba jawab dulu" / "menurut kamu" for a fact-based answer, "coba ceritakan / inget-inget" for recall or opinion. NEVER use "coba tebak".
 - Always pair the next question with a light exit so they never feel trapped ("...atau kalau mau aku langsung rangkum semuanya, bilang aja"). Vary the wording.
 - VARY your validation beat across turns. NEVER start two consecutive replies with the same word. Pool: "oke" / "noted" / "masuk akal" / "boleh juga" / "hmm" / "oh gitu" / "fair" / "okay" / "sip". Pick by the user's energy (casual → casual, formal → formal).
 </during_the_loop>
@@ -160,6 +162,8 @@ The goal is for the user to ARRIVE at understanding, NOT to make them admit they
 
 <grounding>
 Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Aku belum nemu ini di materiku") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
+SPEAK LIKE A TRAINER, NOT A GUIDEBOOK: ground your answer in the material but do NOT cite it as a source out loud ("Materi Basic Leadership bilang...", "Di materi Tanggung Renteng...", "dari materi yang kita bahas"). You're a senior trainer who already knows this by heart — just say the thing directly ("Kuncinya ada di kendali diri internal...") instead of attributing it to a document. The grounding is for YOUR accuracy, not a citation the user needs to see.
+CRITICAL — partial coverage: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket", a step the materials only describe for a different scenario) and <retrieved_context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT synthesize the steps from adjacent facts. Say that specific procedure isn't in your materials and suggest confirming with BM or tim terkait. Inventing a plausible combined procedure for a money/payment flow is the worst failure here.
 </grounding>
 
 <length>
@@ -230,7 +234,15 @@ _DIRECTIVE_LINE_RE = re.compile(
     r"FRUSTRATION OVERRIDE|"
     r"COACHING CONDUCT|"
     r"First check RELEVANCE|"
-    r"When the context IS relevant"
+    r"When the context IS relevant|"
+    # Leaked <available_topics> instruction + <disambiguate> prose (Flash Lite
+    # recites these when the block is output-shaped). Whole-line strip.
+    r"(?:The )?[Uu]ser asked what topics|"
+    r"List ONLY the topics|"
+    r"Runs before answering|"
+    r"Check if the turn is UNDERSPECIFIED|"
+    r"Ask ONE short clarifying question|"
+    r"\(\d\)\s+A (?:broad|bare|reference|BARE)"
     r")"
     # Eat the rest of the line (often continues with quoted examples / em-dash rules)
     r"[^\n]*",
@@ -263,20 +275,64 @@ _META_CONVO_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Pure anaphoric/deictic follow-up markers — a short turn that references the
-# PRIOR turn without naming its own topic ("jelasin lagi", "terus gimana",
-# "kok gitu", "contohnya?", "yang tadi"). Only these get the prior-user-turn
-# prepend for retrieval. Deliberately EXCLUDES bare "kenapa"/"gimana"/"apa",
-# which routinely open SELF-CONTAINED questions ("kenapa CP penting", "gimana
-# cara cegah fraud") that must retrieve on their own text. Requiring the -nya
-# forms (contohnya/detailnya) avoids matching self-contained "kasih contoh X".
-_ANAPHORIC_FOLLOWUP_RE = re.compile(
-    r"\b(?:lagi|tadi|terus|trus|lanjut(?:in|kan)?|gitu|gini|"
-    r"contohnya|maksudnya|selengkapnya|detailnya|"
-    r"sebelumnya|berikutnya|selanjutnya)\b"
-    r"|\b(?:abis|habis|setelah)\s+itu\b",
-    re.IGNORECASE,
+# Follow-up condense-question rewrite (LLM-based; replaces the old anaphoric-
+# regex prepend). A SHORT turn after prior history ("boleh", "iya yang itu",
+# "yang kedua tadi", "dampaknya apa") carries no standalone meaning: embedding
+# it directly drifts retrieval onto the wrong topic, and the model then
+# fabricates an answer from training data (the multi-turn hallucination). We
+# condense it into a self-contained query using the last few turns — this is
+# phrasing/typo/language-agnostic (no word-list to maintain). Scoped to short
+# turns only, so the rewrite call is paid only where coreference resolution is
+# actually needed; a long self-contained question skips it. A short query that
+# already names its topic is returned unchanged by the prompt, and any
+# failure/timeout degrades to the raw message.
+_FOLLOWUP_MAX_CHARS = 40
+_FOLLOWUP_REWRITE_TIMEOUT_S = 4.0
+_FOLLOWUP_HISTORY_TURNS = 6  # last N messages fed as context (≈3 turns)
+
+_CONDENSE_PROMPT = (
+    "Rewrite the user's follow-up message into ONE standalone search query "
+    "for the Amartha internal knowledge base.\n"
+    "Rules:\n"
+    "- Replace implicit references ('itu', 'yang tadi', 'boleh', 'iya', "
+    "'yang kedua', 'dampaknya', 'lapornya') with the concrete topic currently "
+    "being discussed in the conversation.\n"
+    "- If the follow-up ALREADY names its own topic, return it AS-IS.\n"
+    "- Preserve the original language (Indonesian/English).\n"
+    "- Output ONLY the final query — no explanations, quotes, or preambles."
 )
+
+
+async def _condense_followup_query(messages: list, user_msg: str) -> str:
+    """Condense a short follow-up into a standalone retrieval query via the
+    cheap LLM, using recent turns to resolve coreference. Returns user_msg
+    unchanged on empty history, bad output, or any failure/timeout."""
+    history = messages[-_FOLLOWUP_HISTORY_TURNS:-1]
+    if not history:
+        return user_msg
+    lines = []
+    for m in history:
+        role = "User" if isinstance(m, HumanMessage) else "Ava"
+        content = m.content if isinstance(m.content, str) else str(m.content)
+        lines.append(f"{role}: {content[:400]}")
+    prompt = (
+        f"{_CONDENSE_PROMPT}\n\nConversation:\n"
+        + "\n".join(lines)
+        + f"\n\nFollow-up: {user_msg}\n\nStandalone query:"
+    )
+    try:
+        from app.llm.client import get_preprocessor_llm
+        resp = await asyncio.wait_for(
+            get_preprocessor_llm().ainvoke([HumanMessage(content=prompt)]),
+            timeout=_FOLLOWUP_REWRITE_TIMEOUT_S,
+        )
+        out = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
+        # Guard: empty or rambling output (a leaked CoT / refusal) → raw msg.
+        if out and len(out) <= 200:
+            return out
+    except Exception as exc:
+        logger.debug(f"follow-up condense skipped (degrade to raw): {exc}")
+    return user_msg
 
 
 def _strip_md_headings_for_context(text: str) -> str:
@@ -289,6 +345,15 @@ def _strip_md_headings_for_context(text: str) -> str:
     Bold/italic/lists are preserved (only headings are visually catastrophic).
     """
     return _MD_HEADING_RE.sub("", text)
+
+
+def _normalize_dashes(text: str) -> str:
+    # Em-dash reads as AI-generated. After a bold label it's a colon
+    # ("**Listen** — x" → "**Listen**: x"); elsewhere a comma. En-dash just
+    # becomes a hyphen so numeric/day ranges ("0–7", "Senin–Sabtu") survive.
+    text = re.sub(r"\*\*\s*—\s*", "**: ", text)
+    text = re.sub(r"\s*—\s*", ", ", text)
+    return text.replace("–", "-")
 
 
 def _sanitize_answer(text: str) -> str:
@@ -337,7 +402,7 @@ def _sanitize_answer(text: str) -> str:
         else:
             cleaned = "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
 
-    return cleaned.lstrip()
+    return _normalize_dashes(cleaned.lstrip())
 
 
 class StreamLeakGuard:
@@ -551,6 +616,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": None,
         }
 
     # ── Meta-conversation question → answer from HISTORY, never the KB ───────
@@ -566,6 +632,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": None,
         }
 
     # NOTE: "apa aja di <section>" text-detection was REMOVED — structured
@@ -586,68 +653,122 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     #
     # Cost: ~one fresh embed (cached on repeat) on the long-tail of queries
     # the regex already filters out. The hot path (regex hits) is unaffected.
-    if _settings.intent_semantic_gate_enabled and rule_intent is None:
+    #
+    # The full GateScore (best/second cosine + margin) is attached to
+    # state["gate_score"] on EVERY outcome — HIT or MISS — so chat.py
+    # can persist the trace to agent_logs for the drift monitor regardless
+    # of which way the decision went. The historical SKIP path (regex
+    # already won, run gate solely for dashboard agreement) was REMOVED on
+    # 2026-06-17: pure overhead (2× embed on every regex hit) with no
+    # quality gain. The agreement dashboard now only updates from the
+    # MISS path; if regex/gate disagreement drifts, sample N% of regex
+    # wins through a BackgroundTasks call (TODO: re-add sampled async
+    # agreement-check once Prometheus metrics land, so we can verify
+    # the drift signal is meaningful before paying the embed cost).
+    gate_score_out = None
+    if _settings.intent_semantic_gate_enabled:
         try:
-            from app.graph.intent_classifier import classify_semantic
-            gated_intent = await classify_semantic(user_msg_str)
-            if gated_intent is not None:
+            from app.graph.intent_classifier import classify_semantic_with_scores
+            gate_score_out = await classify_semantic_with_scores(user_msg_str)
+            if rule_intent is None and gate_score_out.committed is not None:
                 logger.info(
-                    f"Pre-processor: semantic gate → {gated_intent} "
+                    f"Pre-processor: semantic gate → {gate_score_out.committed} "
                     f"(regex miss, embedding gate caught it)"
                 )
+                # SECTION_DRILLDOWN refinement (Jun 2026): also apply to gate-derived
+                # TOPIC_LIST. The gate catches novel chit-chat the regex missed —
+                # but "bisnis proses ada apa aja" doesn't look like greeting/ambiguous
+                # to it, so the gate routes it as TOPIC_LIST. We still want to refine
+                # that to SECTION_DRILLDOWN if a specific section can be resolved.
+                if gate_score_out.committed == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
+                    try:
+                        _sm = await _load_section_map()
+                    except Exception:
+                        _sm = {}
+                    _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
+                    if _resolved:
+                        logger.info(
+                            f"Pre-processor: gate TOPIC_LIST refined -> SECTION_DRILLDOWN "
+                            f"(section={_resolved!r}, via {_respath!r})"
+                        )
+                        state["drilldown_section"] = _resolved
+                        state["drilldown_resolution"] = _respath
+                        return {
+                            "intent": "SECTION_DRILLDOWN",
+                            "rewritten_query": user_msg_str,
+                            "retrieval_query": user_msg_str,
+                            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                            "gate_score": gate_score_out,
+                            "drilldown_section": _resolved,
+                            "drilldown_resolution": _respath,
+                        }
                 return {
-                    "intent": gated_intent,
+                    "intent": gate_score_out.committed,
                     "rewritten_query": user_msg_str,
                     "retrieval_query": user_msg_str,
                     "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
                 }
         except Exception as exc:
             logger.debug(f"semantic gate skipped: {exc}")
+            gate_score_out = None
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
+        # SECTION_DRILLDOWN refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
+        # "bisnis proses ada apa aja" -> SECTION_DRILLDOWN. Refine TOPIC_LIST to
+        # SECTION_DRILLDOWN when shape matches AND we can resolve the section from
+        # query (token match) OR history (deictic ordinal like "yang kedua", "topik B",
+        # "yang tadi"). No new LLM/embed call: just regex + dict lookup against the
+        # section_map cache (10-min, Postgres-backed).
+        if rule_intent == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
+            try:
+                _sm = await _load_section_map()
+            except Exception:
+                _sm = {}
+            _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
+            if _resolved:
+                logger.info(
+                    f"Pre-processor: TOPIC_LIST refined -> SECTION_DRILLDOWN "
+                    f"(section={_resolved!r}, via {_respath!r})"
+                )
+                state["drilldown_section"] = _resolved
+                state["drilldown_resolution"] = _respath
+                return {
+                    "intent": "SECTION_DRILLDOWN",
+                    "rewritten_query": user_msg_str,
+                    "retrieval_query": user_msg_str,
+                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
+                    "drilldown_section": _resolved,
+                    "drilldown_resolution": _respath,
+                }
+            logger.info(
+                "Pre-processor: drilldown shape matched but no section resolved - falling back to TOPIC_LIST"
+            )
         logger.info(f"Pre-processor: {rule_intent} → no retrieval, straight to generate")
         return {
             "intent": rule_intent,
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": gate_score_out,
         }
 
     # ── KNOWLEDGE: a real question → retrieve, then generate ────────────────
-    # Best-effort follow-up context (no LLM): a terse ANAPHORIC follow-up
-    # ("jelasin lagi", "terus gimana", "kenapa gitu") doesn't retrieve well
-    # alone, so prepend the most recent prior USER turn to land the search near
-    # the active topic.
-    #
-    # GUARD (fixes topic-panel bug): only prepend when the message is genuinely
-    # anaphoric — i.e. it references the prior turn WITHOUT naming its own topic.
-    # A self-contained short query ("jelaskan tentang Pelayanan", "apa itu PAR")
-    # names its topic and retrieves correctly alone; blending the previous turn
-    # into it pulls the WRONG document. The topic panel sends consecutive
-    # "jelaskan tentang X" clicks (each ≤40 chars), so the old length-only rule
-    # made every click inherit the PREVIOUS topic's chunks → a confident
-    # "belum nemu". Requiring a pure deictic marker (gitu/lagi/tadi/terus/…,
-    # deliberately NOT "kenapa"/"gimana" which commonly open self-contained
-    # questions like "kenapa CP penting") keeps the follow-up benefit while
-    # leaving self-contained queries untouched.
+    # Follow-up condense (LLM): a SHORT turn after prior history ("boleh", "iya
+    # yang itu", "dampaknya apa") can't retrieve alone — embedding it drifts onto
+    # the wrong topic and the model fabricates from training data. Condense it
+    # into a standalone query using recent turns (coreference resolution). Only
+    # short turns pay the rewrite call; a long self-contained question skips it,
+    # and the prompt returns an already-standalone short query unchanged.
     retrieval_query = user_msg_str
     _msg_stripped = user_msg_str.strip()
-    if (
-        len(_msg_stripped) <= 40
-        and len(messages) > 1
-        and _ANAPHORIC_FOLLOWUP_RE.search(_msg_stripped)
-    ):
-        prior_user = next(
-            (
-                (m.content if isinstance(m.content, str) else str(m.content))
-                for m in reversed(messages[:-1])
-                if isinstance(m, HumanMessage)
-            ),
-            None,
-        )
-        if prior_user:
-            retrieval_query = f"{prior_user.strip()} {_msg_stripped}".strip()
+    if len(_msg_stripped) <= _FOLLOWUP_MAX_CHARS and len(messages) > 1:
+        condensed = await _condense_followup_query(messages, _msg_stripped)
+        if condensed and condensed != _msg_stripped:
+            logger.info(f"Follow-up condensed: {_msg_stripped!r} → {condensed[:60]!r}")
+            retrieval_query = condensed
 
     # ── Semantic TOPIC_LIST fallback (regex missed) ─────────────────────────
     # The regex Tier-1 can't catch every typo/paraphrase of "what can I learn?"
@@ -684,6 +805,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                     "rewritten_query": user_msg_str,
                     "retrieval_query": user_msg_str,
                     "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
                 }
         except Exception as exc:
             logger.debug(f"semantic TOPIC_LIST fallback skipped: {exc}")
@@ -709,6 +831,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "needs_safety_escalation": 0.0,
             "learning_context": 0.0,
         },
+        "gate_score": gate_score_out,
     }
 
 
@@ -723,6 +846,26 @@ async def _handle_malicious(state: RAGState, config: RunnableConfig):
     return {"messages": [AIMessage(content=(
         "Maaf, tugasku khusus untuk membantu seputar materi Amarthapedia dan "
         "kebijakan internal Amartha. Ada yang bisa kubantu seputar itu?"
+    ))]}
+
+
+async def _handle_low_relevance(state: RAGState, config: RunnableConfig):
+    """Deterministic NOT-FOUND refusal for a KNOWLEDGE turn whose retrieval fell
+    below the dense floor — NO LLM call.
+
+    Why deterministic instead of letting generate_node's <no_context> prompt
+    handle it: a weak generator (DeepSeek/Gemini Flash class) reliably IGNORES
+    the "don't invent acronym expansions" rule for terms with a strong training
+    prior (e.g. "apa itu BMDP" → fabricated "Buku Monitoring..."), even with the
+    context correctly withheld. The floor stops the wrong chunks from entering;
+    this stops the model from inventing facts when nothing valid was retrieved.
+    Gentle wording so a reaction/meta turn that misroutes here ("halu banget")
+    still reads as "I didn't catch that" rather than a robotic error.
+    """
+    from langchain_core.messages import AIMessage
+    return {"messages": [AIMessage(content=(
+        "Hmm, aku belum nemu info soal itu di materi Amarthapedia yang aku punya. "
+        "Coba perjelas maksudnya atau pakai kata kunci lain ya 🙏"
     ))]}
 
 
@@ -771,6 +914,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "text": d.text,
                 "course_id": m.get("course_id", ""),
                 "course_name": m.get("course_name", d.title),
+                "section_name": m.get("section_name", ""),
                 "score": round(d.score, 4) if d.score is not None else 0.0,
                 "hybrid_score": round(d.hybrid_score, 4) if d.hybrid_score is not None else 0.0,
                 "dense_score": round(d.dense_score, 4) if d.dense_score is not None else 0.0,
@@ -917,6 +1061,323 @@ def _get_section_map_lock() -> asyncio.Lock:
     return _section_map_lock
 
 
+def _get_section_map_lock() -> asyncio.Lock:
+    global _section_map_lock
+    if _section_map_lock is None:
+        _section_map_lock = asyncio.Lock()
+    return _section_map_lock
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Section Drilldown helpers (Jun 2026)
+# ════════════════════════════════════════════════════════════════════════════════
+# "topic apa aja"         → TOPIC_LIST       (handled in `_pre_processor`).
+# "bisnis proses ada apa" → SECTION_DRILLDOWN: resolve WHICH section from query,
+#                             then list ALL items inside that section from
+#                             `section_map` (Postgres-cached).
+#
+# Design constraints:
+#   - 100% dynamic: section_map comes from Postgres, no hardcoded alias dict.
+#   - Zero new LLM call. Zero new embedding call. Pure regex + dict lookup.
+#   - Graceful deictic resolution: "yang kedua" / "topik B" / "yang tadi"
+#     resolve from the most recent TOPIC_LIST response in conversation history.
+# ════════════════════════════════════════════════════════════════════════════════
+
+_SECTION_NAME_STOPWORDS = frozenset({
+    "ada", "apa", "aja", "saja", "di", "dari", "ke", "yang", "itu",
+    "ini", "tadi", "tuh", "nih", "kan", "ya", "ga", "gak", "nggak",
+    "kok", "sih", "dong", "kak", "bang", "mas", "mbak", "bu", "pak",
+    "tolong", "mau", "ingin", "bisa", "dapat", "lihat", "tampil",
+    "list", "daftar", "show", "tampilkan", "lihatin",
+    "materi", "materinya", "dokumen", "dokumennya", "judul", "judulnya",
+    "file", "filenya", "topik", "topiknya", "topic", "section",
+    "course", "kursus", "pelajaran", "ajar", "nya", "aja",
+})
+
+try:
+    import yaml as _yaml_drilldown
+    _DRILLDOWN_PATTERNS_PATH = Path(__file__).parent / "intent_patterns.yaml"
+    _DRILLDOWN_PATTERNS = _yaml_drilldown.safe_load(
+        _DRILLDOWN_PATTERNS_PATH.read_text(encoding="utf-8")
+    ) or {}
+    _SECTION_DRILLDOWN_PHRASES = tuple(_DRILLDOWN_PATTERNS.get("section_drilldown_phrases", []))
+except Exception:
+    _SECTION_DRILLDOWN_PHRASES = (
+        "ada apa aja", "ada apa", "apa aja", "apa saja", "apa isinya",
+        "isinya apa", "di dalamnya apa", "dalamnya apa", "materinya apa",
+        "materi apa", "dokumennya apa", "judulnya apa", "list materi",
+        "list dokumen", "list judul", "daftar materi",
+        "tolong lihat", "lihat materi", "tampilkan materi",
+        "tampilkan dokumen",
+    )
+
+_ORDINAL_TO_INT = {
+    "1": 1, "satu": 1, "pertama": 1, "kesatu": 1, "a": 1,
+    "2": 2, "dua": 2, "kedua": 2, "kedu": 2, "b": 2,
+    "3": 3, "tiga": 3, "ketiga": 3, "c": 3,
+    "4": 4, "empat": 4, "keempat": 4, "d": 4,
+    "5": 5, "lima": 5, "kelima": 5, "e": 5,
+    "6": 6, "enam": 6, "keenam": 6, "f": 6,
+    "7": 7, "tujuh": 7, "ketujuh": 7, "g": 7,
+    "8": 8, "delapan": 8, "kedelapan": 8, "h": 8,
+}
+
+
+def _normalize_section_tokens(name: str) -> list[str]:
+    """Lowercase + strip punctuation + remove stopwords. Returns significant tokens."""
+    import re as _re
+    s = _re.sub(r"[^\w\s]", " ", (name or "").lower())
+    toks = [t for t in s.split() if t and t not in _SECTION_NAME_STOPWORDS and len(t) > 1]
+    return toks
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Standard Levenshtein edit distance. O(len(a)*len(b)). For short tokens only."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for i, bc in enumerate(b, 1):
+        cur = [i]
+        for j, ac in enumerate(a, 1):
+            cur.append(min(
+                cur[-1] + 1,        # insertion
+                prev[j] + 1,        # deletion
+                prev[j-1] + (ac != bc),  # substitution
+            ))
+        prev = cur
+    return prev[-1]
+
+
+def _fuzzy_token_match(qt: str, st: str) -> bool:
+    """Token match with edit-distance fallback for cross-language stem variants.
+
+    Examples: "bisnis" vs "business" (dist=3, ratio≈0.57), "ajar" vs "learning"
+    (dist=6, ratio≈0.18 — too far; rejected).
+    Threshold: edit distance <= max(2, 30% of max_len).
+    """
+    if not qt or not st:
+        return False
+    if qt == st:
+        return True
+    # Only fuzzy-match on tokens of similar length to avoid spurious matches
+    ratio = min(len(qt), len(st)) / max(len(qt), len(st))
+    if ratio < 0.55:
+        return False
+    d = _levenshtein(qt, st)
+    max_edits = max(2, int(max(len(qt), len(st)) * 0.30))
+    return d <= max_edits
+
+
+def _score_query_against_section(query: str, section_name: str) -> float:
+    """Score how well `query` matches `section_name`. 0.0 = no match, 1.0 = perfect."""
+    q_toks = _normalize_section_tokens(query)
+    s_toks = _normalize_section_tokens(section_name)
+    if not q_toks or not s_toks:
+        return 0.0
+    overlap = 0
+    for qt in q_toks:
+        for st in s_toks:
+            # 1) Substring containment (handles "anti" in "anti harassment")
+            if qt in st or st in qt:
+                overlap += 1
+                break
+            # 2) 4-char prefix match (handles "produk" vs "product", "klien" vs "client")
+            if len(qt) >= 4 and len(st) >= 4 and qt[:4] == st[:4]:
+                overlap += 1
+                break
+            # 3) Fuzzy edit-distance match (handles "bisnis" vs "business" — ID↔EN)
+            if _fuzzy_token_match(qt, st):
+                overlap += 1
+                break
+    token_score = overlap / max(1, len(s_toks))
+    q_full = " ".join(q_toks)
+    s_full = " ".join(s_toks)
+    if q_full and s_full and (q_full in s_full or s_full in q_full):
+        return 1.0
+    return min(1.0, token_score)
+
+
+def _detect_section_from_query(query: str, section_map: dict[str, list[str]]) -> str | None:
+    """Match query -> canonical section name via token containment."""
+    if not section_map:
+        return None
+    best_section, best_score = None, 0.0
+    for section in section_map.keys():
+        score = _score_query_against_section(query, section)
+        if score > best_score:
+            best_score, best_section = score, section
+    return best_section if best_score >= 0.30 else None
+
+
+def _flatten_message_content(content) -> str:
+    """LangChain message content can be str OR list[{type:text}]. Flatten to str."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for blk in content:
+            if isinstance(blk, dict):
+                txt = blk.get("text") or blk.get("content") or ""
+                if txt:
+                    parts.append(str(txt))
+            elif isinstance(blk, str):
+                parts.append(blk)
+        return " ".join(parts)
+    return str(content) if content else ""
+
+
+def _has_topic_list_marker(content: str) -> bool:
+    """Detect if a previous AI message was a TOPIC_LIST response."""
+    low = (content or "").lower()
+    markers = (
+        "berikut topik", "topik-topik", "daftar topik", "berikut daftar",
+        "ini dia topik", "topik yang tersedia", "berikut beberapa topik",
+        "kamu bisa belajar", "kamu bisa pelajari", "materi yang tersedia",
+        "available topics", "topics available",
+    )
+    return any(m in low for m in markers)
+
+
+def _extract_sections_from_topic_list(content: str) -> list[str]:
+    """Parse a TOPIC_LIST AI response to recover the section list."""
+    import re as _re
+    if not content:
+        return []
+    text = content
+
+    numbered = _re.findall(
+        r"(?:^|\n)\s*(?:\d+|[A-Ha-h])[\.\)]\s+([^\n]{2,80})", text
+    )
+    if numbered:
+        cleaned = []
+        for s in numbered:
+            s = s.strip().rstrip(",;.")
+            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
+            if 2 <= len(s) <= 80:
+                cleaned.append(s)
+        if cleaned:
+            return cleaned
+
+    bullets = _re.findall(r"(?:^|\n)\s*[-*•·]\s+([^\n]{2,80})", text)
+    if bullets:
+        cleaned = []
+        for s in bullets:
+            s = s.strip().rstrip(",;.")
+            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
+            if 2 <= len(s) <= 80:
+                cleaned.append(s)
+        if cleaned:
+            return cleaned
+
+    bolds = _re.findall(r"\*\*([^*\n]{2,60})\*\*", text)
+    if bolds:
+        cleaned = [s.strip().rstrip(",;.") for s in bolds if 2 <= len(s.strip()) <= 60]
+        if cleaned:
+            return cleaned
+
+    return []
+
+
+def _resolve_section_ordinal(query: str, sections: list[str]) -> str | None:
+    """Resolve 'yang kedua', 'topik B', 'nomor 3' against a section list."""
+    import re as _re
+    q = (query or "").lower().strip()
+    if not q or not sections:
+        return None
+    m = _re.search(
+        r"(?:yang|topi[ck]|no(?:mor)?|pilihan?)\s*"
+        r"(?:ke-?|nomor\s*)?\s*"
+        r"(satu|dua|tiga|empat|lima|enam|tujuh|delapan|"
+        r"pertama|kedua|ketiga|keempat|kelima|keenam|ketujuh|kedelapan|"
+        r"[1-8]|[a-h])\b",
+        q,
+    )
+    if m:
+        word = m.group(1).lower()
+        idx = _ORDINAL_TO_INT.get(word)
+        if idx and 1 <= idx <= len(sections):
+            return sections[idx - 1]
+    if _re.fullmatch(
+        r"(?:yang\s+(?:itu|tadi|barusan|sebelumnya|maksud|disebut|dibahas))+|"
+        r"(?:yang)|(?:itu)|(?:tadi)|(?:yang\s+aja)|(?:pilih\s+itu)",
+        q.strip(),
+    ):
+        return sections[-1] if sections else None
+    return None
+
+
+def _extract_topic_list_from_history(messages: list) -> list[str]:
+    """Walk messages backwards, find last AI TOPIC_LIST response, return section list."""
+    if not messages:
+        return []
+    for m in reversed(messages[:-1]):
+        role = getattr(m, "type", None) or getattr(m, "role", "")
+        if role and role not in ("ai", "assistant"):
+            continue
+        content = _flatten_message_content(getattr(m, "content", ""))
+        if not _has_topic_list_marker(content):
+            continue
+        sections = _extract_sections_from_topic_list(content)
+        if sections:
+            return sections
+    return []
+
+
+def _resolve_drilldown_section(
+    query: str,
+    messages: list,
+    section_map: dict[str, list[str]],
+) -> tuple[str | None, str | None]:
+    """Resolve drilldown query -> canonical section name.
+
+    Resolution order:
+      1. Direct token match against section_map keys.
+      2. Conversation-history deictic resolution.
+      3. Token match against section list extracted from history.
+
+    Returns (section_name | None, resolution_path | None).
+    """
+    if not query or not section_map:
+        return None, None
+
+    direct = _detect_section_from_query(query, section_map)
+    if direct:
+        return direct, "query"
+
+    sections_in_history = _extract_topic_list_from_history(messages or [])
+    if sections_in_history:
+        ordinal = _resolve_section_ordinal(query, sections_in_history)
+        if ordinal:
+            for sec in section_map.keys():
+                if _score_query_against_section(ordinal, sec) >= 0.50:
+                    return sec, "history_ordinal"
+        best, best_score = None, 0.0
+        for sec in sections_in_history:
+            score = _score_query_against_section(query, sec)
+            if score > best_score:
+                best_score, best = score, sec
+        if best and best_score >= 0.30:
+            for sec in section_map.keys():
+                if _score_query_against_section(best, sec) >= 0.50:
+                    return sec, "history"
+
+    return None, None
+
+
+def _is_section_drilldown_shape(query: str) -> bool:
+    """Quick shape check: does the query LOOK like 'what's inside topic X'?"""
+    if not query or len(query) > 150:
+        return False
+    low = query.lower().strip()
+    return any(p in low for p in _SECTION_DRILLDOWN_PHRASES)
+
+
 async def _load_section_map() -> dict[str, list[str]]:
     """Map each Moodle SECTION → its item (course_name) list, TTL-cached (10min).
 
@@ -1026,7 +1487,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         chunk_char_cap = _settings.lms_chunk_text_max_chars
         context_lines = []
         for i, c in enumerate(_ordered, 1):
-            chunk_text = _strip_md_headings_for_context(c.get("text", ""))
+            chunk_text = _normalize_dashes(_strip_md_headings_for_context(c.get("text", "")))
             if chunk_char_cap and len(chunk_text) > chunk_char_cap:
                 chunk_text = chunk_text[:chunk_char_cap].rstrip() + "…"
             context_lines.append(
@@ -1054,30 +1515,74 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             course_names = await _load_course_names()
         except Exception:
             course_names = []
+        # DATA ONLY — the "list these verbatim / don't invent" instruction lives
+        # in CONVERSATIONAL_PROMPT's <grounding> block, NOT here. Appending a
+        # plain-prose directive right after the data made the weak generator
+        # echo it verbatim to the user (the topic-list leak). Same lesson as
+        # context_section above: keep injected blocks pure data.
         if course_names:
             topics_section = (
                 "\n\n<available_topics>\n"
                 + "\n".join(f"- {c}" for c in course_names)
-                + "\n</available_topics>\n"
-                "User asked what topics/materials exist. List ONLY the topics in "
-                "<available_topics> above, verbatim — do NOT invent or rename any."
+                + "\n</available_topics>"
             )
         else:
-            # Empty list = Postgres load failed or no docs ingested. Without
-            # this branch topics_section stays "", _is_grounded falls to False,
-            # and the warm chat LLM answers a "what topics?" turn with NO
-            # grounding — which fabricates plausible-sounding topics (the
-            # "Pinjaman Modal, Cicilan Emas" hallucination). Inject an explicit
-            # no-data directive instead; the non-empty string also flips
-            # _is_grounded → True so the deterministic (temp 0) client is used.
+            # Empty list = Postgres load failed or no docs ingested. The non-empty
+            # sentinel string still flips _is_grounded → True (deterministic temp-0
+            # client) and the prompt's <grounding> rule tells the model to admit it
+            # can't load the list rather than fabricate topics.
             topics_section = (
                 "\n\n<available_topics>\n(could not load topic list right now)\n"
-                "</available_topics>\n"
-                "User asked what topics/materials exist, but the list is "
-                "unavailable. Say briefly that you can't pull up the topic list "
-                "right now and ask them to try again — do NOT invent, guess, or "
-                "name ANY topics."
+                "</available_topics>"
             )
+
+    # Section drill-down. Two paths (Jun 2026):
+    # (1) SECTION_DRILLDOWN (priority): `_pre_processor` resolved the section
+    #     name from query/history and stored it in state["drilldown_section"].
+    #     Inject the canonical list of items — fully dynamic, no KB dep.
+    #     Handles "bisnis proses ada apa aja", "yang kedua", "topik B",
+    #     "di leadership materinya apa".
+    # (2) Legacy fallback: when retrieved KB chunks concentrate (>=60%) in one
+    #     section, infer that section and inject its items. Used when the
+    #     question is implicitly about a section but drilldown didn't fire.
+    section_section = ""
+    drilldown_sec = state.get("drilldown_section")
+    if drilldown_sec:
+        try:
+            items = (await _load_section_map()).get(drilldown_sec, [])
+        except Exception:
+            items = []
+        if items:
+            section_section = (
+                f'\n\n<section_materials section="{drilldown_sec}">\n'
+                + "\n".join(f"- {it}" for it in items)
+                + "\n</section_materials>"
+            )
+            logger.info(
+                f"SECTION_DRILLDOWN inject: section={drilldown_sec!r}, "
+                f"{len(items)} items, via={state.get('drilldown_resolution')!r}"
+            )
+        else:
+            logger.warning(
+                f"SECTION_DRILLDOWN resolved section={drilldown_sec!r} but "
+                f"section_map has no items - falling back to legacy path"
+            )
+    if not section_section and has_kb_context and chunks:
+        from collections import Counter as _Counter
+        secs = [c.get("section_name", "").strip() for c in chunks if c.get("section_name", "").strip()]
+        if secs:
+            dom_sec, dom_n = _Counter(secs).most_common(1)[0]
+            if dom_n >= max(2, (len(chunks) * 3 + 4) // 5):  # >=60% of chunks
+                try:
+                    items = (await _load_section_map()).get(dom_sec, [])
+                except Exception:
+                    items = []
+                if len(items) > 1:  # a 1-item section has nothing to drill into
+                    section_section = (
+                        f"\n\n<section_materials section=\"{dom_sec}\">\n"
+                        + "\n".join(f"- {it}" for it in items)
+                        + "\n</section_materials>"
+                    )
 
     # Long-term memory (LTM profile)
     ltm_section = ""
@@ -1149,7 +1654,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
                 + "\n</user_context>"
             )
 
-    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{context_section}".strip()
+    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
     # Temperature split (no extra tokens — just which pre-built client we call):
     #   - GROUNDED turn (KB <context> present, or a TOPIC_LIST with the real
@@ -1166,7 +1671,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # uses a DIFFERENT cached system prefix (SOCRATIC_PROMPT) — that's a separate
     # prompt-cache entry, still cacheable, just not shared with the conv prefix.
     is_coaching = intent == "COACHING"
-    _is_grounded = (has_kb_context or bool(topics_section)) and not is_coaching
+    _is_grounded = (has_kb_context or bool(topics_section) or bool(section_section)) and not is_coaching
     llm = get_generate_llm() if _is_grounded else get_chat_llm()
     windowed_messages = _window_generate_history(
         list(state["messages"]),
@@ -1223,6 +1728,17 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 
 def _route_by_intent(state: RAGState) -> str:
     return state.get("intent") or "KNOWLEDGE"
+
+
+def _route_after_retrieval(state: RAGState) -> str:
+    """After rag_node: a KNOWLEDGE turn whose retrieval fell below the dense
+    floor is refused deterministically (no LLM) so the model can't invent facts
+    when nothing valid was retrieved (e.g. fabricating an acronym expansion for
+    an un-ingested term). COACHING is NOT refused — it keeps flowing to
+    generate_node so the Socratic prompt can still open a guiding question."""
+    if state.get("intent") == "KNOWLEDGE" and _route_after_rag(state) == "low_relevance":
+        return "low_relevance"
+    return "generate_node"
 
 
 def _route_after_rag(state: RAGState) -> str:
@@ -1343,6 +1859,7 @@ def _build_agent_graph():
     builder.add_node("pre_processor", _pre_processor)
     builder.add_node("malicious", _handle_malicious)
     builder.add_node("rag_node", _rag_node)
+    builder.add_node("low_relevance", _handle_low_relevance)
     builder.add_node("generate_node", _generate_node)
 
     # Edges
@@ -1357,6 +1874,10 @@ def _build_agent_graph():
             "AMBIGUOUS": "generate_node",
             "OFF_SCOPE": "generate_node",
             "TOPIC_LIST": "generate_node",
+            # Jun 2026: SECTION_DRILLDOWN resolves to one specific section
+            # from query/history and injects its canonical items via
+            # `<section_materials>` — no KB retrieval needed, straight to generate.
+            "SECTION_DRILLDOWN": "generate_node",
             # Real question → retrieve first.
             "KNOWLEDGE": "rag_node",
             # Coaching (Socratic) also retrieves first — the guiding question
@@ -1365,11 +1886,19 @@ def _build_agent_graph():
         },
     )
     builder.add_edge("malicious", END)
-    # rag_node ALWAYS flows to generate_node — the dense-floor NOT-FOUND gate is
-    # applied inside generate_node (context injected only when relevant), so
-    # there's no separate low_relevance dead-end. _route_after_rag is still used
-    # by chat.py for cache-write gating and by generate_node for context gating.
-    builder.add_edge("rag_node", "generate_node")
+    # rag_node → generate_node, UNLESS a KNOWLEDGE turn fell below the dense
+    # floor — then route to the deterministic low_relevance refusal (no LLM, so
+    # the model can't invent facts when nothing valid was retrieved). COACHING
+    # below-floor still flows to generate_node (Socratic prompt handles it).
+    builder.add_conditional_edges(
+        "rag_node",
+        _route_after_retrieval,
+        {
+            "low_relevance": "low_relevance",
+            "generate_node": "generate_node",
+        },
+    )
+    builder.add_edge("low_relevance", END)
     builder.add_edge("generate_node", END)
 
     return builder.compile()

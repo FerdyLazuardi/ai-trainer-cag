@@ -33,6 +33,8 @@ off_scope_keywords:
 - berita hari ini
 - headline berita
 - breaking news
+- harga bbm
+- bbm sekarang
 - resep
 - recipe
 - menu makan
@@ -454,3 +456,35 @@ thanks_fluff:
 - so
 - much
 - very
+
+# ─── Section drilldown intent (Jun 2026) ─────────────────────────────────────
+# Triggers when user asks "what's inside topic X" / "list the docs in section X".
+# Only detects the drilldown SHAPE — which specific section is detected
+# separately by token-matching against the dynamic section_map cache, with
+# fallback to conversation-history deictic resolution. This is fully dynamic:
+# adding a new section in Moodle → automatic, no Python changes needed.
+# Distinct from TOPIC_LIST: TOPIC_LIST lists *all* sections; SECTION_DRILLDOWN
+# lists the *items inside one* specific section.
+section_drilldown_phrases:
+- "ada apa aja"
+- "ada apa"
+- "apa aja"
+- "apa saja"
+- "apa isinya"
+- "isinya apa"
+- "di dalamnya apa"
+- "dalamnya apa"
+- "materinya apa"
+- "materi apa"
+- "dokumennya apa"
+- "judulnya apa"
+- "file-nya apa"
+- "filenya apa"
+- "list materi"
+- "list dokumen"
+- "list judul"
+- "daftar materi"
+- "tolong lihat"
+- "lihat materi"
+- "tampilkan materi"
+- "tampilkan dokumen"

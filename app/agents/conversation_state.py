@@ -428,6 +428,43 @@ async def add_courses(
         pass
 
 
+async def bump_topic_streak(
+    redis: Redis, conv_id: str, topic: str, *, threshold: int
+) -> str | None:
+    """Track consecutive same-topic turns in the conversation HASH; return the
+    topic when the streak hits `threshold` (and reset), else None.
+
+    Decay (not hard reset) on topic shift: a different topic decrements the
+    count by 1, so drifting across 1-2 related sections doesn't kill an active
+    streak. Mirrors the old frontend window._topicStreak logic, moved server-side
+    so the Moodle plugin stays a dumb renderer. Sequential HGET+HSETEX (chat
+    handler is the only writer). Returns None on any failure (no offer)."""
+    if not conv_id or not topic or not topic.strip():
+        return None
+    topic = topic.strip()
+    key = _conv_key(conv_id)
+    try:
+        raw = await redis.hget(key, "streak")
+        st = json.loads(raw) if raw else {}
+        cur_t, cur_n = st.get("t"), int(st.get("n", 0))
+
+        if cur_t == topic:
+            new_t, new_n = topic, cur_n + 1
+        else:
+            decayed = max(0, cur_n - 1)
+            new_t, new_n = (cur_t, decayed) if decayed > 0 else (topic, 1)
+
+        reached = new_n >= threshold
+        write_val = {"t": None, "n": 0} if reached else {"t": new_t, "n": new_n}
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(key, mapping={"streak": json.dumps(write_val)}, ex=_key_ttl())
+            pipe.expire(key, _key_ttl())
+            await pipe.execute()
+        return new_t if reached else None
+    except Exception:
+        return None
+
+
 # ── Compound operations ──────────────────────────────────────────────────────
 async def schedule_afk_sync(
     redis: Redis, conv_id: str, user_id: str

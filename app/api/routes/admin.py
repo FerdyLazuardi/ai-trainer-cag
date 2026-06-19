@@ -1,16 +1,22 @@
+import asyncio
+import base64
 import secrets
+from datetime import datetime
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import text
 
 from app.config.settings import get_settings
 from app.database.postgres import engine
 
+settings = get_settings()
+
 router = APIRouter()
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
 
 def verify_api_key(api_key: str = Security(api_key_header)):
     settings = get_settings()
@@ -22,97 +28,203 @@ def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return api_key
 
-@router.get("/logs", summary="Get aggregated logs for Dashboard")
-async def get_dashboard_logs(limit: int = 100, _=Depends(verify_api_key)) -> Dict[str, Any]:
+
+# Opaque cursor for Recent Logs pagination: base64('<created_at_iso>|<id>').
+# Keyset on (created_at, id) avoids duplicates when multiple rows share a
+# second-resolution timestamp and is index-friendly (created_at DESC, id DESC).
+def _encode_cursor(created_at: str, row_id: int) -> str:
+    raw = f"{created_at}|{row_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, int] | None:
+    # ponytail: SQLAlchemy text() with asyncpg passes positional params typed —
+    # passing the raw ISO string raises DataError("expected datetime"). Parse
+    # to a real datetime so the bound parameter survives the driver roundtrip.
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode()).decode()
+        ts, rid = raw.split("|", 1)
+        # Accept "YYYY-MM-DD HH:MM:SS.fff+ZZ:ZZ" (Postgres timestamptz default
+        # format from text()) and "YYYY-MM-DDTHH:MM:SS.fff+ZZ:ZZ" (ISO).
+        ts_norm = ts.replace("T", " ")
+        return datetime.fromisoformat(ts_norm), int(rid)
+    except Exception:
+        return None
+
+
+async def _run_one(sql: str, params: dict | None = None):
+    """Acquire a fresh connection, run one query, return Result, close.
+
+    The original code reused a single connection across 7 awaits, so the
+    queries ran serially (each await blocks until the previous query's
+    network round-trip finished). Each `_run_one` opens its own connection
+    so asyncio.gather can fan them out — Postgres pool (8 base + 12 overflow)
+    absorbs the burst on the X-API-Key gated admin endpoint.
+    """
     async with engine.connect() as conn:
-        # Total Interactions
-        total_q_res = await conn.execute(text("SELECT COUNT(*) FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL"))
-        total_q = total_q_res.scalar() or 0
-        
-        # Average Latency
-        avg_lat_res = await conn.execute(text("SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND (endpoint != 'askfer' OR endpoint IS NULL)"))
-        avg_lat = avg_lat_res.scalar() or 0.0
-        
-        # Cache Hit Rate
-        cache_hits_res = await conn.execute(text("SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL"))
-        cache_hits = cache_hits_res.scalar() or 0
-        hit_rate = (float(cache_hits) / float(total_q) * 100) if total_q > 0 else 0.0
+        return await conn.execute(text(sql), params or {})
 
-        # Intents
-        intents_result_exec = await conn.execute(text("SELECT intent, COUNT(*) as count FROM agent_logs WHERE endpoint != 'askfer' OR endpoint IS NULL GROUP BY intent"))
-        intents_result = intents_result_exec.fetchall()
-        intents = [{"intent": str(row[0]), "count": int(row[1])} for row in intents_result]
 
-        # Trends
-        trends_result_exec = await conn.execute(text("""
-            SELECT DATE(created_at) as date, COUNT(*) as queries
+@router.get("/logs", summary="Get aggregated logs for Dashboard")
+async def get_dashboard_logs(
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: str | None = Query(default=None, description="Opaque pagination cursor from a prior response's next_cursor"),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    decoded = _decode_cursor(cursor) if cursor else None
+
+    # cache_lookup rows are observability events (intentional, see audit
+    # 5.11) — counted in KPIs/intents/trends but NOT in Recent Logs (would
+    # show the same query 3-4× as a fake routing bug).
+    non_askfer = "(endpoint != 'askfer' OR endpoint IS NULL)"
+    chat_where = f"{non_askfer} AND endpoint != 'cache_lookup'"
+
+    # Keyset pagination: strict (created_at, id) less-than to avoid duplicates
+    # on shared-second timestamps. OR form keeps it valid SQLAlchemy text()
+    # (no row-value tuple binding needed).
+    cursor_clause = ""
+    cursor_params: dict[str, Any] = {}
+    if decoded:
+        cursor_clause = (
+            "AND (created_at < :cursor_ts "
+            "OR (created_at = :cursor_ts AND id < :cursor_id)) "
+        )
+        cursor_params = {"cursor_ts": decoded[0], "cursor_id": decoded[1]}
+
+    # Fetch limit+1 to detect has_more without a separate COUNT(*).
+    recent_limit = limit + 1
+
+    total_q, avg_lat, cache_hits, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
+        _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {non_askfer}"),
+        _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {non_askfer}"),
+        _run_one(f"SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs WHERE {non_askfer}"),
+        _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {non_askfer} GROUP BY intent"),
+        _run_one(f"""
+            SELECT DATE(created_at) AS date, COUNT(*) AS queries
             FROM agent_logs
-            WHERE endpoint != 'askfer' OR endpoint IS NULL
+            WHERE {non_askfer}
+              AND created_at > NOW() - INTERVAL '30 days'
             GROUP BY DATE(created_at)
             ORDER BY date ASC
-        """))
-        trends_result = trends_result_exec.fetchall()
-        trends = [{"date": str(row[0]), "queries": int(row[1])} for row in trends_result]
-
-        # Recent Logs
-        logs_result_exec = await conn.execute(text("""
-            SELECT created_at, intent, latency_ms, cache_hit, query, answer, conversation_id, llm_tokens_used, chunks_retrieved,
-                   faithfulness_score, needs_empathy, needs_reasoning, needs_lookup, retrieved_context
+        """),
+        _run_one(f"""
+            SELECT created_at, id, intent, latency_ms, cache_hit, query, answer,
+                   conversation_id, llm_tokens_used, chunks_retrieved,
+                   faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
+                   retrieved_context
             FROM agent_logs
-            WHERE endpoint != 'askfer' OR endpoint IS NULL
-            ORDER BY created_at DESC
+            WHERE {chat_where}
+              {cursor_clause}
+            ORDER BY created_at DESC, id DESC
             LIMIT :limit
-        """), {"limit": limit})
-        logs_result = logs_result_exec.fetchall()
-        
-        logs = [
-            {
-                "created_at": str(row[0]),
-                "intent": str(row[1]),
-                "latency_ms": float(row[2]) if row[2] is not None else 0.0,
-                "cache_hit": bool(row[3]),
-                "query": str(row[4]),
-                "answer": str(row[5]),
-                "session_id": str(row[6]) if row[6] else "Unknown",
-                "tokens": int(row[7]) if row[7] is not None else 0,
-                "retrieved": int(row[8]) if row[8] is not None else 0,
-                "faithfulness": float(row[9]) if row[9] is not None else None,
-                "empathy": float(row[10]) if row[10] is not None else None,
-                "reasoning": float(row[11]) if row[11] is not None else None,
-                "lookup": float(row[12]) if row[12] is not None else None,
-                "retrieved_context": row[13] if row[13] is not None else []
-            }
-            for row in logs_result
-        ]
-        
-        # Users (LTM)
-        users_result_exec = await conn.execute(text("""
+        """, {"limit": recent_limit, **cursor_params}),
+        _run_one("""
             SELECT user_id, role, preferred_tone, formatting_pref, custom_instructions, updated_at
             FROM user_profiles
             ORDER BY updated_at DESC
-        """))
-        users_result = users_result_exec.fetchall()
-        
-        users = [
-            {
-                "user_id": str(row[0]),
-                "role": str(row[1]) if row[1] else "",
-                "preferred_tone": str(row[2]) if row[2] else "",
-                "formatting_pref": str(row[3]) if row[3] else "",
-                "custom_instructions": str(row[4]) if row[4] else "",
-                "updated_at": str(row[5])
-            }
-            for row in users_result
-        ]
+        """),
+        # Rolling-7d perf + quality. Window matters: an all-time AVG/percentile
+        # is dragged for weeks by a single bad day (e.g. a cold-start/retry-storm
+        # day with p95=90s), hiding that recent traffic is ~4s p95. 7d tracks
+        # "how is it NOW". Latency excludes cache_lookup (no LLM); faithfulness
+        # is the sampled judge score (NULL for un-evaluated turns).
+        _run_one(f"""
+            SELECT
+              percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)
+                FILTER (WHERE latency_ms IS NOT NULL) AS p95,
+              percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)
+                FILTER (WHERE latency_ms IS NOT NULL) AS p99,
+              AVG(faithfulness_score) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_avg,
+              COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_n,
+              COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL
+                AND faithfulness_score < :faith_min) AS faith_fail
+            FROM agent_logs
+            WHERE {chat_where} AND created_at > NOW() - INTERVAL '7 days'
+        """, {"faith_min": settings.faithfulness_min}),
+    )
+
+    total = int(total_q.scalar() or 0)
+    avg_latency = float(avg_lat.scalar() or 0.0)
+    hits = int(cache_hits.scalar() or 0)
+    hit_rate = (hits / total * 100.0) if total > 0 else 0.0
+
+    perf = perf_q.fetchone()
+    p95_7d = float(perf[0]) if perf and perf[0] is not None else 0.0
+    p99_7d = float(perf[1]) if perf and perf[1] is not None else 0.0
+    faith_avg_7d = float(perf[2]) if perf and perf[2] is not None else None
+    faith_n_7d = int(perf[3]) if perf and perf[3] is not None else 0
+    faith_fail_7d = int(perf[4]) if perf and perf[4] is not None else 0
+
+    intents = [
+        {"intent": str(row[0]) if row[0] else "UNKNOWN", "count": int(row[1])}
+        for row in intents_q.fetchall()
+    ]
+
+    trends = [
+        {"date": str(row[0]), "queries": int(row[1])}
+        for row in trends_q.fetchall()
+    ]
+
+    log_rows = logs_q.fetchall()
+    has_more = len(log_rows) > limit
+    if has_more:
+        log_rows = log_rows[:limit]
+
+    logs = [
+        {
+            "created_at": str(row[0]),
+            "intent": str(row[2]) if row[2] else "UNKNOWN",
+            "latency_ms": float(row[3]) if row[3] is not None else 0.0,
+            "cache_hit": bool(row[4]),
+            "query": str(row[5]),
+            "answer": str(row[6]) if row[6] else "",
+            "session_id": str(row[7]) if row[7] else "Unknown",
+            "tokens": (
+                f"{int(row[8]):,}" if row[8] else "—"
+            ) if row[8] is not None else "—",
+            "tokens_raw": int(row[8]) if row[8] is not None else 0,
+            "retrieved": int(row[9]) if row[9] is not None else 0,
+            "faithfulness": float(row[10]) if row[10] is not None else None,
+            "empathy": float(row[11]) if row[11] is not None else None,
+            "reasoning": float(row[12]) if row[12] is not None else None,
+            "lookup": float(row[13]) if row[13] is not None else None,
+            "retrieved_context": row[14] if row[14] is not None else [],
+        }
+        for row in log_rows
+    ]
+
+    next_cursor = None
+    if has_more and log_rows:
+        last = log_rows[-1]
+        next_cursor = _encode_cursor(str(last[0]), int(last[1]))
+
+    users = [
+        {
+            "user_id": str(row[0]),
+            "role": str(row[1]) if row[1] else "",
+            "preferred_tone": str(row[2]) if row[2] else "",
+            "formatting_pref": str(row[3]) if row[3] else "",
+            "custom_instructions": str(row[4]) if row[4] else "",
+            "updated_at": str(row[5]),
+        }
+        for row in users_q.fetchall()
+    ]
 
     return {
         "kpis": {
-            "total_queries": int(total_q),
-            "avg_latency": float(avg_lat),
-            "hit_rate": float(hit_rate)
+            "total_queries": total,
+            "avg_latency": avg_latency,
+            "hit_rate": hit_rate,
+            "p95_latency_7d": p95_7d,
+            "p99_latency_7d": p99_7d,
+            "faithfulness_avg_7d": faith_avg_7d,
+            "faithfulness_n_7d": faith_n_7d,
+            "faithfulness_fail_7d": faith_fail_7d,
         },
         "intents": intents,
         "trends": trends,
         "logs": logs,
-        "users": users
+        "next_cursor": next_cursor,
+        "users": users,
     }

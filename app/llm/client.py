@@ -133,7 +133,12 @@ def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
         # provider outage degrades to the rest of the market, not a failure.
         order = settings.llm_provider_order_list or ["deepseek"]
         body["provider"] = {"order": order, "allow_fallbacks": True}
-        body["reasoning"] = {"effort": "none"}
+        # effort=none asks the upstream not to reason; exclude=true is the
+        # belt-and-suspenders that strips reasoning from the response even when
+        # a pinned provider (alibaba/baidu/novita) ignores effort=none and emits
+        # CoT into message.content. Without exclude, that CoT leaked verbatim to
+        # the user. "All models support exclude" per OpenRouter reasoning docs.
+        body["reasoning"] = {"effort": "none", "exclude": True}
     return body
 
 

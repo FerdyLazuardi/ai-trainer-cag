@@ -119,6 +119,15 @@ async def clear_conversation_history(conversation_id: str) -> None:
     await _cs.clear_conversation(get_redis_client(), conversation_id)
 
 
+async def bump_topic_streak(conversation_id: str, topic: str) -> Optional[str]:
+    return await _cs.bump_topic_streak(
+        get_redis_client(),
+        conversation_id,
+        topic,
+        threshold=settings.coaching_streak_threshold,
+    )
+
+
 async def resolve_numeric_query(query: str, conversation_id: str) -> str:
     return await _cs.resolve_numeric_query(
         get_redis_client(), query, conversation_id
@@ -306,11 +315,14 @@ def _quality_log_fields(
     intent: Optional[str],
     intent_scores: Optional[dict],
     max_dense_score: Optional[float],
+    gate_score: Optional[dict] = None,
 ) -> dict:
     """Build the durable quality-signal columns for an agent_logs row.
 
-    Persists intent + retrieval signal to Postgres so monitoring works
-    without any external tracing backend.
+    Persists intent + retrieval signal + semantic-gate trace to Postgres so
+    monitoring works without any external tracing backend. ``gate_score`` is
+    the dataclass-as-dict from ``classify_semantic_with_scores`` (or None
+    for cache hits / non-chat paths that skip the pre-processor).
     """
     scores = intent_scores or {}
 
@@ -318,12 +330,45 @@ def _quality_log_fields(
         v = scores.get(key)
         return float(v) if isinstance(v, (int, float)) else None
 
+    def _gf(key, cast=float):
+        if not gate_score:
+            return None
+        v = gate_score.get(key)
+        return cast(v) if v is not None else None
+
     return {
         "intent": intent,
         "needs_lookup": _f("needs_lookup"),
         "needs_reasoning": _f("needs_reasoning"),
         "needs_empathy": _f("needs_empathy"),
         "max_dense_score": float(max_dense_score) if isinstance(max_dense_score, (int, float)) else None,
+        # Semantic-gate trace (HIT/MISS/SKIP + the raw cosine numbers that
+        # drove the decision). The dashboard reads these directly to plot
+        # per-intent distributions and detect drift.
+        "gate_decision": _gf("decision", str),
+        "gate_intent": _gf("best_intent", str),
+        "gate_best_cosine": _gf("best_cosine"),
+        "gate_second_cosine": _gf("second_cosine"),
+        "gate_margin": _gf("margin"),
+    }
+
+
+def _serialize_gate_score(gs) -> Optional[dict]:
+    """Convert a GateScore dataclass (or None / dict) to a plain dict for
+    batch_logger pickling. Returns None when the gate didn't run (cache
+    hit, or pre-processor skipped it)."""
+    if gs is None:
+        return None
+    if isinstance(gs, dict):
+        return gs
+    return {
+        "decision": getattr(gs, "decision", None),
+        "committed": getattr(gs, "committed", None),
+        "best_intent": getattr(gs, "best_intent", None),
+        "best_cosine": getattr(gs, "best_cosine", None),
+        "second_intent": getattr(gs, "second_intent", None),
+        "second_cosine": getattr(gs, "second_cosine", None),
+        "margin": getattr(gs, "margin", None),
     }
 
 
@@ -797,7 +842,9 @@ async def _run_chat(
 
         latency_ms = (time.perf_counter() - start_time) * 1000
         final_message = result["messages"][-1]
+        from app.graph.pipeline import _sanitize_answer
         answer = final_message.content if hasattr(final_message, "content") else str(final_message)
+        answer = _sanitize_answer(answer)
         llm_tokens_used = 0
         if hasattr(final_message, "response_metadata"):
             llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
@@ -907,7 +954,15 @@ async def _run_chat(
             "llm_tokens_used": llm_tokens_used,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
-            **_quality_log_fields(intent, result.get("intent_scores"), max_chunk_score),
+            **_quality_log_fields(
+                intent,
+                result.get("intent_scores"),
+                max_chunk_score,
+                # Serialize the GateScore dataclass (or None) to a dict so
+                # batch_logger can pickle it cleanly. The dashboard reads
+                # individual fields via _quality_log_fields.
+                _serialize_gate_score(result.get("gate_score")),
+            ),
         }
     )
     
@@ -1055,9 +1110,12 @@ async def list_sections(
 @router.post("/chat/sync_memory/{conversation_id}", summary="Sync chat history to Long-Term Memory")
 async def sync_memory(
     conversation_id: str,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
+    # ponytail: no-op. LTM sync is driven by the AFK worker (worker.py
+    # sync_ltm_task), not this route. Kept as a 200 so any legacy Moodle
+    # plugin POSTing here doesn't error; body says "ignored" so it's not
+    # mistaken for a real sync. Delete the route once no client calls it.
     return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
 
 
@@ -1161,6 +1219,14 @@ async def chat_stream(
         stream_pool_max_dense = None
         stream_pool_max_sparse = None
         stream_dense_retrieval_ok = None
+        # Semantic-gate trace (Jun 2026) — captured from pre_processor's
+        # on_chain_end output. Mirrors the non-stream path's `result.gate_score`.
+        stream_gate_score = None
+        # Real total LLM tokens (input+output) from the final generate_node
+        # AIMessage's response_metadata.token_usage. Populated by the
+        # on_chain_end capture below; defaults to None (and falls back to
+        # token_count in the worst case where the provider omits usage).
+        stream_total_tokens: int | None = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
@@ -1236,11 +1302,39 @@ async def chat_stream(
                             intent = output["intent"]
                         if "intent_scores" in output:
                             stream_intent_scores = output.get("intent_scores") or {}
+                        if "gate_score" in output:
+                            stream_gate_score = output.get("gate_score")
                         if "rewritten_query" in output:
                             new_rewrite = output.get("rewritten_query")
                             if new_rewrite and new_rewrite != resolved_query:
                                 resolved_query = new_rewrite
                                 yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+                # Real token usage for the agent_logs row. generate_node
+                # returns the AIMessage in its `messages` field; the OpenRouter
+                # / Gemini provider writes the final token_usage to the
+                # message's response_metadata. This is the SAME source the
+                # non-stream path reads on chat.py:839. Without this, stream
+                # rows log the chunk-event counter (1-3 per token emitted) and
+                # show 4-24 instead of the real 1000-3000 — a quiet data
+                # corruption that made the dashboard's token column useless.
+                if kind == "on_chain_end" and event.get("name") == "generate_node":
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        msgs_out = output.get("messages") or []
+                        if msgs_out:
+                            last_msg = msgs_out[-1]
+                            tu = (getattr(last_msg, "response_metadata", None) or {}).get("token_usage") or {}
+                            real_total = tu.get("total_tokens")
+                            if isinstance(real_total, int) and real_total > 0:
+                                stream_total_tokens = real_total
+                            else:
+                                # Fallback to usage_metadata (LangChain-normalized).
+                                um = getattr(last_msg, "usage_metadata", None) or {}
+                                in_t = um.get("input_tokens") or 0
+                                out_t = um.get("output_tokens") or 0
+                                if in_t or out_t:
+                                    stream_total_tokens = int(in_t) + int(out_t)
 
                 # Canned-response nodes return an AIMessage directly without
                 # invoking an LLM, so no `on_chat_model_stream` event fires
@@ -1283,6 +1377,11 @@ async def chat_stream(
                             # is a no-op on clean preambles so it's safe.
                             safe = leak_guard.feed(token)
                             if safe:
+                                # Model still emits em/en-dashes despite the prompt ban. Swap to a
+                                # comma (collapsing same-token surrounding spaces) so it reads
+                                # natural instead of a stray hyphen. Per-token: a dash split across
+                                # token boundaries is rare for this tokenizer.
+                                safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
                                 yield f"data: {json.dumps({'token': safe})}\n\n"
 
                             # Periodic disconnect check — bail out early if user closed the tab.
@@ -1337,14 +1436,28 @@ async def chat_stream(
             )
             full_answer = cleaned_answer
 
-        # Auto-hook: should we OFFER coaching after this answer? Only for a
-        # normal KNOWLEDGE turn when coaching is OFF. Reuses the embedding
-        # already computed for LTM (no extra embed call). Never gates/hijacks the
-        # answer — just a soft signal the frontend turns into a clickable offer.
-        # Wrapped so a scoring hiccup can never break the stream.
-        suggest_coaching = False
+        # Topic-streak auto-hook (moved from frontend): bump the same-topic
+        # counter; returns the topic once the user has stuck with one topic for
+        # `coaching_streak_threshold` turns, which drives a topic-specific offer.
+        coaching_topic = None
         try:
-            if (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
+            if (not request.coaching_mode) and intent == "KNOWLEDGE":
+                titles = [s["title"] for s in sources if s.get("title") and s["title"] != "Unknown"]
+                if titles:
+                    dominant = Counter(titles).most_common(1)[0][0]
+                    coaching_topic = await bump_topic_streak(conversation_id, dominant)
+        except Exception as exc:
+            logger.debug(f"topic-streak hook skipped: {exc}")
+
+        # Affinity auto-hook: should we OFFER coaching after this answer? Only for
+        # a normal KNOWLEDGE turn when coaching is OFF. Reuses the embedding
+        # already computed for LTM (no extra embed call). Skipped when the streak
+        # hook already fired. Never gates/hijacks the answer — a soft signal the
+        # frontend turns into a clickable offer. Wrapped so a scoring hiccup can
+        # never break the stream.
+        suggest_coaching = bool(coaching_topic)
+        try:
+            if (not suggest_coaching) and (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
                 from app.graph.intent_classifier import coaching_affinity
                 _aff = await coaching_affinity(resolved_query, query_embedding=query_embedding)
                 suggest_coaching = _aff >= settings.coaching_suggest_threshold
@@ -1356,7 +1469,20 @@ async def chat_stream(
         except Exception as exc:
             logger.debug(f"coaching auto-hook scoring skipped: {exc}")
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching})}\n\n"
+        # Coaching wrap-up signal — mirror of suggest_coaching, opposite direction.
+        # When we're IN coaching mode and Ava delivered a final answer rather than a
+        # guiding question, the Socratic loop is done → tell the frontend so it can
+        # offer "back to Mentoring". A guiding-question turn always carries a "?"; a
+        # wrap-up / frustration answer carries none (SOCRATIC_PROMPT enforces this).
+        # Gated on the real intent (COACHING) so a greeting/off-scope turn while the
+        # toggle is on never triggers it. Computed server-side: no marker ever
+        # streams to the user, so there's nothing to leak.
+        coaching_done = bool(
+            request.coaching_mode and intent == "COACHING"
+            and full_answer and "?" not in full_answer
+        )
+
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
@@ -1410,10 +1536,19 @@ async def chat_stream(
                 "answer": full_answer,
                 "chunks_retrieved": len(retrieved_context),
                 "latency_ms": round(latency_ms, 2),
-                "llm_tokens_used": token_count,
+                # Prefer the real total from the provider's response_metadata
+                # (captured at generate_node on_chain_end). Fall back to the
+                # chunk-event counter only if the provider didn't report
+                # usage (older Gemini/DeepSeek models occasionally omit it).
+                "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
                 "cache_hit": False,
                 "retrieved_context": retrieved_context,
-                **_quality_log_fields(intent, stream_intent_scores, stream_max_score),
+                **_quality_log_fields(
+                    intent,
+                    stream_intent_scores,
+                    stream_max_score,
+                    _serialize_gate_score(stream_gate_score),
+                ),
             })
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
             await _track_session_courses(conversation_id, retrieved_context)

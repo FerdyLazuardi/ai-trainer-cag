@@ -1,4 +1,7 @@
+import json
 import os
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -80,7 +83,12 @@ logs = data.get("logs", [])
 users = data.get("users", [])
 
 # Setup tabs
-tab_overview, tab_explorer, tab_ltm = st.tabs(["Overview & Recent Logs", "Session Explorer", "User LTM Profiles"])
+tab_overview, tab_explorer, tab_ltm, tab_gate = st.tabs([
+    "Overview & Recent Logs",
+    "Session Explorer",
+    "User LTM Profiles",
+    "Intent Gate Monitor",
+])
 
 with tab_overview:
     # KPI Row
@@ -88,6 +96,23 @@ with tab_overview:
     col1.metric("Total Queries", f"{kpis.get('total_queries', 0):,}")
     col2.metric("Avg Latency", f"{kpis.get('avg_latency', 0.0)/1000:.2f} s")
     col3.metric("Cache Hit Rate", f"{kpis.get('hit_rate', 0.0):.1f}%")
+
+    # Rolling-7d KPIs — p95/p99 expose the latency tail that Avg hides, and
+    # faithfulness is the sampled judge quality score. "—" when no data.
+    col4, col5, col6 = st.columns(3)
+    col4.metric("P95 Latency (7d)", f"{kpis.get('p95_latency_7d', 0.0)/1000:.2f} s")
+    col5.metric("P99 Latency (7d)", f"{kpis.get('p99_latency_7d', 0.0)/1000:.2f} s")
+    _faith = kpis.get('faithfulness_avg_7d')
+    _faith_n = kpis.get('faithfulness_n_7d', 0)
+    _faith_fail = kpis.get('faithfulness_fail_7d', 0)
+    col6.metric(
+        "Faithfulness (7d)",
+        f"{_faith:.3f}" if _faith is not None else "—",
+        delta=f"-{_faith_fail} unfaithful" if _faith_fail else None,
+        delta_color="inverse",
+        help=f"Avg LLM-judge faithfulness over {_faith_n} evaluated turns (sampled). "
+             f"{_faith_fail} scored below the {0.75} pass threshold.",
+    )
 
     st.divider()
 
@@ -236,3 +261,138 @@ with tab_ltm:
             use_container_width=True,
             hide_index=True
         )
+
+# ─── Intent Gate Monitor tab ────────────────────────────────────────────────
+# Reads JSON snapshots written by scripts/auto_calibrate_intent_gate.py
+# (cron 03:00 WIB daily). Shows the latest snapshot, the per-class
+# recommended thresholds, and the drift trend across all snapshots.
+# If no snapshots exist yet, shows a friendly "first run pending" state
+# with a button to trigger one immediately.
+
+CALIB_DIR = Path(__file__).parent.parent / "eval" / "results"
+
+
+@st.cache_data(ttl=60)
+def _load_calibration_snapshots():
+    """Load every intent_gate_calibration_*.json in eval/results/. Returns
+    an empty list when none exist (the typical pre-traffic state)."""
+    if not CALIB_DIR.exists():
+        return []
+    files = sorted(CALIB_DIR.glob("intent_gate_calibration_*.json"))
+    out = []
+    for f in files:
+        try:
+            out.append((f.name, json.loads(f.read_text(encoding="utf-8"))))
+        except Exception as e:
+            st.warning(f"Skipping unreadable snapshot {f.name}: {e}")
+    return out
+
+
+with tab_gate:
+    st.subheader("Intent Gate — Live Calibration")
+    st.markdown(
+        "Threshold & margin untuk **semantic intent gate** (Tier-0 embedding). "
+        "Diset otomatis tiap hari 03:00 WIB dari `agent_logs.gate_*` oleh "
+        "`scripts/auto_calibrate_intent_gate.py`. Drift > 0.05 dari setting "
+        "aktif = butuh review manual."
+    )
+
+    snapshots = _load_calibration_snapshots()
+
+    if not snapshots:
+        st.info(
+            "Belum ada snapshot. Jalankan: `python -m scripts.auto_calibrate_intent_gate` "
+            "(atau tunggu cron harian)."
+        )
+        if st.button("Jalankan kalibrasi sekarang"):
+            with st.spinner("Mengambil data agent_logs..."):
+                try:
+                    import subprocess
+                    import sys
+                    result = subprocess.run(
+                        [sys.executable, "-m", "scripts.auto_calibrate_intent_gate"],
+                        capture_output=True, text=True, timeout=240,
+                        cwd=str(Path(__file__).parent.parent),
+                    )
+                    st.code(result.stdout[-2000:], language="bash")
+                    if result.returncode != 0:
+                        st.warning(f"Drift terdeteksi (exit={result.returncode}). Cek rekomendasi di bawah.")
+                    _load_calibration_snapshots.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal menjalankan kalibrasi: {e}")
+    else:
+        latest_name, latest = snapshots[-1]
+        cur = latest.get("current_settings", {})
+        drift = latest.get("drift_alert", False)
+
+        # KPI strip
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Rows analyzed", f"{latest.get('rows_analyzed', 0):,}")
+        c2.metric("Current threshold", f"{cur.get('threshold', '?')}")
+        c3.metric("Current margin", f"{cur.get('margin', '?')}")
+        c4.metric("Drift alert", "🚨 YES" if drift else "OK")
+
+        st.caption(f"Snapshot: `{latest_name}` · generated {latest.get('generated_at', '?')}")
+
+        # Decision distribution
+        dec = latest.get("decision_distribution", {})
+        if dec:
+            st.markdown("##### Decision distribution")
+            df_dec = pd.DataFrame(
+                [{"decision": k, "count": v} for k, v in dec.items()]
+            )
+            st.bar_chart(df_dec, x="decision", y="count", height=200)
+
+        # Per-class recommendations
+        per_class = latest.get("per_class", {})
+        if per_class:
+            st.markdown("##### Per-class recommendations")
+            rows = []
+            for intent in sorted(per_class):
+                info = per_class[intent]
+                rows.append({
+                    "intent": intent,
+                    "n_samples": info.get("n_samples", 0),
+                    "n_caught": info.get("n_caught", 0),
+                    "lowest_caught_cosine": info.get("lowest_caught_cosine", "-"),
+                    "recommended_threshold": info.get("recommended_threshold", "-"),
+                    "TPR": info.get("TPR_at_recommended", "-"),
+                    "FP": info.get("FP_at_recommended", "-"),
+                    "note": info.get("note", ""),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        # Drift trend across all snapshots
+        if len(snapshots) >= 2:
+            st.markdown("##### Threshold drift over time")
+            trend_rows = []
+            for name, snap in snapshots:
+                ts = snap.get("generated_at", "")
+                cs = snap.get("current_settings", {})
+                cur_thr = cs.get("threshold")
+                for intent, info in snap.get("per_class", {}).items():
+                    rec = info.get("recommended_threshold")
+                    if rec is None or cur_thr is None:
+                        continue
+                    trend_rows.append({
+                        "generated_at": ts,
+                        "intent": intent,
+                        "current": cur_thr,
+                        "recommended": rec,
+                        "delta": round(rec - cur_thr, 3),
+                    })
+            if trend_rows:
+                df_trend = pd.DataFrame(trend_rows)
+                # Plot recommended per intent over time, current as horizontal ref.
+                fig = px.line(
+                    df_trend, x="generated_at", y="recommended",
+                    color="intent", markers=True,
+                    title="Recommended threshold per intent over time",
+                )
+                if cur_thr is not None:
+                    fig.add_hline(
+                        y=cur_thr, line_dash="dash", line_color="gray",
+                        annotation_text=f"current={cur_thr}",
+                    )
+                st.plotly_chart(fig, use_container_width=True)
