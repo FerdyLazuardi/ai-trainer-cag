@@ -332,11 +332,11 @@ function setCoaching(on, showMsg) {
     if (showMsg) {
         if (on) {
             addMessage(
-                "Oke, kita ulik bareng ya — aku pandu kamu sampai nemu jawabannya sendiri. Mau mulai dari mana, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
+                "Oke, kita brainstorming bareng ya. Aku pandu kamu sampai nemu jawabannya sendiri. Mau mulai dari mana, materi Amarthapedia atau soal kerjaan kamu di Amartha?",
                 "ai"
             );
         } else {
-            addMessage("Oke, mode Coaching dimatiin. Aku balik jawab langsung ya — tetap aku temani kayak biasa.", "ai");
+            addMessage("Yuk, tanya apa aja soal materi Amarthapedia, aku temani kamu belajar.", "ai");
         }
     }
 }
@@ -485,7 +485,7 @@ function maybeOfferCoaching(userText, backendSuggest, topic) {
     wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
     const text = topic
         ? 'Kayaknya kamu lagi tertarik banget sama <b>' + _esc(topic) +
-          '</b> nih. Mau brainstorming bareng?'
+        '</b> nih. Mau brainstorming bareng?'
         : 'Mau kita bahas ini lebih dalam bareng-bareng? Aku temani kamu brainstorming.';
     wrap.innerHTML =
         '<span class="ava-offer-text">' + text + '</span>' +
@@ -576,6 +576,31 @@ function acceptCoachingOffer() {
         // to the canned guiding prompt.
         addMessage("Oke, aku pandu kamu belajar ya. Apa yang lagi pengen kamu ulik?", "ai");
     }
+}
+
+// ── Mirror of the coaching offer: OFFER to leave Coaching → back to Mentoring ──
+// Fires when the backend signals the Socratic loop is done (coaching_done): Ava
+// delivered a wrap-up/direct answer instead of a guiding question. Clicking
+// flips the toggle OFF, exactly symmetric to the "Gas Coaching" offer flipping
+// it ON. The signal is computed server-side (gated on the real COACHING intent),
+// so no marker ever streams to the user — nothing to leak.
+function maybeOfferBackToMentoring(coachingDone) {
+    if (!window.COACHING_MODE) return;                       // only while coaching ON
+    if (document.getElementById("ava-coach-offer")) return;  // one offer card at a time
+    if (!coachingDone) return;                               // still in the loop
+    const wrap = document.createElement("div");
+    wrap.id = "ava-coach-offer";
+    wrap.className = "ava-coach-offer animate__animated animate__fadeIn animate__faster";
+    wrap.innerHTML =
+        '<span class="ava-offer-text">Kayaknya kita udah kelar ngulik bareng nih. Mau aku balik jawab langsung aja?</span>' +
+        '<button class="ava-offer-btn" onclick="acceptBackToMentoring()"><i class="fas fa-comments"></i> Balik ke Mentoring</button>';
+    messages.appendChild(wrap);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function acceptBackToMentoring() {
+    removeCoachOffer();
+    setCoaching(false, true);   // flip slider off + the canned "balik jawab langsung" message
 }
 
 // ── Pending-response popup ────────────────────────────────────────────────────
@@ -1097,6 +1122,7 @@ async function send(presetText, opts) {
         let _finalized = false;
         let _suggestCoaching = null;  // backend auto-hook signal (set in done event)
         let _coachingTopic = null;     // topic name when the offer was streak-triggered
+        let _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
 
         function startStreamBubble() {
             if (!_streamStarted) {
@@ -1145,6 +1171,7 @@ async function send(presetText, opts) {
                 // the fallback when it's absent. _coachingTopic words the offer
                 // around the streak topic when the streak triggered it.
                 maybeOfferCoaching(text, _suggestCoaching, _coachingTopic);
+                maybeOfferBackToMentoring(_coachingDone);
                 // Pending-response popup: if the chatbox was closed BEFORE the
                 // answer finished streaming, show the answer as a popup above
                 // the FAB. This is the "user walked away while Ava was typing"
@@ -1192,6 +1219,7 @@ async function send(presetText, opts) {
                             startStreamBubble();
                             if (parsed.suggest_coaching !== undefined) _suggestCoaching = parsed.suggest_coaching;
                             if (parsed.coaching_topic !== undefined) _coachingTopic = parsed.coaching_topic;
+                            if (parsed.coaching_done !== undefined) _coachingDone = parsed.coaching_done;
                             _streamActive = false;
                             currentEventType = "";
                             continue;

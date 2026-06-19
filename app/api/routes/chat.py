@@ -1469,7 +1469,20 @@ async def chat_stream(
         except Exception as exc:
             logger.debug(f"coaching auto-hook scoring skipped: {exc}")
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic})}\n\n"
+        # Coaching wrap-up signal — mirror of suggest_coaching, opposite direction.
+        # When we're IN coaching mode and Ava delivered a final answer rather than a
+        # guiding question, the Socratic loop is done → tell the frontend so it can
+        # offer "back to Mentoring". A guiding-question turn always carries a "?"; a
+        # wrap-up / frustration answer carries none (SOCRATIC_PROMPT enforces this).
+        # Gated on the real intent (COACHING) so a greeting/off-scope turn while the
+        # toggle is on never triggers it. Computed server-side: no marker ever
+        # streams to the user, so there's nothing to leak.
+        coaching_done = bool(
+            request.coaching_mode and intent == "COACHING"
+            and full_answer and "?" not in full_answer
+        )
+
+        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
