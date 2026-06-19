@@ -54,6 +54,7 @@ _GREETING_WORDS = set(_PATTERNS["greeting_words"])
 _GREETING_FLUFF = set(_PATTERNS["greeting_fluff"])
 _GREETING_PREFIX_RE = re.compile(_PATTERNS["greeting_prefix_pattern"], re.IGNORECASE | re.VERBOSE)
 _TOPIC_LIST_RE = re.compile(_PATTERNS["topic_list_regex"], re.IGNORECASE | re.VERBOSE)
+_SECTION_DRILLDOWN_PHRASES = tuple(_PATTERNS.get("section_drilldown_phrases", []))
 
 
 # ── Rule 0: prompt-injection / jailbreak / system-prompt extraction ──────────

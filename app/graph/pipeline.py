@@ -675,6 +675,33 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                     f"Pre-processor: semantic gate → {gate_score_out.committed} "
                     f"(regex miss, embedding gate caught it)"
                 )
+                # SECTION_DRILLDOWN refinement (Jun 2026): also apply to gate-derived
+                # TOPIC_LIST. The gate catches novel chit-chat the regex missed —
+                # but "bisnis proses ada apa aja" doesn't look like greeting/ambiguous
+                # to it, so the gate routes it as TOPIC_LIST. We still want to refine
+                # that to SECTION_DRILLDOWN if a specific section can be resolved.
+                if gate_score_out.committed == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
+                    try:
+                        _sm = await _load_section_map()
+                    except Exception:
+                        _sm = {}
+                    _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
+                    if _resolved:
+                        logger.info(
+                            f"Pre-processor: gate TOPIC_LIST refined -> SECTION_DRILLDOWN "
+                            f"(section={_resolved!r}, via {_respath!r})"
+                        )
+                        state["drilldown_section"] = _resolved
+                        state["drilldown_resolution"] = _respath
+                        return {
+                            "intent": "SECTION_DRILLDOWN",
+                            "rewritten_query": user_msg_str,
+                            "retrieval_query": user_msg_str,
+                            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                            "gate_score": gate_score_out,
+                            "drilldown_section": _resolved,
+                            "drilldown_resolution": _respath,
+                        }
                 return {
                     "intent": gate_score_out.committed,
                     "rewritten_query": user_msg_str,
@@ -688,6 +715,37 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
+        # SECTION_DRILLDOWN refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
+        # "bisnis proses ada apa aja" -> SECTION_DRILLDOWN. Refine TOPIC_LIST to
+        # SECTION_DRILLDOWN when shape matches AND we can resolve the section from
+        # query (token match) OR history (deictic ordinal like "yang kedua", "topik B",
+        # "yang tadi"). No new LLM/embed call: just regex + dict lookup against the
+        # section_map cache (10-min, Postgres-backed).
+        if rule_intent == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
+            try:
+                _sm = await _load_section_map()
+            except Exception:
+                _sm = {}
+            _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
+            if _resolved:
+                logger.info(
+                    f"Pre-processor: TOPIC_LIST refined -> SECTION_DRILLDOWN "
+                    f"(section={_resolved!r}, via {_respath!r})"
+                )
+                state["drilldown_section"] = _resolved
+                state["drilldown_resolution"] = _respath
+                return {
+                    "intent": "SECTION_DRILLDOWN",
+                    "rewritten_query": user_msg_str,
+                    "retrieval_query": user_msg_str,
+                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                    "gate_score": gate_score_out,
+                    "drilldown_section": _resolved,
+                    "drilldown_resolution": _respath,
+                }
+            logger.info(
+                "Pre-processor: drilldown shape matched but no section resolved - falling back to TOPIC_LIST"
+            )
         logger.info(f"Pre-processor: {rule_intent} → no retrieval, straight to generate")
         return {
             "intent": rule_intent,
@@ -1003,6 +1061,323 @@ def _get_section_map_lock() -> asyncio.Lock:
     return _section_map_lock
 
 
+def _get_section_map_lock() -> asyncio.Lock:
+    global _section_map_lock
+    if _section_map_lock is None:
+        _section_map_lock = asyncio.Lock()
+    return _section_map_lock
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Section Drilldown helpers (Jun 2026)
+# ════════════════════════════════════════════════════════════════════════════════
+# "topic apa aja"         → TOPIC_LIST       (handled in `_pre_processor`).
+# "bisnis proses ada apa" → SECTION_DRILLDOWN: resolve WHICH section from query,
+#                             then list ALL items inside that section from
+#                             `section_map` (Postgres-cached).
+#
+# Design constraints:
+#   - 100% dynamic: section_map comes from Postgres, no hardcoded alias dict.
+#   - Zero new LLM call. Zero new embedding call. Pure regex + dict lookup.
+#   - Graceful deictic resolution: "yang kedua" / "topik B" / "yang tadi"
+#     resolve from the most recent TOPIC_LIST response in conversation history.
+# ════════════════════════════════════════════════════════════════════════════════
+
+_SECTION_NAME_STOPWORDS = frozenset({
+    "ada", "apa", "aja", "saja", "di", "dari", "ke", "yang", "itu",
+    "ini", "tadi", "tuh", "nih", "kan", "ya", "ga", "gak", "nggak",
+    "kok", "sih", "dong", "kak", "bang", "mas", "mbak", "bu", "pak",
+    "tolong", "mau", "ingin", "bisa", "dapat", "lihat", "tampil",
+    "list", "daftar", "show", "tampilkan", "lihatin",
+    "materi", "materinya", "dokumen", "dokumennya", "judul", "judulnya",
+    "file", "filenya", "topik", "topiknya", "topic", "section",
+    "course", "kursus", "pelajaran", "ajar", "nya", "aja",
+})
+
+try:
+    import yaml as _yaml_drilldown
+    _DRILLDOWN_PATTERNS_PATH = Path(__file__).parent / "intent_patterns.yaml"
+    _DRILLDOWN_PATTERNS = _yaml_drilldown.safe_load(
+        _DRILLDOWN_PATTERNS_PATH.read_text(encoding="utf-8")
+    ) or {}
+    _SECTION_DRILLDOWN_PHRASES = tuple(_DRILLDOWN_PATTERNS.get("section_drilldown_phrases", []))
+except Exception:
+    _SECTION_DRILLDOWN_PHRASES = (
+        "ada apa aja", "ada apa", "apa aja", "apa saja", "apa isinya",
+        "isinya apa", "di dalamnya apa", "dalamnya apa", "materinya apa",
+        "materi apa", "dokumennya apa", "judulnya apa", "list materi",
+        "list dokumen", "list judul", "daftar materi",
+        "tolong lihat", "lihat materi", "tampilkan materi",
+        "tampilkan dokumen",
+    )
+
+_ORDINAL_TO_INT = {
+    "1": 1, "satu": 1, "pertama": 1, "kesatu": 1, "a": 1,
+    "2": 2, "dua": 2, "kedua": 2, "kedu": 2, "b": 2,
+    "3": 3, "tiga": 3, "ketiga": 3, "c": 3,
+    "4": 4, "empat": 4, "keempat": 4, "d": 4,
+    "5": 5, "lima": 5, "kelima": 5, "e": 5,
+    "6": 6, "enam": 6, "keenam": 6, "f": 6,
+    "7": 7, "tujuh": 7, "ketujuh": 7, "g": 7,
+    "8": 8, "delapan": 8, "kedelapan": 8, "h": 8,
+}
+
+
+def _normalize_section_tokens(name: str) -> list[str]:
+    """Lowercase + strip punctuation + remove stopwords. Returns significant tokens."""
+    import re as _re
+    s = _re.sub(r"[^\w\s]", " ", (name or "").lower())
+    toks = [t for t in s.split() if t and t not in _SECTION_NAME_STOPWORDS and len(t) > 1]
+    return toks
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Standard Levenshtein edit distance. O(len(a)*len(b)). For short tokens only."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for i, bc in enumerate(b, 1):
+        cur = [i]
+        for j, ac in enumerate(a, 1):
+            cur.append(min(
+                cur[-1] + 1,        # insertion
+                prev[j] + 1,        # deletion
+                prev[j-1] + (ac != bc),  # substitution
+            ))
+        prev = cur
+    return prev[-1]
+
+
+def _fuzzy_token_match(qt: str, st: str) -> bool:
+    """Token match with edit-distance fallback for cross-language stem variants.
+
+    Examples: "bisnis" vs "business" (dist=3, ratio≈0.57), "ajar" vs "learning"
+    (dist=6, ratio≈0.18 — too far; rejected).
+    Threshold: edit distance <= max(2, 30% of max_len).
+    """
+    if not qt or not st:
+        return False
+    if qt == st:
+        return True
+    # Only fuzzy-match on tokens of similar length to avoid spurious matches
+    ratio = min(len(qt), len(st)) / max(len(qt), len(st))
+    if ratio < 0.55:
+        return False
+    d = _levenshtein(qt, st)
+    max_edits = max(2, int(max(len(qt), len(st)) * 0.30))
+    return d <= max_edits
+
+
+def _score_query_against_section(query: str, section_name: str) -> float:
+    """Score how well `query` matches `section_name`. 0.0 = no match, 1.0 = perfect."""
+    q_toks = _normalize_section_tokens(query)
+    s_toks = _normalize_section_tokens(section_name)
+    if not q_toks or not s_toks:
+        return 0.0
+    overlap = 0
+    for qt in q_toks:
+        for st in s_toks:
+            # 1) Substring containment (handles "anti" in "anti harassment")
+            if qt in st or st in qt:
+                overlap += 1
+                break
+            # 2) 4-char prefix match (handles "produk" vs "product", "klien" vs "client")
+            if len(qt) >= 4 and len(st) >= 4 and qt[:4] == st[:4]:
+                overlap += 1
+                break
+            # 3) Fuzzy edit-distance match (handles "bisnis" vs "business" — ID↔EN)
+            if _fuzzy_token_match(qt, st):
+                overlap += 1
+                break
+    token_score = overlap / max(1, len(s_toks))
+    q_full = " ".join(q_toks)
+    s_full = " ".join(s_toks)
+    if q_full and s_full and (q_full in s_full or s_full in q_full):
+        return 1.0
+    return min(1.0, token_score)
+
+
+def _detect_section_from_query(query: str, section_map: dict[str, list[str]]) -> str | None:
+    """Match query -> canonical section name via token containment."""
+    if not section_map:
+        return None
+    best_section, best_score = None, 0.0
+    for section in section_map.keys():
+        score = _score_query_against_section(query, section)
+        if score > best_score:
+            best_score, best_section = score, section
+    return best_section if best_score >= 0.30 else None
+
+
+def _flatten_message_content(content) -> str:
+    """LangChain message content can be str OR list[{type:text}]. Flatten to str."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for blk in content:
+            if isinstance(blk, dict):
+                txt = blk.get("text") or blk.get("content") or ""
+                if txt:
+                    parts.append(str(txt))
+            elif isinstance(blk, str):
+                parts.append(blk)
+        return " ".join(parts)
+    return str(content) if content else ""
+
+
+def _has_topic_list_marker(content: str) -> bool:
+    """Detect if a previous AI message was a TOPIC_LIST response."""
+    low = (content or "").lower()
+    markers = (
+        "berikut topik", "topik-topik", "daftar topik", "berikut daftar",
+        "ini dia topik", "topik yang tersedia", "berikut beberapa topik",
+        "kamu bisa belajar", "kamu bisa pelajari", "materi yang tersedia",
+        "available topics", "topics available",
+    )
+    return any(m in low for m in markers)
+
+
+def _extract_sections_from_topic_list(content: str) -> list[str]:
+    """Parse a TOPIC_LIST AI response to recover the section list."""
+    import re as _re
+    if not content:
+        return []
+    text = content
+
+    numbered = _re.findall(
+        r"(?:^|\n)\s*(?:\d+|[A-Ha-h])[\.\)]\s+([^\n]{2,80})", text
+    )
+    if numbered:
+        cleaned = []
+        for s in numbered:
+            s = s.strip().rstrip(",;.")
+            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
+            if 2 <= len(s) <= 80:
+                cleaned.append(s)
+        if cleaned:
+            return cleaned
+
+    bullets = _re.findall(r"(?:^|\n)\s*[-*•·]\s+([^\n]{2,80})", text)
+    if bullets:
+        cleaned = []
+        for s in bullets:
+            s = s.strip().rstrip(",;.")
+            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
+            if 2 <= len(s) <= 80:
+                cleaned.append(s)
+        if cleaned:
+            return cleaned
+
+    bolds = _re.findall(r"\*\*([^*\n]{2,60})\*\*", text)
+    if bolds:
+        cleaned = [s.strip().rstrip(",;.") for s in bolds if 2 <= len(s.strip()) <= 60]
+        if cleaned:
+            return cleaned
+
+    return []
+
+
+def _resolve_section_ordinal(query: str, sections: list[str]) -> str | None:
+    """Resolve 'yang kedua', 'topik B', 'nomor 3' against a section list."""
+    import re as _re
+    q = (query or "").lower().strip()
+    if not q or not sections:
+        return None
+    m = _re.search(
+        r"(?:yang|topi[ck]|no(?:mor)?|pilihan?)\s*"
+        r"(?:ke-?|nomor\s*)?\s*"
+        r"(satu|dua|tiga|empat|lima|enam|tujuh|delapan|"
+        r"pertama|kedua|ketiga|keempat|kelima|keenam|ketujuh|kedelapan|"
+        r"[1-8]|[a-h])\b",
+        q,
+    )
+    if m:
+        word = m.group(1).lower()
+        idx = _ORDINAL_TO_INT.get(word)
+        if idx and 1 <= idx <= len(sections):
+            return sections[idx - 1]
+    if _re.fullmatch(
+        r"(?:yang\s+(?:itu|tadi|barusan|sebelumnya|maksud|disebut|dibahas))+|"
+        r"(?:yang)|(?:itu)|(?:tadi)|(?:yang\s+aja)|(?:pilih\s+itu)",
+        q.strip(),
+    ):
+        return sections[-1] if sections else None
+    return None
+
+
+def _extract_topic_list_from_history(messages: list) -> list[str]:
+    """Walk messages backwards, find last AI TOPIC_LIST response, return section list."""
+    if not messages:
+        return []
+    for m in reversed(messages[:-1]):
+        role = getattr(m, "type", None) or getattr(m, "role", "")
+        if role and role not in ("ai", "assistant"):
+            continue
+        content = _flatten_message_content(getattr(m, "content", ""))
+        if not _has_topic_list_marker(content):
+            continue
+        sections = _extract_sections_from_topic_list(content)
+        if sections:
+            return sections
+    return []
+
+
+def _resolve_drilldown_section(
+    query: str,
+    messages: list,
+    section_map: dict[str, list[str]],
+) -> tuple[str | None, str | None]:
+    """Resolve drilldown query -> canonical section name.
+
+    Resolution order:
+      1. Direct token match against section_map keys.
+      2. Conversation-history deictic resolution.
+      3. Token match against section list extracted from history.
+
+    Returns (section_name | None, resolution_path | None).
+    """
+    if not query or not section_map:
+        return None, None
+
+    direct = _detect_section_from_query(query, section_map)
+    if direct:
+        return direct, "query"
+
+    sections_in_history = _extract_topic_list_from_history(messages or [])
+    if sections_in_history:
+        ordinal = _resolve_section_ordinal(query, sections_in_history)
+        if ordinal:
+            for sec in section_map.keys():
+                if _score_query_against_section(ordinal, sec) >= 0.50:
+                    return sec, "history_ordinal"
+        best, best_score = None, 0.0
+        for sec in sections_in_history:
+            score = _score_query_against_section(query, sec)
+            if score > best_score:
+                best_score, best = score, sec
+        if best and best_score >= 0.30:
+            for sec in section_map.keys():
+                if _score_query_against_section(best, sec) >= 0.50:
+                    return sec, "history"
+
+    return None, None
+
+
+def _is_section_drilldown_shape(query: str) -> bool:
+    """Quick shape check: does the query LOOK like 'what's inside topic X'?"""
+    if not query or len(query) > 150:
+        return False
+    low = query.lower().strip()
+    return any(p in low for p in _SECTION_DRILLDOWN_PHRASES)
+
+
 async def _load_section_map() -> dict[str, list[str]]:
     """Map each Moodle SECTION → its item (course_name) list, TTL-cached (10min).
 
@@ -1161,15 +1536,38 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
                 "</available_topics>"
             )
 
-    # Section drill-down: when the retrieved chunks concentrate on ONE Moodle
-    # section (e.g. user asked "aku pengen tau Business Process"), inject that
-    # section's full material list so the model can offer the menu instead of
-    # answering from whichever sub-doc happened to rank first. DATA ONLY — the
-    # instruction lives in <grounding>. Embedding decides the section (no regex);
-    # the >=60% concentration guard means a focused question about ONE material
-    # in the section (which retrieves tightly) does NOT trigger the menu.
+    # Section drill-down. Two paths (Jun 2026):
+    # (1) SECTION_DRILLDOWN (priority): `_pre_processor` resolved the section
+    #     name from query/history and stored it in state["drilldown_section"].
+    #     Inject the canonical list of items — fully dynamic, no KB dep.
+    #     Handles "bisnis proses ada apa aja", "yang kedua", "topik B",
+    #     "di leadership materinya apa".
+    # (2) Legacy fallback: when retrieved KB chunks concentrate (>=60%) in one
+    #     section, infer that section and inject its items. Used when the
+    #     question is implicitly about a section but drilldown didn't fire.
     section_section = ""
-    if has_kb_context and chunks:
+    drilldown_sec = state.get("drilldown_section")
+    if drilldown_sec:
+        try:
+            items = (await _load_section_map()).get(drilldown_sec, [])
+        except Exception:
+            items = []
+        if items:
+            section_section = (
+                f'\n\n<section_materials section="{drilldown_sec}">\n'
+                + "\n".join(f"- {it}" for it in items)
+                + "\n</section_materials>"
+            )
+            logger.info(
+                f"SECTION_DRILLDOWN inject: section={drilldown_sec!r}, "
+                f"{len(items)} items, via={state.get('drilldown_resolution')!r}"
+            )
+        else:
+            logger.warning(
+                f"SECTION_DRILLDOWN resolved section={drilldown_sec!r} but "
+                f"section_map has no items - falling back to legacy path"
+            )
+    if not section_section and has_kb_context and chunks:
         from collections import Counter as _Counter
         secs = [c.get("section_name", "").strip() for c in chunks if c.get("section_name", "").strip()]
         if secs:
@@ -1273,7 +1671,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     # uses a DIFFERENT cached system prefix (SOCRATIC_PROMPT) — that's a separate
     # prompt-cache entry, still cacheable, just not shared with the conv prefix.
     is_coaching = intent == "COACHING"
-    _is_grounded = (has_kb_context or bool(topics_section)) and not is_coaching
+    _is_grounded = (has_kb_context or bool(topics_section) or bool(section_section)) and not is_coaching
     llm = get_generate_llm() if _is_grounded else get_chat_llm()
     windowed_messages = _window_generate_history(
         list(state["messages"]),
@@ -1476,6 +1874,10 @@ def _build_agent_graph():
             "AMBIGUOUS": "generate_node",
             "OFF_SCOPE": "generate_node",
             "TOPIC_LIST": "generate_node",
+            # Jun 2026: SECTION_DRILLDOWN resolves to one specific section
+            # from query/history and injects its canonical items via
+            # `<section_materials>` — no KB retrieval needed, straight to generate.
+            "SECTION_DRILLDOWN": "generate_node",
             # Real question → retrieve first.
             "KNOWLEDGE": "rag_node",
             # Coaching (Socratic) also retrieves first — the guiding question

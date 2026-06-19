@@ -69,4 +69,13 @@ class RAGState(TypedDict):
     # because not every intent path populates it (e.g. cached turns skip
     # the pre-processor entirely).
     gate_score: Optional[dict]
+    # Section drilldown (Jun 2026): when the user asks "what's inside topic X",
+    # `_pre_processor` resolves the section name (via token match against
+    # `section_map` OR deictic resolution against conversation history) and
+    # stores the canonical section name here. `_generate_node` reads this to
+    # inject `<section_materials>` with the FULL canonical item list — fully
+    # dynamic, no KB dependency. `drilldown_resolution` records the path used
+    # ("query" | "history" | "history_ordinal") for observability.
+    drilldown_section: Optional[str]
+    drilldown_resolution: Optional[str]
 
