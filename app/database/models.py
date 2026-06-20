@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     func,
@@ -134,6 +135,13 @@ class AgentLog(Base):
     gate_margin: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     # Filled asynchronously by the LLM-as-judge eval task (sampled).
     faithfulness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # OR cache observability (Jun 2026)
+    or_prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    or_cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    or_completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    or_provider: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    or_cache_savings_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    or_duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieved_context: Mapped[list[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

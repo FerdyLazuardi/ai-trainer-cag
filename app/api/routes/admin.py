@@ -98,7 +98,7 @@ async def get_dashboard_logs(
     total_q, avg_lat, cache_hits, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
         _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {non_askfer}"),
         _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {non_askfer}"),
-        _run_one(f"SELECT SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END) FROM agent_logs WHERE {non_askfer}"),
+        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens) FROM agent_logs WHERE {non_askfer}"),
         _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {non_askfer} GROUP BY intent"),
         _run_one(f"""
             SELECT DATE(created_at) AS date, COUNT(*) AS queries
@@ -112,7 +112,7 @@ async def get_dashboard_logs(
             SELECT created_at, id, intent, latency_ms, cache_hit, query, answer,
                    conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
-                   retrieved_context
+                   retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider
             FROM agent_logs
             WHERE {chat_where}
               {cursor_clause}
@@ -146,8 +146,11 @@ async def get_dashboard_logs(
 
     total = int(total_q.scalar() or 0)
     avg_latency = float(avg_lat.scalar() or 0.0)
-    hits = int(cache_hits.scalar() or 0)
-    hit_rate = (hits / total * 100.0) if total > 0 else 0.0
+    or_stats = cache_hits.fetchone()
+    or_prompt = int(or_stats[0] or 0) if or_stats else 0
+    or_cached = int(or_stats[1] or 0) if or_stats else 0
+    or_completion = int(or_stats[2] or 0) if or_stats else 0
+    hit_rate = (or_cached / or_prompt * 100.0) if or_prompt > 0 else 0.0
 
     perf = perf_q.fetchone()
     p95_7d = float(perf[0]) if perf and perf[0] is not None else 0.0
@@ -190,6 +193,10 @@ async def get_dashboard_logs(
             "reasoning": float(row[12]) if row[12] is not None else None,
             "lookup": float(row[13]) if row[13] is not None else None,
             "retrieved_context": row[14] if row[14] is not None else [],
+            "or_prompt_tokens": int(row[15]) if row[15] is not None else 0,
+            "or_cached_tokens": int(row[16]) if row[16] is not None else 0,
+            "or_completion_tokens": int(row[17]) if row[17] is not None else 0,
+            "or_provider": str(row[18]) if row[18] else "",
         }
         for row in log_rows
     ]
@@ -216,6 +223,9 @@ async def get_dashboard_logs(
             "total_queries": total,
             "avg_latency": avg_latency,
             "hit_rate": hit_rate,
+            "or_prompt_tokens": or_prompt,
+            "or_cached_tokens": or_cached,
+            "or_completion_tokens": or_completion,
             "p95_latency_7d": p95_7d,
             "p99_latency_7d": p99_7d,
             "faithfulness_avg_7d": faith_avg_7d,

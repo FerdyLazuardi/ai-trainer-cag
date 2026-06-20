@@ -282,9 +282,9 @@ def get_judge_llm() -> ChatOpenAI:
     `assert_judge_model_distinct` enforces this at startup.
 
     Config rationale (verified against current OpenRouter docs):
-      - extra_body.provider.only=["deepseek"] + allow_fallbacks=False — hard-pin
+      - extra_body.provider.order=LLM_PROVIDER_ORDER + allow_fallbacks=True. Same model-aware routing as get_llm(). [2026-06-20: was hard-pinned to only=[\"deepseek\"] but 404'd because DeepSeek native is excluded by user's OpenRouter privacy policy. Faithfulness metric was 0.000 because judge silently no-op'd. Re-pinning via LLM_PROVIDER_ORDER=alibaba in .env re-enables single-provider baseline if needed.]
         to DeepSeek's native upstream so a provider outage fails LOUD instead
-        of silently rerouting to a different upstream and shifting the judge
+        of silently rerouting to a different upstream and shifting the judge baseline mid-week. [UPDATED 2026-06-20]
         baseline mid-week. `only` (allowlist) over `order` (preference) for an
         unambiguous pin.
       - extra_body.reasoning.effort="none" — V4 Pro is reasoning-capable; we
@@ -318,10 +318,10 @@ def get_judge_llm() -> ChatOpenAI:
         },
         extra_body={
             "provider": {
-                "only": ["deepseek"],
-                "allow_fallbacks": False,
+                "order": list(settings.llm_provider_order_list or ["deepseek"]),
+                "allow_fallbacks": True,
             },
-            "reasoning": {"effort": "none"},
+            "reasoning": {"effort": "none", "exclude": True},
         },
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",

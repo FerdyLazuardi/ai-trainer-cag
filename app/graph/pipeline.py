@@ -10,7 +10,10 @@ Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent 
 import asyncio
 from functools import lru_cache
 import re
+import time
 from typing import Any
+
+from sqlalchemy import update
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -542,7 +545,7 @@ def _emit_sparse_only_passthrough() -> None:
         pass
 
 
-def _log_cache_usage(response: Any, call_name: str) -> None:
+async def _log_cache_usage(response: Any, call_name: str, turn_id=None, started_at=None) -> None:
     """Log OpenRouter/Gemini prompt-cache hit info for ONE LLM call.
 
     The chat path previously logged NOTHING about cache effectiveness, so a
@@ -570,13 +573,79 @@ def _log_cache_usage(response: Any, call_name: str) -> None:
             prompt = prompt or (tu.get("prompt_tokens", 0) or 0)
             ptd = tu.get("prompt_tokens_details") or {}
             cached = cached or (ptd.get("cached_tokens", 0) or 0)
+        rm = getattr(response, "response_metadata", None) or {}
+        completion = int((um or {}).get("output_tokens", 0) or 0)
+        if not completion:
+            tu = rm.get("token_usage") or {}
+            completion = int(tu.get("completion_tokens", 0) or 0)
+        model = rm.get("model_name") or rm.get("model") or "unknown"
+        provider = rm.get("provider_name") or rm.get("provider") or _infer_provider(model)
+
         pct = (cached / prompt * 100) if prompt else 0.0
+        duration_s = round(time.monotonic() - started_at, 4) if started_at else None
+
         logger.info(
-            "LLM cache usage [{}]: cached={}/{} prompt tok ({:.0f}%)",
-            call_name, cached, prompt, pct,
+            "LLM cache usage [{}]: cached={}/{} prompt tok ({:.0f}%) completion={} "
+            "model={} provider={} duration={}s turn={}",
+            call_name, cached, prompt, pct, completion,
+            model, provider, duration_s, (turn_id or "-")[:8],
         )
+        if turn_id:
+            try:
+                await _persist_or_cache_metrics(
+                    turn_id=turn_id,
+                    prompt=int(prompt),
+                    cached=int(cached),
+                    completion=completion,
+                    provider=provider,
+                    duration_s=duration_s,
+                )
+            except Exception as e:
+                logger.warning("_persist_or_cache_metrics failed for turn={}: {}", (turn_id or "-")[:8], e)
     except Exception as e:
-        logger.debug("cache-usage log skipped [{}]: {}", call_name, e)
+        logger.warning("_log_cache_usage failed [{}]: {}", call_name, e)
+
+
+async def _persist_or_cache_metrics(
+    *,
+    turn_id: str,
+    prompt: int,
+    cached: int,
+    completion: int,
+    provider: str,
+    duration_s: float | None,
+) -> None:
+    """UPDATE agent_logs row matching turn_id with OpenRouter cache metrics.
+
+    Used by the Streamlit dashboard to show OR cache hit/miss + cached
+    prompt-token counts (replacing the old Redis semantic-cache hit-rate).
+    """
+    try:
+        from app.database.postgres import AsyncSessionLocal
+        from app.database.models import AgentLog
+
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                update(AgentLog)
+                .where(AgentLog.turn_id == turn_id)
+                .values(
+                    or_prompt_tokens=prompt,
+                    or_cached_tokens=cached,
+                    or_completion_tokens=completion,
+                    or_provider=provider,
+                    or_duration_s=duration_s,
+                )
+            )
+            await s.commit()
+    except Exception as e:
+        logger.warning("_persist_or_cache_metrics failed for turn={}: {}", turn_id[:8], e)
+
+
+def _infer_provider(model: str) -> str:
+    """Best-effort provider inference from model id, e.g. 'google/gemini-2.5-flash' -> 'google'."""
+    if "/" in model:
+        return model.split("/", 1)[0]
+    return "openrouter"
 
 
 async def _pre_processor(state: RAGState, config: RunnableConfig):
@@ -669,7 +738,10 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     if _settings.intent_semantic_gate_enabled:
         try:
             from app.graph.intent_classifier import classify_semantic_with_scores
-            gate_score_out = await classify_semantic_with_scores(user_msg_str)
+            gate_score_out = await classify_semantic_with_scores(
+                user_msg_str,
+                query_embedding=state.get("query_embedding"),
+            )
             if rule_intent is None and gate_score_out.committed is not None:
                 logger.info(
                     f"Pre-processor: semantic gate → {gate_score_out.committed} "
@@ -1705,8 +1777,14 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         msgs.append(HumanMessage(content=dynamic_tail))
     msgs += windowed_messages
 
+    _t0 = time.monotonic()
     response = await llm.ainvoke(msgs, config=config)
-    _log_cache_usage(response, "generate")
+    await _log_cache_usage(
+        response,
+        "generate",
+        turn_id=state.get("turn_id") if isinstance(state, dict) else None,
+        started_at=_t0,
+    )
 
     # Defensive anti-leak: strip any <retrieved_context>/<user_history>/etc. block
     # the model may have echoed verbatim (also prevents `# Heading` chunks from

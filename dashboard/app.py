@@ -92,10 +92,11 @@ tab_overview, tab_explorer, tab_ltm, tab_gate = st.tabs([
 
 with tab_overview:
     # KPI Row
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col_tokens = st.columns(4)
     col1.metric("Total Queries", f"{kpis.get('total_queries', 0):,}")
     col2.metric("Avg Latency", f"{kpis.get('avg_latency', 0.0)/1000:.2f} s")
-    col3.metric("Cache Hit Rate", f"{kpis.get('hit_rate', 0.0):.1f}%")
+    col3.metric("OR Cache Hit Rate", f"{kpis.get('hit_rate', 0.0):.1f}%")
+    col_tokens.metric("OR Cached/Total Tokens", f"{kpis.get('or_cached_tokens', 0):,} / {(kpis.get('or_prompt_tokens', 0) + kpis.get('or_completion_tokens', 0)):,}")
 
     # Rolling-7d KPIs — p95/p99 expose the latency tail that Avg hides, and
     # faithfulness is the sampled judge quality score. "—" when no data.
@@ -156,12 +157,15 @@ with tab_overview:
             )
 
         # Defensive programming: ensure new columns exist in case the backend API is outdated
-        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved']:
+        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved', 'or_cached_tokens']:
             if col not in df_logs.columns:
                 df_logs[col] = None
                 
         # Calculate latency in seconds
         df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
+        
+        df_logs['is_cache_hit'] = df_logs['or_cached_tokens'].apply(lambda x: True if pd.notna(x) and x > 0 else False)
+        df_logs['tokens_saved'] = df_logs['or_cached_tokens']
         
         # Truncate text for the table view
         df_logs['query_short'] = df_logs['query'].apply(lambda x: x[:50] + "..." if isinstance(x, str) and len(x) > 50 else x)
@@ -169,7 +173,7 @@ with tab_overview:
         
         # Use dataframe selection
         event = st.dataframe(
-            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'retrieved', 'cache_hit', 'faithfulness', 'empathy', 'reasoning', 'lookup', 'query_short', 'answer_short']],
+            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'retrieved', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'empathy', 'reasoning', 'lookup', 'query_short', 'answer_short']],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -199,6 +203,13 @@ with tab_explorer:
             )
         if 'latency_ms' in df_logs.columns:
             df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
+            
+        if 'or_cached_tokens' in df_logs.columns:
+            df_logs['is_cache_hit'] = df_logs['or_cached_tokens'].apply(lambda x: True if pd.notna(x) and x > 0 else False)
+            df_logs['tokens_saved'] = df_logs['or_cached_tokens']
+        else:
+            df_logs['is_cache_hit'] = False
+            df_logs['tokens_saved'] = None
         
         # Group by session_id to get summary
         if 'session_id' in df_logs.columns:
@@ -233,7 +244,7 @@ with tab_explorer:
                 
                 # Use dataframe selection
                 event_turn = st.dataframe(
-                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'retrieved', 'cache_hit', 'faithfulness', 'query_short', 'answer_short']],
+                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'retrieved', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
