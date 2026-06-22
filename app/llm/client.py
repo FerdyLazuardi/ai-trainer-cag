@@ -55,7 +55,7 @@ def create_llm(
     default_headers: dict | None = None,
     model_kwargs: dict | None = None,
     streaming: bool = False,
-    stream_usage: bool = False,
+    stream_usage: bool = True,
     request_timeout: int = 60,
 ) -> ChatOpenAI:
     return ChatOpenAI(

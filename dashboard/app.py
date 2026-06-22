@@ -321,17 +321,23 @@ with tab_gate:
                     import subprocess
                     import sys
                     result = subprocess.run(
-                        [sys.executable, "-m", "scripts.auto_calibrate_intent_gate"],
+                        [sys.executable, "-m", "app.eval.auto_calibrate_intent_gate"],
                         capture_output=True, text=True, timeout=240,
                         cwd=str(Path(__file__).parent.parent),
                     )
-                    st.code(result.stdout[-2000:], language="bash")
+                    
+                    output = result.stdout
+                    if result.stderr:
+                        output += "\n\n--- ERRORS ---\n" + result.stderr
+                        
+                    st.code(output[-2000:] if output else "No output returned.", language="bash")
+                    
                     if result.returncode != 0:
                         st.warning(f"Drift terdeteksi (exit={result.returncode}). Cek rekomendasi di bawah.")
                     _load_calibration_snapshots.clear()
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Gagal menjalankan kalibrasi: {e}")
+                    st.error(f"Gagal menjalankan script: {e}")
     else:
         latest_name, latest = snapshots[-1]
         cur = latest.get("current_settings", {})

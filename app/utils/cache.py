@@ -223,6 +223,8 @@ async def flush_cache_by_course(course_id: int) -> None:
     patterns = [
         f"{_PREFIX}{course_id}:*",          # rag:cache:{cid}:*
         f"rag_user_*:cache:{course_id}:*",  # rag_user_{uid}:cache:{cid}:*
+        f"{_PREFIX}None:*",                 # rag:cache:None:* (global queries)
+        f"rag_user_*:cache:None:*",         # rag_user_{uid}:cache:None:*
     ]
     for match in patterns:
         try:

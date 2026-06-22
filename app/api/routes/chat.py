@@ -1358,6 +1358,10 @@ async def chat_stream(
                                 out_t = um.get("output_tokens") or 0
                                 if in_t or out_t:
                                     stream_total_tokens = int(in_t) + int(out_t)
+                                    stream_prompt_tokens = in_t
+                                    stream_completion_tokens = out_t
+                                    stream_cached_tokens = (um.get("input_token_details") or {}).get("cache_read") or 0
+                                    stream_provider = getattr(last_msg, "response_metadata", {}).get("model_name")
 
                 # Canned-response nodes return an AIMessage directly without
                 # invoking an LLM, so no `on_chat_model_stream` event fires
