@@ -40,15 +40,11 @@
                     </div>
                 </div>
                 <div style="display:flex; gap:20px; align-items:center;">
-                    <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                    <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur">
-                        <i class="fas fa-bars"></i>
+                    <button id="coach-cta-btn" class="coach-cta-btn" title="Aktifkan Coaching Mode">
+                        <i class="fas fa-lightbulb"></i> Coaching
                     </button>
+                    <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
                 </div>
-            </div>
-
-            <div id="kebab-menu" class="kebab-menu" hidden>
-                <!-- Menu items rendered dynamically by _renderKebabMenu() -->
             </div>
 
             <div id="chat-messages"></div>
@@ -98,15 +94,13 @@ let currentAbortController = null;
 // Each item:
 //   id      unique key
 // Add event listener for the CTA button
-document.addEventListener("DOMContentLoaded", () => {
-    const ctaBtn = document.getElementById("coach-cta-btn");
-    if (ctaBtn) {
-        ctaBtn.addEventListener("click", () => {
-            const isCurrentlyOn = document.body.classList.contains("coaching-active");
-            setCoaching(!isCurrentlyOn, true);
-        });
-    }
-});
+const ctaBtn = document.getElementById("coach-cta-btn");
+if (ctaBtn) {
+    ctaBtn.addEventListener("click", () => {
+        const isCurrentlyOn = document.body.classList.contains("coaching-active");
+        setCoaching(!isCurrentlyOn, true);
+    });
+}
 
 // ── Pending popup click handlers ──
 // Click the popup body → open the chatbox (the answer is already streamed

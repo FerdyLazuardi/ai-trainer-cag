@@ -845,9 +845,19 @@ async def _run_chat(
         from app.graph.pipeline import _sanitize_answer
         answer = final_message.content if hasattr(final_message, "content") else str(final_message)
         answer = _sanitize_answer(answer)
+        or_prompt_tokens = 0
+        or_cached_tokens = 0
+        or_completion_tokens = 0
+        or_provider = None
         llm_tokens_used = 0
         if hasattr(final_message, "response_metadata"):
-            llm_tokens_used = final_message.response_metadata.get("token_usage", {}).get("total_tokens", 0)
+            rm = final_message.response_metadata or {}
+            tu = rm.get("token_usage", {})
+            llm_tokens_used = tu.get("total_tokens", 0)
+            or_prompt_tokens = tu.get("prompt_tokens", 0)
+            or_completion_tokens = tu.get("completion_tokens", 0)
+            or_cached_tokens = (tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+            or_provider = rm.get("model_name")
     except asyncio.TimeoutError as exc:
         # An upstream black-hole pinned this slot to the wall-clock ceiling.
         # Fail loud with 504 (NOT 500) so the client knows it's a timeout and
@@ -952,6 +962,10 @@ async def _run_chat(
             "chunks_retrieved": actual_chunks,
             "latency_ms": round(latency_ms, 2),
             "llm_tokens_used": llm_tokens_used,
+            "or_prompt_tokens": or_prompt_tokens,
+            "or_cached_tokens": or_cached_tokens,
+            "or_completion_tokens": or_completion_tokens,
+            "or_provider": or_provider,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
             **_quality_log_fields(
@@ -1227,6 +1241,10 @@ async def chat_stream(
         # on_chain_end capture below; defaults to None (and falls back to
         # token_count in the worst case where the provider omits usage).
         stream_total_tokens: int | None = None
+        stream_prompt_tokens = 0
+        stream_completion_tokens = 0
+        stream_cached_tokens = 0
+        stream_provider = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
 
@@ -1324,10 +1342,15 @@ async def chat_stream(
                         msgs_out = output.get("messages") or []
                         if msgs_out:
                             last_msg = msgs_out[-1]
-                            tu = (getattr(last_msg, "response_metadata", None) or {}).get("token_usage") or {}
+                            rm = getattr(last_msg, "response_metadata", None) or {}
+                            tu = rm.get("token_usage") or {}
                             real_total = tu.get("total_tokens")
                             if isinstance(real_total, int) and real_total > 0:
                                 stream_total_tokens = real_total
+                                stream_prompt_tokens = tu.get("prompt_tokens", 0)
+                                stream_completion_tokens = tu.get("completion_tokens", 0)
+                                stream_cached_tokens = (tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                                stream_provider = rm.get("model_name")
                             else:
                                 # Fallback to usage_metadata (LangChain-normalized).
                                 um = getattr(last_msg, "usage_metadata", None) or {}
@@ -1541,6 +1564,10 @@ async def chat_stream(
                 # chunk-event counter only if the provider didn't report
                 # usage (older Gemini/DeepSeek models occasionally omit it).
                 "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
+                "or_prompt_tokens": stream_prompt_tokens,
+                "or_cached_tokens": stream_cached_tokens,
+                "or_completion_tokens": stream_completion_tokens,
+                "or_provider": stream_provider,
                 "cache_hit": False,
                 "retrieved_context": retrieved_context,
                 **_quality_log_fields(
