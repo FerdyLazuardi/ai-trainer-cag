@@ -150,6 +150,13 @@ async def init_db() -> None:
             text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS "
                  "onboarding_completed_at TIMESTAMPTZ")
         )
+        
+        # agent_logs predates OpenRouter token tracking. create_all won't ALTER
+        # an existing table, so add the token tracking columns idempotently here.
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_prompt_tokens INTEGER"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_cached_tokens INTEGER"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_completion_tokens INTEGER"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_provider VARCHAR(100)"))
 
 
 @asynccontextmanager
