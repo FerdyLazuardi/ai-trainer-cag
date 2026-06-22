@@ -5,28 +5,15 @@
     --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
 
-/* Global smooth theme-swap: when body.coaching-active flips --primary-color
-   from purple → blue, all elements using it animate over 0.35s. */
+/* Global smooth theme-swap transition */
 #chat-box,
 #chat-box *,
 #chat-toggle,
 #chat-toggle::before,
 #prompt,
-.send-btn,
-.kebab-switch,
-.kebab-btn {
+.send-btn {
     transition: background-color 0.35s ease, color 0.35s ease,
                 border-color 0.35s ease, box-shadow 0.35s ease;
-}
-
-/* Coaching mode theme: full BLUE swap (so user sees they're in a different
-   mode, not just a button color change). All var(--primary-color) usages
-   flip to blue — header bg, send button, online dot, focus borders, FAB
-   shadow, etc. The coaching toggle ITSELF is the only one that stays
-   "blue" to show it's actively on. */
-body.coaching-active {
-    --primary-color: #2563eb;
-    --primary-color-shadow: rgba(37, 99, 235, 0.4);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -174,7 +161,7 @@ body.chat-open #chat-toggle.pulse::before {
     right: 20px;
     width: min(400px, 90vw);
     height: min(600px, 80vh);
-    background: white;
+    background: var(--bg-light);
     border-radius: 20px;
     box-shadow: var(--shadow);
     display: none;
@@ -187,10 +174,12 @@ body.chat-open #chat-toggle.pulse::before {
 #chat-header {
     background: var(--primary-color);
     color: white;
-    padding: 18px 20px;
+    padding: 16px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    z-index: 2;
+    position: relative;
 }
 
 .header-info { display: flex; align-items: center; gap: 10px; }
@@ -216,10 +205,12 @@ body.chat-open #chat-toggle.pulse::before {
     flex: 1;
     padding: 20px;
     overflow-y: auto;
-    background: #ffffff;
+    background: transparent;
     display: flex;
     flex-direction: column;
     gap: 15px;
+    z-index: 1;
+    position: relative;
 }
 
 .msg { display: flex; width: 100%; }
@@ -312,12 +303,14 @@ body.chat-open #chat-toggle.pulse::before {
 
 /* ================= INPUT ================= */
 #chat-input {
-    padding: 15px;
-    background: white;
     border-top: 1px solid #f1f5f9;
+    padding: 15px 20px;
+    background: white;
     display: flex;
-    gap: 10px;
+    gap: 12px;
     align-items: center;
+    z-index: 2;
+    position: relative;
 }
 
 #prompt {
@@ -567,7 +560,21 @@ body.chat-open #chat-toggle.pulse::before {
         width: calc(100vw - 20px) !important;
         right: 10px !important;
         bottom: 75px !important;
-        height: calc(100vh - 100px) !important;
+        height: 75vh !important;
+        max-height: 550px !important;
+    }
+    #chat-input {
+        padding: 10px 12px !important;
+    }
+    #prompt {
+        padding: 8px 12px !important;
+    }
+    .topics-btn {
+        height: 36px !important;
+    }
+    .send-btn {
+        width: 36px !important;
+        height: 36px !important;
     }
     #chat-toggle {
         width: 44px;
@@ -593,145 +600,68 @@ body.chat-open #chat-toggle.pulse::before {
 }
 .kebab-btn:hover { background: rgba(255, 255, 255, 0.12); }
 
-/* Hamburger icon: single fa-bars, centered, no cycle. Subtle 6s pulse via
-   the button's ::before for "alive" feel. Static — no morphing. */
-.kebab-btn i {
-    font-size: 15px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-/* Soft pulsing glow (same as before, just kept for visual consistency) */
-.kebab-btn::before {
-    content: "";
-    position: absolute;
-    inset: 2px;
-    border-radius: 6px;
-    background: radial-gradient(
-        circle at center,
-        rgba(255, 255, 255, 0.22) 0%,
-        rgba(255, 255, 255, 0.10) 50%,
-        rgba(255, 255, 255, 0)    75%
-    );
-    pointer-events: none;
-    animation: kebab-glow 6s ease-in-out infinite;
-    z-index: -1;
-    will-change: opacity, transform;
-}
-
-@keyframes kebab-glow {
-    0%, 100% { opacity: 0.55; transform: scale(1);    }
-    50%      { opacity: 1.0;  transform: scale(1.18); }
-}
-
-/* IN animation (open) */
-.kebab-menu {
-    position: absolute;
-    top: 60px;
-    right: 12px;
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-    min-width: 220px;
-    padding: 6px 0;
-    z-index: 1000;
-    transform-origin: top right;
-    /* No animation by default — driven by .opening / .closing classes
-       below so we can play a reverse anim on close. */
-}
-.kebab-menu[hidden] { display: none !important; }
-
-/* IN: smooth slide-down, slightly longer duration so it doesn't feel snappy */
-.kebab-menu.opening {
-    animation: kebab-menu-in 0.28s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-}
-/* OUT: mirror of IN — plays then JS sets [hidden] after the duration */
-.kebab-menu.closing {
-    animation: kebab-menu-out 0.22s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-}
-
-@keyframes kebab-menu-in {
-    from { opacity: 0; transform: translateY(-8px) scale(0.96); }
-    to   { opacity: 1; transform: translateY(0)    scale(1);    }
-}
-@keyframes kebab-menu-out {
-    from { opacity: 1; transform: translateY(0)    scale(1);    }
-    to   { opacity: 0; transform: translateY(-8px) scale(0.96); }
-}
-
-.kebab-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-    user-select: none;
-}
-.kebab-item:hover { background: #f8fafc; }
-
-.kebab-item-label {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.kebab-item-title {
-    font-size: 13px;
+/* ================= COACHING CTA BUTTON ================= */
+.coach-cta-btn {
+    background: rgba(0, 0, 0, 0.15); /* Darker purple / sunken look */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
     font-weight: 600;
-    color: #1e293b;
-}
-.kebab-item-desc {
-    font-size: 11px;
-    color: #94a3b8;
-}
-.kebab-item-placeholder { cursor: default; opacity: 0.6; }
-.kebab-item-placeholder:hover { background: transparent; }
-
-/* Action row (e.g. "Panduan" → replay tutorial). Whole row clickable. */
-.kebab-item-action { cursor: pointer; }
-.kebab-item-icon { font-size: 14px; color: var(--primary-color); flex: 0 0 auto; }
-
-.kebab-badge {
-    font-size: 10px;
-    font-weight: 700;
-    color: white;
-    background: #94a3b8;
-    padding: 2px 8px;
-    border-radius: 999px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-/* Slide switch (iOS-style) — smooth slide for BOTH bg + thumb, in AND out */
-.kebab-switch {
-    position: relative;
-    display: inline-block;
-    width: 36px;
-    height: 20px;
-    background: #cbd5e1;
-    border-radius: 999px;
-    flex: 0 0 auto;
+    padding: 6px 14px;
+    border-radius: 20px;
     cursor: pointer;
-    /* bg color morph: gray ↔ primary, 0.3s both directions */
-    transition: background-color 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
+    outline: none;
 }
-.kebab-switch.on { background: var(--primary-color); }
-.kebab-switch-thumb {
+
+.coach-cta-btn::before {
+    content: '';
     position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    background: white;
-    border-radius: 50%;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    /* thumb slide: 0 ↔ 16px, 0.3s with smooth ease — applies on BOTH
-       on→off AND off→on (CSS transition is bidirectional by default). */
-    transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    transform: skewX(-20deg);
+    animation: shimmer 6s infinite; /* 6s total loop */
 }
-.kebab-switch.on .kebab-switch-thumb { transform: translateX(16px); }
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    40% { left: 200%; }
+    100% { left: 200%; }
+}
+
+.coach-cta-btn:hover {
+    background: rgba(0, 0, 0, 0.25);
+    color: white;
+}
+
+.coach-cta-btn.active {
+    background: white;
+    color: var(--primary-color);
+    border-color: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.coach-cta-btn.active::before {
+    display: none;
+}
+
+.coach-cta-btn i {
+    font-size: 14px;
+    margin-right: 2px;
+}
+
+
+
+
 
 /* ── Welcome-screen chips ────────────────────────────────────────────────── */
 .ava-chips {
@@ -973,16 +903,16 @@ body.chat-open #chat-toggle.intensify::before {
     height: 40px;
     background: transparent;
     color: #94a3b8;
-    border: 1px solid #e2e8f0;
+    border: none;
     border-radius: 10px;
     cursor: pointer;
     font-size: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background-color 0.2s ease, color 0.2s ease;
 }
-.topics-btn:hover { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+.topics-btn:hover { background: #f1f5f9; color: #475569; }
 
 /* ── Section picker panel (in-chatbox accordion) ─────────────────────────── */
 .ava-panel-overlay {

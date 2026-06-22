@@ -444,13 +444,11 @@ class Settings(BaseSettings):
     # <retrieved_context> is present. Tunable without a code change — raise for
     # more warmth/variation, lower if it drifts off the grounded facts.
     chat_llm_temperature: float = 0.4
-    # DEPRECATED (kept to avoid a settings-schema break): the old MENTOR step cap
-    # and empathy-path temperature. No longer referenced after the pipeline was
-    # collapsed to one conversational prompt — length + warmth are now handled in
-    # CONVERSATIONAL_PROMPT + chat_llm_temperature. Safe to delete once confirmed
-    # nothing external reads them.
-    lms_scaffolding_max_steps: int = 5
     empathy_llm_temperature: float = 0.6
+    cheap_llm_temperature: float = 0.3
+    judge_llm_temperature: float = 0.0
+    preprocessor_llm_temperature: float = 0.0
+    generate_llm_temperature: float = 0.0
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
     # Query→answer cache lifetime (Redis exact-match only; the Qdrant semantic

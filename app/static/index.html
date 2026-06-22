@@ -46,16 +46,12 @@
                 </div>
             </div>
             <div style="display:flex; gap:20px; align-items:center;">
+                <button id="coach-cta-btn" class="coach-cta-btn" title="Aktifkan Coaching Mode">
+                    <i class="fas fa-lightbulb"></i> Coaching
+                </button>
                 <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat"
                     style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-                <button id="kebab-btn" class="header-icon kebab-btn" onclick="toggleKebabMenu(event)" title="Mode &amp; fitur">
-                    <i class="fas fa-bars"></i>
-                </button>
             </div>
-        </div>
-
-        <div id="kebab-menu" class="kebab-menu" hidden>
-            <!-- Menu items rendered dynamically by _renderKebabMenu() -->
         </div>
 
         <div id="chat-messages"></div>
@@ -71,24 +67,7 @@
         </div>
     </div>
 
-    <!-- ═══ ONBOARDING TUTORIAL ═══
-         4-step tour, first-time only (localStorage.ava_tour_done).
-         Dark overlay with SVG-mask rounded-rect HOLE around the target
-         step. Cutout area is fully visible (no dim) — target's natural
-         colors show through. Step tooltip floats next to the cutout. -->
-    <div id="ava-tour-overlay" class="ava-tour-overlay" hidden></div>
-    <div id="ava-tour-cutout" class="ava-tour-cutout" hidden></div>
-    <div id="ava-tour-tooltip" class="ava-tour-tooltip" hidden>
-        <strong id="ava-tour-title"></strong>
-        <div id="ava-tour-body"></div>
-        <div class="ava-tour-actions">
-            <div class="ava-tour-dots" id="ava-tour-dots"></div>
-            <div>
-                <button id="ava-tour-skip" class="ava-tour-btn ava-tour-btn-ghost">Skip</button>
-                <button id="ava-tour-next" class="ava-tour-btn ava-tour-btn-primary">Lanjut →</button>
-            </div>
-        </div>
-    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/static/script.js"></script>
 </body>

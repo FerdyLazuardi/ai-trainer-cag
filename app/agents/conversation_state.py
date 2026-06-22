@@ -43,15 +43,12 @@ from __future__ import annotations
 import json
 import re
 import time
+from typing import Any
 
 from loguru import logger
-# RedisLike (a Protocol typing the async client's methods as pure coroutines)
-# is imported under the name `Redis` so the 21 `redis: Redis` param annotations
-# below resolve to it WITHOUT touching each line. Fixes the "X is not awaitable"
-# checker noise at its root (see app/database/redis_client.py docstring). This
+Redis = Any
 # is annotation-only here — no Redis() instantiation / isinstance — so the
 # alias is behavior-neutral.
-from app.database.redis_client import RedisLike as Redis
 from redis.exceptions import WatchError
 
 from app.config.settings import get_settings
