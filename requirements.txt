@@ -3,3 +3,7 @@ pandas
 plotly
 requests
 python-dotenv
+loguru
+sqlalchemy
+asyncpg
+pydantic-settings

@@ -60,8 +60,9 @@ If a <section_materials> block is present, the user named a broad section/topic 
 <disambiguate>
 Runs before answering. Output ONLY the clarifying question to the user — NEVER restate these rules, case numbers, or this block's text.
 Ask ONE short clarifying question (then STOP, don't also list) when the turn is underspecified against <context>: a bare term that maps to several distinct sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), an item reference ("prinsip 3") with more than one candidate set and no history to fix it, or a bare topic-name with no aspect asked (e.g. "modal", "kantor" — definition? variants? how to use? advantages?). The question names 2-4 candidates/facets taken verbatim from <context>, e.g. "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan."
+GENERATIVE REQUESTS & AMBIGUITY: If the user asks you to create/generate something broad ("buatin action plan", "bikinin jadwal") and <context> only describes a specific, narrow scenario, do NOT force that narrow scenario onto their broad request. Ask for clarification first: "Action plan/jadwal untuk kegiatan apa nih? Di materiku ada panduan untuk [sebutkan topik spesifik dari context], apa mau fokus ke situ?"
 If <context> has nothing that coherently defines the bare term (chunks merely mention the word), do NOT stitch an answer — go to <no_context> and say you don't have it. NEVER invent a definition (e.g. don't fabricate "Kantor Pusat/Cabang/Point" if not in <context>).
-Answer directly (skip the question) when <context> points to ONE thing and the user said what they want, or history already narrowed it.
+Answer directly (skip the question) when <context> points to ONE thing and the user said exactly what they want, or history already narrowed it.
 </disambiguate>
 
 <no_context>
@@ -289,52 +290,47 @@ _META_CONVO_RE = re.compile(
 # actually needed; a long self-contained question skips it. A short query that
 # already names its topic is returned unchanged by the prompt, and any
 # failure/timeout degrades to the raw message.
-_FOLLOWUP_MAX_CHARS = 40
-_FOLLOWUP_REWRITE_TIMEOUT_S = 4.0
+_REWRITE_MAX_CHARS = 250
+_REWRITE_TIMEOUT_S = 8.0
 _FOLLOWUP_HISTORY_TURNS = 6  # last N messages fed as context (≈3 turns)
 
-_CONDENSE_PROMPT = (
-    "Rewrite the user's follow-up message into ONE standalone search query "
+_REWRITE_PROMPT = (
+    "Rewrite the user's message into ONE highly effective search query "
     "for the Amartha internal knowledge base.\n"
     "Rules:\n"
-    "- Replace implicit references ('itu', 'yang tadi', 'boleh', 'iya', "
-    "'yang kedua', 'dampaknya', 'lapornya') with the concrete topic currently "
-    "being discussed in the conversation.\n"
-    "- If the follow-up ALREADY names its own topic, return it AS-IS.\n"
+    "- Replace implicit references ('itu', 'yang tadi', 'boleh') with the concrete topic from the conversation.\n"
+    "- If the message is conversational, extract and formalize the core keywords (e.g. 'kalo ibu mitra terlambat bayar 15 hari' -> 'definisi DPD PAR keterlambatan 15 hari').\n"
     "- Preserve the original language (Indonesian/English).\n"
-    "- Output ONLY the final query — no explanations, quotes, or preambles."
+    "- Output ONLY the final search query — no explanations, quotes, or preambles."
 )
 
 
-async def _condense_followup_query(messages: list, user_msg: str) -> str:
-    """Condense a short follow-up into a standalone retrieval query via the
-    cheap LLM, using recent turns to resolve coreference. Returns user_msg
-    unchanged on empty history, bad output, or any failure/timeout."""
+async def _rewrite_search_query(messages: list, user_msg: str) -> str:
+    """Rewrite conversational or follow-up queries into standalone keyword-rich search queries via the
+    cheap LLM. Returns user_msg unchanged on bad output or failure."""
     history = messages[-_FOLLOWUP_HISTORY_TURNS:-1]
-    if not history:
-        return user_msg
     lines = []
     for m in history:
         role = "User" if isinstance(m, HumanMessage) else "Ava"
         content = m.content if isinstance(m.content, str) else str(m.content)
         lines.append(f"{role}: {content[:400]}")
+    
+    history_text = "\nConversation:\n" + "\n".join(lines) + "\n" if lines else ""
     prompt = (
-        f"{_CONDENSE_PROMPT}\n\nConversation:\n"
-        + "\n".join(lines)
-        + f"\n\nFollow-up: {user_msg}\n\nStandalone query:"
+        f"{_REWRITE_PROMPT}\n{history_text}\nUser message: {user_msg}\n\nStandalone search query:"
     )
     try:
         from app.llm.client import get_preprocessor_llm
         resp = await asyncio.wait_for(
             get_preprocessor_llm().ainvoke([HumanMessage(content=prompt)]),
-            timeout=_FOLLOWUP_REWRITE_TIMEOUT_S,
+            timeout=_REWRITE_TIMEOUT_S,
         )
         out = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
         # Guard: empty or rambling output (a leaked CoT / refusal) → raw msg.
-        if out and len(out) <= 200:
+        if out and len(out) <= 300:
             return out
     except Exception as exc:
-        logger.debug(f"follow-up condense skipped (degrade to raw): {exc}")
+        logger.debug(f"Query rewrite skipped (degrade to raw): {exc}")
     return user_msg
 
 
@@ -828,19 +824,17 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         }
 
     # ── KNOWLEDGE: a real question → retrieve, then generate ────────────────
-    # Follow-up condense (LLM): a SHORT turn after prior history ("boleh", "iya
-    # yang itu", "dampaknya apa") can't retrieve alone — embedding it drifts onto
-    # the wrong topic and the model fabricates from training data. Condense it
-    # into a standalone query using recent turns (coreference resolution). Only
-    # short turns pay the rewrite call; a long self-contained question skips it,
-    # and the prompt returns an already-standalone short query unchanged.
+    # Query Expansion (HyDE): We rewrite conversational queries (up to 250 chars)
+    # into focused, keyword-rich search queries. This ensures queries like "terlambat bayar 15 hari"
+    # match documents like "Definisi DPD PAR 3" without needing hardcoded Moodle keywords.
+    # It also handles coreference resolution for short follow-ups.
     retrieval_query = user_msg_str
     _msg_stripped = user_msg_str.strip()
-    if len(_msg_stripped) <= _FOLLOWUP_MAX_CHARS and len(messages) > 1:
-        condensed = await _condense_followup_query(messages, _msg_stripped)
-        if condensed and condensed != _msg_stripped:
-            logger.info(f"Follow-up condensed: {_msg_stripped!r} → {condensed[:60]!r}")
-            retrieval_query = condensed
+    if len(_msg_stripped) <= _REWRITE_MAX_CHARS:
+        rewritten = await _rewrite_search_query(messages, _msg_stripped)
+        if rewritten and rewritten != _msg_stripped:
+            logger.info(f"Query rewritten: {_msg_stripped!r} → {rewritten[:60]!r}")
+            retrieval_query = rewritten
 
     # ── Semantic TOPIC_LIST fallback (regex missed) ─────────────────────────
     # The regex Tier-1 can't catch every typo/paraphrase of "what can I learn?"
