@@ -54,8 +54,8 @@ When the context IS relevant: copy Amartha's product, principle, role, and polic
 STRICT ANTI-HALLUCINATION: If <context> provides only a partial answer or a general rule, state the general rule EXACTLY as written in <context> first. Do NOT hallucinate logical extensions, common sense solutions, or industry standard practices to answer the user's specific sub-case (e.g., if it says to use an agent, do NOT invent "cari agen di desa sebelah"; if it says "kurang lebih 15 orang", do NOT definitively say whether "10 orang" is allowed or not). After stating the general rule, explicitly state that their specific scenario isn't covered in your materials and suggest confirming with their BM or tim terkait.
 PARTIAL COVERAGE: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket") and <context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT stitch the steps together from adjacent facts. State plainly that the specific procedure isn't in your materials and suggest confirming with BM atau tim terkait. Fabricating a plausible combined procedure for a money/payment flow is the worst failure here — a high-relevance retrieval does NOT mean the exact sub-case is covered.
 When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — FIRST run the <disambiguate> check: if the bare term could name SEVERAL DISTINCT sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), ask the clarifying question and STOP — do NOT dump all sets. Only when it resolves to ONE set do you list completely: answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
-If an <available_topics> block is present, the user asked what topics/materials exist: list ONLY the topics inside it, verbatim, and do NOT invent or rename any. If it says the list couldn't be loaded, say briefly you can't pull it up right now and ask them to retry — do NOT name or guess any topic.
-If a <section_materials> block is present, the user named a broad section/topic without a specific question: briefly say that section covers several materials, list them from the block verbatim, and ask which one they want to dig into. Do NOT dump the full content of every material — offer the menu first.
+If an <available_topics> block is present, the user asked what topics/materials exist: mention the topics inside it naturally in your response. Do NOT output the raw <available_topics> list or hyphens verbatim at the top of your response. If it says the list couldn't be loaded, say briefly you can't pull it up right now and ask them to retry — do NOT name or guess any topic.
+If a <section_materials> block is present, the user named a broad section/topic without a specific question: briefly say that section covers several materials, name them from the block, and ask which one they want to dig into. Do NOT output the raw <section_materials> list verbatim at the top of your response. Do NOT dump the full content of every material — offer the menu first.
 </grounding>
 
 <disambiguate>
@@ -789,39 +789,39 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             logger.warning(f"semantic gate skipped (intent classification degraded): {exc}")
             gate_score_out = None
 
+    # ── SECTION_DRILLDOWN ───────────────────────────────────────────────────
+    # Refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
+    # "product amartha apaan" -> SECTION_DRILLDOWN. If the shape matches AND we
+    # can resolve the section from query (token match) OR history (deictic ordinal),
+    # route to SECTION_DRILLDOWN immediately, regardless of the initial rule_intent.
+    if _is_section_drilldown_shape(user_msg_str):
+        try:
+            _sm = await _load_section_map()
+        except Exception:
+            _sm = {}
+        _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
+        if _resolved:
+            logger.info(
+                f"Pre-processor: intent refined -> SECTION_DRILLDOWN "
+                f"(section={_resolved!r}, via {_respath!r})"
+            )
+            state["drilldown_section"] = _resolved
+            state["drilldown_resolution"] = _respath
+            return {
+                "intent": "SECTION_DRILLDOWN",
+                "rewritten_query": user_msg_str,
+                "retrieval_query": user_msg_str,
+                "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+                "gate_score": gate_score_out,
+                "drilldown_section": _resolved,
+                "drilldown_resolution": _respath,
+            }
+        logger.info(
+            "Pre-processor: drilldown shape matched but no section resolved - falling back"
+        )
+
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
     if rule_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
-        # SECTION_DRILLDOWN refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
-        # "bisnis proses ada apa aja" -> SECTION_DRILLDOWN. Refine TOPIC_LIST to
-        # SECTION_DRILLDOWN when shape matches AND we can resolve the section from
-        # query (token match) OR history (deictic ordinal like "yang kedua", "topik B",
-        # "yang tadi"). No new LLM/embed call: just regex + dict lookup against the
-        # section_map cache (10-min, Postgres-backed).
-        if rule_intent == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
-            try:
-                _sm = await _load_section_map()
-            except Exception:
-                _sm = {}
-            _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
-            if _resolved:
-                logger.info(
-                    f"Pre-processor: TOPIC_LIST refined -> SECTION_DRILLDOWN "
-                    f"(section={_resolved!r}, via {_respath!r})"
-                )
-                state["drilldown_section"] = _resolved
-                state["drilldown_resolution"] = _respath
-                return {
-                    "intent": "SECTION_DRILLDOWN",
-                    "rewritten_query": user_msg_str,
-                    "retrieval_query": user_msg_str,
-                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                    "gate_score": gate_score_out,
-                    "drilldown_section": _resolved,
-                    "drilldown_resolution": _respath,
-                }
-            logger.info(
-                "Pre-processor: drilldown shape matched but no section resolved - falling back to TOPIC_LIST"
-            )
         logger.info(f"Pre-processor: {rule_intent} → no retrieval, straight to generate")
         return {
             "intent": rule_intent,

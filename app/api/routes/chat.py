@@ -530,30 +530,6 @@ async def _prepare_rag_context(
             query=resolved_query[:60],
         )
 
-    cached = None
-    if not skip_cache:
-        _t_cache_start = _time.perf_counter()
-        
-        private_ns = f"rag_user_{current_user.user_id}"
-        global_ns = "rag"
-        
-        private_cached, global_cached = await asyncio.gather(
-            get_cached_response(
-                resolved_query,
-                course_id=request.course_id,
-                cache_namespace=private_ns,
-            ),
-            get_cached_response(
-                resolved_query,
-                course_id=request.course_id,
-                cache_namespace=global_ns,
-            )
-        )
-        cached = private_cached or global_cached
-        logger.debug(f"[TIMING] get_cached_response (private+global): {_time.perf_counter()-_t_cache_start:.2f}s")
-    if cached:
-        return {"cached": cached, "query_embedding": query_embedding}
-
     # Build message history + LTM + UserProfile in parallel.
     # These three I/O calls are independent (Redis, Qdrant, Postgres) — fan
     # them out instead of awaiting serially. Only LTM and UserProfile depend
@@ -597,6 +573,7 @@ async def _prepare_rag_context(
             },
             "query_embedding": None,
             "was_personalized": False,
+            "skip_cache": skip_cache,
         }
 
     async def _load_ltm_if_eligible():
@@ -631,6 +608,34 @@ async def _prepare_rag_context(
         _load_user_profile_if_eligible(),
     )
     logger.debug(f"[TIMING] gather(history+ltm+profile): {_time.perf_counter()-_t_gather_start:.2f}s, total_so_far: {_time.perf_counter()-_t0:.2f}s")
+    if recent_history or summary:
+        skip_cache = True
+        logger.debug("Cache lookup skipped - conversation history is not empty, query is context-dependent")
+
+    cached = None
+    if not skip_cache:
+        _t_cache_start = _time.perf_counter()
+        
+        private_ns = f"rag_user_{current_user.user_id}"
+        global_ns = "rag"
+        
+        private_cached, global_cached = await asyncio.gather(
+            get_cached_response(
+                resolved_query,
+                course_id=request.course_id,
+                cache_namespace=private_ns,
+            ),
+            get_cached_response(
+                resolved_query,
+                course_id=request.course_id,
+                cache_namespace=global_ns,
+            )
+        )
+        cached = private_cached or global_cached
+        logger.debug(f"[TIMING] get_cached_response (private+global): {_time.perf_counter()-_t_cache_start:.2f}s")
+    if cached:
+        return {"cached": cached, "query_embedding": query_embedding}
+
 
     # C7: kick the out-of-band summary refresh (fire-and-forget). Only enqueues
     # if the conversation overflowed the fresh window; NX-deduped. Keeps the
@@ -726,6 +731,7 @@ async def _prepare_rag_context(
         "initial_state": initial_state,
         "query_embedding": query_embedding,
         "was_personalized": was_personalized,
+        "skip_cache": skip_cache,
     }
 
 def _extract_sources(retrieved_context: list) -> list:
@@ -928,6 +934,7 @@ async def _run_chat(
         intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
         and not is_low_relevance
         and not _is_bare_affirmation(request.query)
+        and not context.get("skip_cache", False)
     ):
         ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
         background_tasks.add_task(
@@ -1536,6 +1543,7 @@ async def chat_stream(
                 intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
                 and not is_low_relevance_stream
                 and not _is_bare_affirmation(request.query)
+                and not context.get("skip_cache", False)
             ):
                 ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
                 await set_cached_response(

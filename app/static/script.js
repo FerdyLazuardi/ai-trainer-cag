@@ -35,7 +35,7 @@
                 <div class="header-info">
                     <div class="online-dot"></div>
                     <div style="display:flex; flex-direction:column;">
-                        <span>Ava AI Trainer</span>
+                        <span>AI Trainer</span>
                         <small style="font-size:11px; opacity:.8;">AI Trainer can make mistake</small>
                     </div>
                 </div>
