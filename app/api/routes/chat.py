@@ -1504,10 +1504,7 @@ async def chat_stream(
         # Gated on the real intent (COACHING) so a greeting/off-scope turn while the
         # toggle is on never triggers it. Computed server-side: no marker ever
         # streams to the user, so there's nothing to leak.
-        coaching_done = bool(
-            request.coaching_mode and intent == "COACHING"
-            and full_answer and "?" not in full_answer
-        )
+        coaching_done = False
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 

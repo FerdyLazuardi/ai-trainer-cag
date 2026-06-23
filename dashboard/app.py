@@ -315,6 +315,11 @@ with tab_gate:
             "Belum ada snapshot. Jalankan: `python -m scripts.auto_calibrate_intent_gate` "
             "(atau tunggu cron harian)."
         )
+        if "calib_output" in st.session_state:
+            st.text(st.session_state.calib_output)
+            st.success("Selesai!")
+            del st.session_state.calib_output
+
         if st.button("Jalankan kalibrasi sekarang"):
             with st.spinner("Mengambil data agent_logs..."):
                 try:
@@ -328,16 +333,13 @@ with tab_gate:
                     
                     output = result.stdout
                     if result.stderr:
-                        output += "\n\n--- ERRORS ---\n" + result.stderr
-                        
-                    st.code(output[-2000:] if output else "No output returned.", language="bash")
+                        output += "\n[STDERR]\n" + result.stderr
                     
-                    if result.returncode != 0:
-                        st.warning(f"Drift terdeteksi (exit={result.returncode}). Cek rekomendasi di bawah.")
+                    st.session_state.calib_output = output
                     _load_calibration_snapshots.clear()
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Gagal menjalankan script: {e}")
+                    st.error(f"Gagal menjalankan kalibrasi: {e}")
     else:
         latest_name, latest = snapshots[-1]
         cur = latest.get("current_settings", {})
