@@ -303,7 +303,10 @@ class GateScore:
     margin: float
 
 
-async def classify_semantic_with_scores(text: str) -> GateScore:
+async def classify_semantic_with_scores(
+    text: str,
+    query_embedding: list[float] | None = None,
+) -> GateScore:
     """Classify intent AND return the full score breakdown.
 
     Returns a :class:`GateScore`. The caller decides what to do with
@@ -331,7 +334,10 @@ async def classify_semantic_with_scores(text: str) -> GateScore:
         return empty
 
     try:
-        user_vec = await _embed_one(text)
+        if query_embedding is not None:
+            user_vec = list(query_embedding)
+        else:
+            user_vec = await _embed_one(text)
     except Exception as e:
         logger.warning(f"Semantic gate: embedding failed for query, falling through: {e}")
         return empty

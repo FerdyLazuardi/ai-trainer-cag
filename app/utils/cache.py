@@ -155,9 +155,9 @@ async def set_cached_response(
         "maaf saya tidak", "terjadi kesalahan",
         "maaf, aku tidak menemukan", "maaf, saya tidak menemukan",
         "belum nemu", "belum menemukan", "belum ketemu",
-        "tidak tersedia di materi", "tidak ada di materi",
-        "tidak tersedia di materiku", "ga nemu", "gak nemu", "nggak nemu",
-        "coba pakai kata kunci lain", "coba cari dengan kata kunci lain",
+        "sejauh pengetahuanku belum ada", "kurang tahu pasti",
+        "sejauh pengetahuanku belum ada", "ga nemu", "gak nemu", "nggak nemu",
+        "coba pastikan lagi pertanyaannya", "coba cari dengan kata kunci lain",
     ]
     if any(phrase in lower_answer for phrase in error_phrases):
         logger.debug("Skipping cache write: response contains error/not-found phrase")

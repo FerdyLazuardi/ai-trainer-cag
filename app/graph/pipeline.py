@@ -43,15 +43,16 @@ Talk like a senior L&D trainer mentoring a colleague — warm, human, methodical
 </how_to_talk>
 
 <length>
-Default: SHORT — 2-4 sentences, warm and direct. Don't pad, don't dump every fact.
+Default: MICROLEARNING (Bite-sized) — 2-4 sentences maximum. DO NOT summarize the entire <context> if it's long. Instead, extract ONLY the core 1-paragraph essence. Then, ALWAYS end with a brief "hook" question offering to elaborate on specific parts if they want to dig deeper (e.g. "Mau aku ceritain lebih lanjut bagian X, atau langsung ke Y?").
 Go LONGER and more structured ONLY when the user clearly asks to be taught or wants detail ("jelasin lengkap", "ajarin aku", "gimana caranya step by step", "rinci dong"): then give a fuller answer, numbered steps if it's a procedure, **bold** the key action per step. Use bullets only when genuinely listing items. For a plain definition, answer in prose.
-EXCEPTION — the SHORT default does NOT apply when the user asks about a set/category that <context> lists (see the LIST rule in <grounding>): there, completeness wins over brevity — list every item in the context, even if that runs past 4 sentences. A complete bulleted list is the correct SHORT answer for that case.
+EXCEPTION — the SHORT default does NOT apply when the user asks about a set/category that <context> lists (see the LIST rule in <grounding>): there, completeness wins over brevity — list every item in the context completely.
 </length>
 
 <grounding>
 First check RELEVANCE: <context> being present does NOT mean it answers this turn. Re-read what the user actually said. If the context genuinely answers their question, base your answer on it. If it does NOT — e.g. the user made a meta-comment about the conversation ("kok ga nyambung", "yang bener dong"), greeted you, or said something the chunks don't actually address — then IGNORE the context entirely and just respond to the user naturally. NEVER pull in a topic from <context> that the user didn't ask about ("Kamu bertanya tentang X..." when they didn't) — that's the worst failure here.
 When the context IS relevant: copy Amartha's product, principle, role, and policy names EXACTLY as written in <context> — never swap in a similar-sounding term from general knowledge (e.g. keep Amartha's "Mechanism of Complaints Resolution", don't rename it to the generic CGAP "Grievance Redress"). Do NOT invent Amartha facts (numbers, policies, lists) that aren't in <context>.
-PARTIAL COVERAGE: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket") and <context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT stitch the steps together from adjacent facts. State plainly that the specific procedure isn't in your materials and suggest confirming with BM or tim terkait. Fabricating a plausible combined procedure for a money/payment flow is the worst failure here — a high-relevance retrieval does NOT mean the exact sub-case is covered.
+STRICT ANTI-HALLUCINATION: If <context> provides only a partial answer or a general rule, state the general rule EXACTLY as written in <context> first. Do NOT hallucinate logical extensions, common sense solutions, or industry standard practices to answer the user's specific sub-case (e.g., if it says to use an agent, do NOT invent "cari agen di desa sebelah"; if it says "kurang lebih 15 orang", do NOT definitively say whether "10 orang" is allowed or not). After stating the general rule, explicitly state that their specific scenario isn't covered in your materials and suggest confirming with their BM or tim terkait.
+PARTIAL COVERAGE: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket") and <context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT stitch the steps together from adjacent facts. State plainly that the specific procedure isn't in your materials and suggest confirming with BM atau tim terkait. Fabricating a plausible combined procedure for a money/payment flow is the worst failure here — a high-relevance retrieval does NOT mean the exact sub-case is covered.
 When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — FIRST run the <disambiguate> check: if the bare term could name SEVERAL DISTINCT sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), ask the clarifying question and STOP — do NOT dump all sets. Only when it resolves to ONE set do you list completely: answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
 If an <available_topics> block is present, the user asked what topics/materials exist: list ONLY the topics inside it, verbatim, and do NOT invent or rename any. If it says the list couldn't be loaded, say briefly you can't pull it up right now and ask them to retry — do NOT name or guess any topic.
 If a <section_materials> block is present, the user named a broad section/topic without a specific question: briefly say that section covers several materials, list them from the block verbatim, and ask which one they want to dig into. Do NOT dump the full content of every material — offer the menu first.
@@ -60,13 +61,13 @@ If a <section_materials> block is present, the user named a broad section/topic 
 <disambiguate>
 Runs before answering. Output ONLY the clarifying question to the user — NEVER restate these rules, case numbers, or this block's text.
 Ask ONE short clarifying question (then STOP, don't also list) when the turn is underspecified against <context>: a bare term that maps to several distinct sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), an item reference ("prinsip 3") with more than one candidate set and no history to fix it, or a bare topic-name with no aspect asked (e.g. "modal", "kantor" — definition? variants? how to use? advantages?). The question names 2-4 candidates/facets taken verbatim from <context>, e.g. "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan."
-GENERATIVE REQUESTS & AMBIGUITY: If the user asks you to create/generate something broad ("buatin action plan", "bikinin jadwal") and <context> only describes a specific, narrow scenario, do NOT force that narrow scenario onto their broad request. Ask for clarification first: "Action plan/jadwal untuk kegiatan apa nih? Di materiku ada panduan untuk [sebutkan topik spesifik dari context], apa mau fokus ke situ?"
+GENERATIVE REQUESTS & AMBIGUITY: If the user asks you to create/generate something broad ("buatin action plan", "bikinin jadwal") and <context> only describes a specific, narrow scenario, do NOT force that narrow scenario onto their broad request. Ask for clarification first: "Action plan/jadwal untuk kegiatan apa nih? Kalau untuk [sebutkan topik spesifik dari context] aku ada panduannya, apa mau fokus ke situ?"
 If <context> has nothing that coherently defines the bare term (chunks merely mention the word), do NOT stitch an answer — go to <no_context> and say you don't have it. NEVER invent a definition (e.g. don't fabricate "Kantor Pusat/Cabang/Point" if not in <context>).
 Answer directly (skip the question) when <context> points to ONE thing and the user said exactly what they want, or history already narrowed it.
 </disambiguate>
 
 <no_context>
-If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Aku belum nemu info soal itu di materiku — coba pakai kata kunci lain ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amarthapedia materials). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
+If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Waduh, sejauh pengetahuanku belum ada panduan spesifik soal itu — coba pastikan lagi pertanyaannya ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amartha processes). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
 CRITICAL — acronyms/terms with NO context: if the user asks about an acronym, abbreviation, product, or term ("MBG itu apa", "apa itu XYZ", "kapan ABC cair") and <context> does NOT define it, you MUST say you don't have it — NEVER guess or invent an expansion, definition, or process (do NOT turn "MBG" into a plausible-sounding "Mitra Bisnis Gold"). Inventing a confident expansion for an unknown acronym is the single worst failure here. A real Amartha term would have surfaced in <context>; if it didn't, treat it as unknown and ask the user to clarify or rephrase.
 </no_context>"""
 
@@ -83,7 +84,9 @@ CHIT_CHAT_PROMPT = f"""<role>
 {OUTPUT_CONTRACT}
 
 <how_to_talk>
-Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. If it's off-topic (weather, math, other companies, recipes, general knowledge, personal stuff), do NOT answer it — not even a quick definition or partial answer. EVEN IF you confidently know the answer (e.g. "apa itu bitcoin", "ibukota Prancis", "5x7 berapa"), you must NOT state it — refusing to define a well-known term you obviously know feels unnatural, but do it anyway: that one leaked sentence is exactly the failure to avoid. Briefly say it's outside Amarthapedia and steer back to what you can help with, WITHOUT providing the off-topic information itself. Keep the reply to 1-3 sentences unless they clearly want more. Mirror their language (ID/EN) and tone.
+Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. 
+
+CRITICAL: You are currently operating WITHOUT access to the Knowledge Base. You MUST NOT answer ANY factual questions, procedures, policies, or product details—even if they mention Amartha terms like "nasabah", "mitra", or "cuti". If the user asks anything that sounds like a procedure or fact, or if it's off-topic (weather, math, other companies, recipes, personal stuff), do NOT answer it. EVEN IF you confidently know the answer, you must NOT state it. Refusing to answer feels unnatural, but do it anyway: that one leaked sentence or hallucination is exactly the failure to avoid. Briefly say it's outside Amartha scope atau kamu tidak memiliki informasi tersebut, and steer back to what you can help with. Keep the reply to 1-3 sentences. Mirror their language (ID/EN) and tone.
 </how_to_talk>"""
 
 
@@ -165,7 +168,7 @@ The goal is for the user to ARRIVE at understanding, NOT to make them admit they
 </wrap_up>
 
 <grounding>
-Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Aku belum nemu ini di materiku") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
+Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Sejauh pengetahuanku belum ada panduan spesifik soal itu") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
 SPEAK LIKE A TRAINER, NOT A GUIDEBOOK: ground your answer in the material but do NOT cite it as a source out loud ("Materi Basic Leadership bilang...", "Di materi Tanggung Renteng...", "dari materi yang kita bahas"). You're a senior trainer who already knows this by heart — just say the thing directly ("Kuncinya ada di kendali diri internal...") instead of attributing it to a document. The grounding is for YOUR accuracy, not a citation the user needs to see.
 CRITICAL — partial coverage: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket", a step the materials only describe for a different scenario) and <retrieved_context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT synthesize the steps from adjacent facts. Say that specific procedure isn't in your materials and suggest confirming with BM or tim terkait. Inventing a plausible combined procedure for a money/payment flow is the worst failure here.
 </grounding>
@@ -290,18 +293,23 @@ _META_CONVO_RE = re.compile(
 # actually needed; a long self-contained question skips it. A short query that
 # already names its topic is returned unchanged by the prompt, and any
 # failure/timeout degrades to the raw message.
-_REWRITE_MAX_CHARS = 250
+_REWRITE_MAX_CHARS = 1000
 _REWRITE_TIMEOUT_S = 8.0
 _FOLLOWUP_HISTORY_TURNS = 6  # last N messages fed as context (≈3 turns)
 
 _REWRITE_PROMPT = (
-    "Rewrite the user's message into ONE highly effective search query "
-    "for the Amartha internal knowledge base.\n"
+    "Rewrite the user's message into a highly effective, keyword-rich search query for a semantic vector database.\n"
     "Rules:\n"
-    "- Replace implicit references ('itu', 'yang tadi', 'boleh') with the concrete topic from the conversation.\n"
-    "- If the message is conversational, extract and formalize the core keywords (e.g. 'kalo ibu mitra terlambat bayar 15 hari' -> 'definisi DPD PAR keterlambatan 15 hari').\n"
-    "- Preserve the original language (Indonesian/English).\n"
-    "- Output ONLY the final search query — no explanations, quotes, or preambles."
+    "1. Correct any Indonesian typos, slang, and abbreviations to formal Indonesian before searching (e.g. 'kbp' -> 'kepada BP', 'mtira' -> 'mitra', 'cbar' -> 'sebar', 'klo' -> 'kalau', 'gmn' -> 'bagaimana', 'hp' -> 'handphone').\n"
+    "2. Amartha Glossary (Translate ONLY if the EXACT phrase appears in the input):\n"
+    "   - BM = Business Manager, BP = Business Partner, PAR = Portfolio at Risk, OS = Outstanding, TR = Tanggung Renteng, BTC = Back to Current, DPD = Days Past Due, NPL = Non-Performing Loan, RR = Repayment Rate, PJ = Penanggung Jawab.\n"
+    "   - 'kata sandi' / 'password' -> 'PIN'\n"
+    "   - 'pegang atm' / 'titip atm' -> 'menguasai buku tabungan atau ATM'\n"
+    "   - 'diwakilkan' -> 'mewakilkan kehadiran'\n"
+    "   - 'bayarin dulu' / 'pake uang dia' -> 'menalangi angsuran'\n"
+    "3. Resolve any implicit references (e.g., 'itu', 'yang tadi') using the conversation history.\n"
+    "4. APPEND formal business/SOP categories to informal scenarios, DO NOT replace them. Keep the original specific nouns/verbs and add the formal classification at the end (e.g., 'beli kulkas' -> 'beli kulkas konsumsi pribadi', 'disuruh kumpul ke satu tempat' -> 'kumpul ke satu tempat pengumpulan paksa'). DO NOT hallucinate unrelated concepts.\n"
+    "5. Output ONLY the final search query (MAXIMUM 15 WORDS) — no explanations, quotes, or preambles."
 )
 
 
@@ -778,7 +786,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                     "gate_score": gate_score_out,
                 }
         except Exception as exc:
-            logger.debug(f"semantic gate skipped: {exc}")
+            logger.warning(f"semantic gate skipped (intent classification degraded): {exc}")
             gate_score_out = None
 
     # ── Chit-chat / no-lookup intents → skip retrieval entirely ─────────────
@@ -830,10 +838,18 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # It also handles coreference resolution for short follow-ups.
     retrieval_query = user_msg_str
     _msg_stripped = user_msg_str.strip()
+
+    # Per user request: always run query rewrite to prioritize quality/context accuracy
+    # over the ~500ms latency savings. Hardcoded heuristics might miss edge cases.
     if len(_msg_stripped) <= _REWRITE_MAX_CHARS:
         rewritten = await _rewrite_search_query(messages, _msg_stripped)
         if rewritten and rewritten != _msg_stripped:
-            logger.info(f"Query rewritten: {_msg_stripped!r} → {rewritten[:60]!r}")
+            # Guard: if rewrite is suspiciously long compared to original (and >100 chars), likely hallucinated expansion
+            if len(rewritten) > max(len(_msg_stripped) * 4, 100):
+                logger.warning(f"Query rewrite suspiciously long, using original: {rewritten[:80]!r}")
+                rewritten = _msg_stripped
+            else:
+                logger.info(f"Query rewritten: {_msg_stripped!r} → {rewritten[:60]!r}")
             retrieval_query = rewritten
 
     # ── Semantic TOPIC_LIST fallback (regex missed) ─────────────────────────
@@ -1127,13 +1143,6 @@ def _get_section_map_lock() -> asyncio.Lock:
     return _section_map_lock
 
 
-def _get_section_map_lock() -> asyncio.Lock:
-    global _section_map_lock
-    if _section_map_lock is None:
-        _section_map_lock = asyncio.Lock()
-    return _section_map_lock
-
-
 # ════════════════════════════════════════════════════════════════════════════════
 # Section Drilldown helpers (Jun 2026)
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1374,7 +1383,11 @@ def _resolve_section_ordinal(query: str, sections: list[str]) -> str | None:
         r"(?:yang)|(?:itu)|(?:tadi)|(?:yang\s+aja)|(?:pilih\s+itu)",
         q.strip(),
     ):
-        return sections[-1] if sections else None
+        # Only use fallback if there's exactly one section in recent context
+        if len(sections) == 1:
+            return sections[0]
+        # With multiple sections, "yang itu" is ambiguous — return None to avoid guessing
+        return None
     return None
 
 
@@ -1428,7 +1441,7 @@ def _resolve_drilldown_section(
             score = _score_query_against_section(query, sec)
             if score > best_score:
                 best_score, best = score, sec
-        if best and best_score >= 0.30:
+        if best and best_score >= 0.50:
             for sec in section_map.keys():
                 if _score_query_against_section(best, sec) >= 0.50:
                     return sec, "history"
@@ -1519,10 +1532,10 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     profile = state.get("user_profile") or {}
     intent = state.get("intent") or "KNOWLEDGE"
 
-    # Inject context ONLY when retrieval is genuinely relevant. Reuse the
-    # dense-floor NOT-FOUND gate: below the floor (greeting/off-scope/no real
-    # match) → no context block, and the prompt's <no_context> rules take over.
-    has_kb_context = bool(chunks) and _route_after_rag(state) == "generate"
+    # Inject context ONLY when retrieval is genuinely relevant.
+    # If we reached generate_node, the route already decided "generate" (or this is a
+    # non-KNOWLEDGE intent that bypassed the gate). Trust the routing.
+    has_kb_context = bool(chunks) and state.get("intent") in ("KNOWLEDGE", "COACHING")
 
     context_section = ""
     if has_kb_context:
@@ -1683,7 +1696,16 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         if prefs.get("formatting_pref"):
             pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
         if prefs.get("custom_instructions"):
-            pref_lines.append(f"Instruksi Tambahan: {prefs['custom_instructions']}")
+            ci = prefs["custom_instructions"]
+            import re
+            ci = re.sub(r"<[^>]+>", "", ci)
+            ci = re.sub(
+                r"(?i)(?:ignore|forget|disregard|override)\s+(?:all\s+)?(?:previous|above|prior|system)\s+(?:instructions?|rules?|prompts?)",
+                "[filtered]",
+                ci,
+            )
+            ci = ci[:500]
+            pref_lines.append(f"Instruksi Tambahan: {ci}")
         if pref_lines:
             pref_section = (
                 "\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n"
@@ -1808,7 +1830,7 @@ def _route_after_retrieval(state: RAGState) -> str:
     when nothing valid was retrieved (e.g. fabricating an acronym expansion for
     an un-ingested term). COACHING is NOT refused — it keeps flowing to
     generate_node so the Socratic prompt can still open a guiding question."""
-    if state.get("intent") == "KNOWLEDGE" and _route_after_rag(state) == "low_relevance":
+    if state.get("intent") in ("KNOWLEDGE", "COACHING") and _route_after_rag(state) == "low_relevance":
         return "low_relevance"
     return "generate_node"
 
@@ -1886,6 +1908,15 @@ def _route_after_rag(state: RAGState) -> str:
     # off-scope. The clean dense gap (off-scope ≤~0.36, in-scope ≥~0.50) is the
     # gate.
     if max_dense < _settings.kb_min_dense_score:
+        # SPARSE RESCUE: If BM25 lexical match is extremely high (e.g. > 15.0),
+        # it means there is strong keyword overlap even if dense embedding missed it.
+        if max_sparse >= 15.0:
+            logger.info(
+                f"Sparse rescue (dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
+                f"but sparse={max_sparse:.4f} >= 15.0) — admitting as KNOWLEDGE"
+            )
+            return "generate"
+
         # NEAR-MISS monitor: dense just below the floor. Could be a terse
         # entity/acronym wrongly rejected — instrument so ops can pull these and
         # decide whether a corroboration tier is needed. Does NOT change routing.

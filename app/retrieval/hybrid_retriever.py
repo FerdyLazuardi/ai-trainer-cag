@@ -65,12 +65,9 @@ def _get_sparse_semaphore() -> asyncio.Semaphore:
 
 @lru_cache(maxsize=1)
 def _get_sparse_encoder():
-    """Load the fastembed BM25 sparse query encoder once (process lifetime).
+    """Load the fastembed BM25 sparse query encoder once (process lifetime)."""
+    return fastembed_sparse_encoder(_SPARSE_MODEL)
 
-    Same model/encoder the vector store used to write sparse vectors, so query
-    and document term weighting are consistent.
-    """
-    return fastembed_sparse_encoder(model_name=_SPARSE_MODEL)
 
 
 def _minmax_normalize(scores: dict[str, float]) -> dict[str, float]:

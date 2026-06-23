@@ -357,7 +357,7 @@ class Settings(BaseSettings):
     # the KB is scaling toward ~300+ chunks where a narrow pool would miss
     # relevant hits before fusion. Widening the pool costs ~nothing — it does
     # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
-    retrieval_top_k: int = 20
+    retrieval_top_k: int = 30
     # Final number of fused chunks fed to the generate LLM. 5 (was 3): raised
     # for better recall on multi-item / enumeration questions ("produk apa aja",
     # "sebutkan semua") where the answer can span several chunks — the prior 3
@@ -370,7 +370,7 @@ class Settings(BaseSettings):
     # service as a product. The real fix is prompt-side (anchor enumeration to
     # the summary list); top_k stays 5. The whole context block is bounded by
     # max_context_tokens=3000 (truncate_to_tokens). Lower to 3 if cost bites.
-    final_top_k: int = 5
+    final_top_k: int = 8
     # Per-chunk char cap for the LMS generate path. 1600 (was 1000): 5/52
     # KB chunks exceed 1000 (largest 1513) and were silently trimmed at
     # retrieval — "Profile-Amartha.md" 8-DNA list was cut at "Planning &
@@ -383,7 +383,7 @@ class Settings(BaseSettings):
     # Relative-score fusion weights: fused = vector_weight * dense_norm +
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     bm25_weight: float = 0.3
-    vector_weight: float = 0.7
+    vector_weight: float = 0.6
     # MANDATORY DENSE FLOOR for the NOT-FOUND gate (app/graph/pipeline.py
     # _route_after_rag). Below this RAW DENSE COSINE pool-max, treat retrieval as
     # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
@@ -399,7 +399,7 @@ class Settings(BaseSettings):
     # hallucination from near-miss chunks. Re-run the calibrator after KB growth
     # or an embedding-model swap. Dense is the SOLE normal-op discriminator;
     # sparse is NOT OR'd in (see kb_min_sparse_score).
-    kb_min_dense_score: float = 0.46
+    kb_min_dense_score: float = 0.40
     # DEGRADED-WINDOW ONLY sparse floor. This is NO LONGER an OR-rescue in normal
     # operation — raw BM25 does not separate scope on a small KB (off-scope
     # filler tokens like siapa/hari/jakarta accumulate BM25: "berita hari ini di

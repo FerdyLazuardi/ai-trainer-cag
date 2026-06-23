@@ -113,7 +113,7 @@ async def ingest_document(
 
         # ── 3. Initialize Qdrant as LlamaIndex VectorStore ────────────────
         qdrant = get_qdrant_client()
-        vector_store = qdrant.get_vector_store(qdrant.collection, enable_hybrid=True)
+        vector_store = qdrant.get_vector_store(settings.qdrant_kb_collection, enable_hybrid=True)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         # ── 4. Embed & Upsert (via LlamaIndex async integration) ──────────

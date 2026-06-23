@@ -1370,14 +1370,14 @@ async def chat_stream(
                 # malicious/topic_list/low_relevance/off_scope (deterministic
                 # canned replies). Skip if LLM streaming already emitted
                 # tokens for this node (e.g. "hmm" → LLM ambiguity).
-                # `malicious` is the only node that returns an AIMessage
+                # `malicious` and `low_relevance` are nodes that return an AIMessage
                 # directly without an LLM call (no on_chat_model_stream fires),
-                # so emit its content here. All other intents now flow through
+                # so emit their content here. All other intents now flow through
                 # generate_node, which streams via on_chat_model_stream below.
                 if (
                     kind == "on_chain_end"
-                    and event.get("name") == "malicious"
-                    and "malicious" not in streamed_nodes
+                    and event.get("name") in ("malicious", "low_relevance")
+                    and event.get("name") not in streamed_nodes
                 ):
                     out = event.get("data", {}).get("output", {})
                     msgs = out.get("messages") if isinstance(out, dict) else None

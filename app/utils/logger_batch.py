@@ -23,6 +23,10 @@ async def _do_insert(log_data: Dict[str, Any]):
         valid_cols = {c.name for c in AgentLog.__table__.columns}
         cleaned = {k: v for k, v in log_data.items() if k in valid_cols}
         
+        # Prevent StringDataRightTruncationError for provider strings
+        if "or_provider" in cleaned and isinstance(cleaned["or_provider"], str):
+            cleaned["or_provider"] = cleaned["or_provider"][:64]
+            
         async with AsyncSessionLocal() as session:
             await session.execute(insert(AgentLog).values(**cleaned))
             await session.commit()

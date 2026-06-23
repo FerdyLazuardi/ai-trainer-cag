@@ -636,15 +636,9 @@ function showIntro() {
     welcome.id = "ava-welcome";
     welcome.className = "animate__animated animate__fadeIn animate__faster";
     welcome.innerHTML = `
-        <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
-        <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
-        <div class="ava-chips" id="ava-welcome-chips">
-            <button class="ava-chip" onclick="chipTopik()">
-                <i class="fas fa-layer-group"></i> Topik
-            </button>
-            <button class="ava-chip" onclick="chipCoaching()">
-                <i class="fas fa-graduation-cap"></i> Coaching
-            </button>
+        <div style="text-align: center; padding: 20px 0;">
+            <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
+            <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
         </div>
     `;
 
@@ -1027,7 +1021,7 @@ async function send(presetText, opts) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                const finalText = _targetText || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba kirim lagi pertanyaan yang sama ya 🙏";
+                const finalText = _targetText || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
                 finalizeStreamBubble(contentDiv, bubble, finalText);
                 // Auto-hook: after the answer lands, offer coaching. Backend
                 // signal (_suggestCoaching) is authoritative when present
@@ -1162,7 +1156,7 @@ async function send(presetText, opts) {
             const data = await fallbackRes.json();
             removeTyping(); // hapus dots SETELAH response tiba
 
-            const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba kirim lagi pertanyaan yang sama ya 🙏";
+            const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
             streamMessageFallback(reply, "ai");
             maybeOfferCoaching(text);
 

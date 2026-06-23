@@ -244,6 +244,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ensure_llamaindex_configured()
         logger.info("Embedding model config pre-warmed (API process)")
 
+        # Smoke-test semantic gate signature (OBS-1)
+        from app.graph.intent_classifier import classify_semantic_with_scores
+        try:
+            _ = await classify_semantic_with_scores("test", query_embedding=None)
+            logger.info("Semantic gate self-test: OK")
+        except TypeError as e:
+            logger.error(f"CRITICAL: Semantic gate signature mismatch — gate is broken: {e}")
+            raise
+
         yield
 
         # Shutdown

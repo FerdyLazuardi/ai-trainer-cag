@@ -154,9 +154,9 @@ def get_preprocessor_llm() -> ChatOpenAI:
 @lru_cache(maxsize=1)
 def get_generate_llm() -> ChatOpenAI:
     return create_llm(
-        model=settings.cheap_llm_model,
+        model=settings.llm_model,
         temperature=settings.generate_llm_temperature,
-        max_tokens=1024,
+        max_tokens=settings.llm_max_tokens,
         request_timeout=30,
         streaming=True,
         stream_usage=True,
@@ -170,9 +170,9 @@ def get_generate_llm() -> ChatOpenAI:
 @lru_cache(maxsize=1)
 def get_chat_llm() -> ChatOpenAI:
     return create_llm(
-        model=settings.cheap_llm_model,
+        model=settings.llm_model,
         temperature=settings.chat_llm_temperature,
-        max_tokens=1024,
+        max_tokens=settings.llm_max_tokens,
         request_timeout=30,
         streaming=True,
         stream_usage=True,
@@ -186,9 +186,9 @@ def get_chat_llm() -> ChatOpenAI:
 @lru_cache(maxsize=1)
 def get_empathy_llm() -> ChatOpenAI:
     return create_llm(
-        model=settings.cheap_llm_model,
+        model=settings.llm_model,
         temperature=settings.empathy_llm_temperature,
-        max_tokens=1024,
+        max_tokens=settings.llm_max_tokens,
         request_timeout=30,
         streaming=True,
         stream_usage=True,
