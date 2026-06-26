@@ -5,6 +5,7 @@ Orchestrates: load → chunk → embed → store Qdrant → store PostgreSQL met
 import hashlib
 import uuid
 from dataclasses import dataclass
+import frontmatter
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,23 @@ async def ingest_document(
     Full ingestion pipeline for a single document using LlamaIndex.
     """
     meta = metadata or {}
+    
+    # Extract YAML Frontmatter if present
+    try:
+        parsed = frontmatter.loads(text)
+        if parsed.metadata:
+            # Flatten keywords into a comma-separated string if it's a list
+            # so LlamaIndex metadata doesn't complain about list types
+            extracted_meta = parsed.metadata
+            if "keywords" in extracted_meta and isinstance(extracted_meta["keywords"], list):
+                extracted_meta["keywords"] = ", ".join(extracted_meta["keywords"])
+            meta.update(extracted_meta)
+            logger.info("Extracted YAML frontmatter", keys=list(extracted_meta.keys()))
+            # Use clean text without YAML for hashing and chunking
+            text = parsed.content
+    except Exception as e:
+        logger.warning("Failed to parse frontmatter", error=str(e))
+        
     content_hash = hashlib.sha256(text.encode()).hexdigest()
     document_id = str(uuid.uuid4())
 
@@ -82,28 +100,36 @@ async def ingest_document(
 
         if is_markdown:
             parser = MarkdownNodeParser()
-            header_nodes = parser.get_nodes_from_documents([llama_doc])
-
-            # Defense-in-depth: re-split any oversized (>600 token) header section.
-            nodes = []
-            for n in header_nodes:
-                if count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
-                    sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
-                    sub_nodes = Settings.text_splitter.get_nodes_from_documents([sub_doc])
-                    logger.info(
-                        "Oversized header section re-split via TokenTextSplitter",
-                        document_id=document_id,
-                        original_tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
-                        sub_chunks=len(sub_nodes),
-                    )
-                    nodes.extend(sub_nodes)
-                else:
-                    nodes.append(n)
+            nodes = parser.get_nodes_from_documents([llama_doc])
+            # ── Hierarchical linking (H3 ↔ H2 parent/children) ────────────
+            # After MarkdownNodeParser splits by headers, link H3 children to
+            # their H2 parent and vice versa. This enables the retriever to
+            # expand search results hierarchically: when an H3 is retrieved,
+            # its H2 parent and sibling H3s are also fetched, and when an H2
+            # is retrieved, its H3 children are included.
+            import re as _re_hier
+            _last_h2_id = None
+            _h2_children: dict[str, list[str]] = {}
+            for node in nodes:
+                text = getattr(node, "text", "") or ""
+                first_line = text.split("\n", 1)[0].strip()
+                is_h3 = bool(_re_hier.match(r"^###\s+", first_line))
+                is_h2 = bool(_re_hier.match(r"^##\s+", first_line))
+                if is_h2:
+                    _last_h2_id = node.node_id
+                    _h2_children.setdefault(node.node_id, [])
+                elif is_h3 and _last_h2_id:
+                    node.metadata["parent_chunk_id"] = _last_h2_id
+                    _h2_children.setdefault(_last_h2_id, []).append(node.node_id)
+            # Back-fill child_chunk_ids on each H2 node
+            for node in nodes:
+                if node.node_id in _h2_children and _h2_children[node.node_id]:
+                    node.metadata["child_chunk_ids"] = _h2_children[node.node_id]
             logger.info("Text parsed via MarkdownNodeParser (Headers)", document_id=document_id)
         else:
             nodes = Settings.text_splitter.get_nodes_from_documents([llama_doc])
             logger.info("Text chunked via TokenTextSplitter", document_id=document_id)
-        
+
         if not nodes:
             doc.ingestion_state = "failed"
             logger.warning("No chunks produced", document_id=document_id)

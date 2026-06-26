@@ -485,11 +485,15 @@ async def _prepare_rag_context(
     _skip_embedding = _tier1_intent in ("GREETING", "AMBIGUOUS")
 
     # Embed once — reused by cache lookup, LTM lookup, and cache write.
+    # ponytail: Redis-cached via _embed_query_resilient (sha256 key, 24h TTL).
+    # Cold miss is the same cost as before; warm hit is <50ms. The LTM lookup
+    # below depends on `query_embedding` — keeping it sequential so the
+    # dependency is unambiguous and we never race the closure variable.
     query_embedding = None
     if not _skip_embedding:
         try:
-            ensure_llamaindex_configured()
-            query_embedding = await LISettings.embed_model.aget_query_embedding(resolved_query)
+            from app.retrieval.hybrid_retriever import _embed_query_resilient
+            query_embedding = await _embed_query_resilient(resolved_query)
             logger.debug(f"[TIMING] embedding: {_time.perf_counter()-_t0:.2f}s")
         except Exception as exc:
             logger.warning(f"Failed to compute query embedding once: {exc}")

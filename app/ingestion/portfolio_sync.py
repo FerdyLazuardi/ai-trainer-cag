@@ -614,22 +614,7 @@ async def _ingest_portfolio_doc(
         ]
     else:
         parser = MarkdownNodeParser()
-        header_nodes = parser.get_nodes_from_documents([llama_doc])
-
-    nodes = []
-    for n in header_nodes:
-        if not is_single_chunk and count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
-            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
-            sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
-            logger.info(
-                "Oversized portfolio section re-split",
-                source=source_id,
-                tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
-                sub_chunks=len(sub_nodes),
-            )
-            nodes.extend(sub_nodes)
-        else:
-            nodes.append(n)
+        nodes = parser.get_nodes_from_documents([llama_doc])
 
     nodes = [n for n in nodes if n.text and n.text.strip()]  # type: ignore[attr-defined]  # TextNode at runtime
     if not nodes:

@@ -19,6 +19,8 @@ documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
 """
 import asyncio
 from functools import lru_cache
+import hashlib
+import time
 from typing import Any
 
 from loguru import logger
@@ -95,7 +97,33 @@ async def _embed_query_resilient(query: str) -> list[float] | None:
     tenacity retry (exponential backoff) and a per-attempt timeout. On final
     failure we return None — the caller degrades to sparse-only BM25 rather
     than raising, so retrieval stays available during an embedding outage.
+
+    Embedding cache: short-lived Redis exact-match keyed by sha256(query).
+    qwen3-8B / bge-m3 embeddings for the same text are byte-deterministic,
+    so reusing one for the same query is safe. 24h TTL covers daily-mood
+    bursts; the cache grows only as KB traffic grows and is auto-bounded
+    by volatile-lru + TTL. Hit rates expected ~2x on FAQ phrasings, much
+    higher on repeated profanity/injection probes (which all collapse to
+    the same SHA). ponytail: skip if cache hit latency > 50ms (>3σ vs the
+    0.5–2.5s fresh embed cost) — disable on Redis blip.
     """
+    from app.database.redis_client import get_redis_client
+
+    _t0 = time.monotonic()
+    cache_key = f"rag:embed:{hashlib.sha256(query.encode()).hexdigest()[:32]}"
+    cache_ttl = 24 * 3600  # 24h
+    try:
+        redis = get_redis_client()
+        cached = await redis.get(cache_key)
+        if cached:
+            logger.debug(
+                f"[TIMING] embed cache HIT: {(time.monotonic()-_t0)*1000:.1f}ms"
+            )
+            import json
+            return json.loads(cached)
+    except Exception as exc:
+        logger.debug(f"embed cache read skipped: {exc}")
+
     try:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(settings.embedding_max_attempts),
@@ -107,7 +135,7 @@ async def _embed_query_resilient(query: str) -> list[float] | None:
             reraise=True,
         ):
             with attempt:
-                return await asyncio.wait_for(
+                vec = await asyncio.wait_for(
                     Settings.embed_model.aget_query_embedding(query),
                     timeout=settings.embedding_timeout_seconds,
                 )
@@ -119,7 +147,18 @@ async def _embed_query_resilient(query: str) -> list[float] | None:
             query=query[:60],
         )
         return None
-    return None
+
+    logger.debug(
+        f"[TIMING] embed fresh: {(time.monotonic()-_t0)*1000:.1f}ms"
+    )
+    # Best-effort write — never raises upward.
+    try:
+        redis = get_redis_client()
+        import json
+        await redis.set(cache_key, json.dumps(vec), ex=cache_ttl)
+    except Exception as exc:
+        logger.debug(f"embed cache write skipped: {exc}")
+    return vec
 
 
 async def hybrid_search(
@@ -317,6 +356,8 @@ async def hybrid_search(
     #    frontmatter dict (course_name, doc_type, etc.); `metadata` on the chunk
     #    excludes the promoted top-level fields, matching the prior contract.
     chunks: list[RetrievedChunk] = []
+    # Materialize ALL top-k first so we can read parent/child metadata properly.
+    _node_meta: dict[str, dict] = {}  # node_id → extracted metadata dict
     for node_id in ranked_ids:
         payload = payloads.get(node_id) or {}
         try:
@@ -326,6 +367,7 @@ async def hybrid_search(
         except Exception:
             meta = payload
             text = payload.get("text", "")
+        _node_meta[node_id] = meta
         extra_meta = {
             mk: mv
             for mk, mv in meta.items()
@@ -348,6 +390,113 @@ async def hybrid_search(
             )
         )
 
+    # 6.1 Hierarchical expansion: H3 ↔ H2 parent/children.
+    #     Check each top-k chunk for parent/child metadata.
+    #     If H3 → fetch its H2 parent + sibling H3s. If H2 → fetch H3 children.
+    #     Dedup by chunk_id so the same chunk isn't included twice.
+    #     Two-pass: first collect parent/child IDs, then after fetching,
+    #     look up siblings from the fetched parent payloads.
+    _already_ids = set(ranked_ids)  # IDs already materialized
+    _hierarchy_fetch_ids: set[str] = set()
+    _parents_needing_siblings: list[str] = []  # parent IDs whose siblings we need to find
+
+    for node_id in ranked_ids:
+        meta = _node_meta.get(node_id, {})
+        # H3 chunk: has parent_chunk_id → fetch parent + siblings
+        parent_id = meta.get("parent_chunk_id")
+        if parent_id and parent_id not in _already_ids:
+            _hierarchy_fetch_ids.add(parent_id)
+            _parents_needing_siblings.append(parent_id)
+        # H2 chunk: has child_chunk_ids → fetch all children
+        for child_id in (meta.get("child_chunk_ids") or []):
+            if child_id not in _already_ids:
+                _hierarchy_fetch_ids.add(child_id)
+
+    # Fetch expansion chunks not already in the payload pool (pass 1).
+    _hierarchy_count = 0
+    if _hierarchy_fetch_ids:
+        try:
+            _missing = [nid for nid in _hierarchy_fetch_ids if nid not in payloads]
+            if _missing:
+                _fetched = await qdrant.client.retrieve(
+                    collection_name=collection_name,
+                    ids=_missing,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for point in _fetched:
+                    pid = str(point.id)
+                    if pid not in payloads:
+                        payloads[pid] = point.payload or {}
+                        fused[pid] = 0.0
+                        _hierarchy_count += 1
+
+            # Pass 2: look up sibling H3s from fetched parent payloads.
+            for parent_id in _parents_needing_siblings:
+                if parent_id in _hierarchy_fetch_ids:
+                    # Parent was fetched — read its child_chunk_ids from payload
+                    try:
+                        p_node = metadata_dict_to_node(payloads.get(parent_id) or {})
+                        p_meta = p_node.metadata or {}
+                    except Exception:
+                        p_meta = payloads.get(parent_id) or {}
+                    for sibling_id in (p_meta.get("child_chunk_ids") or []):
+                        if sibling_id not in _already_ids and sibling_id not in _hierarchy_fetch_ids:
+                            _hierarchy_fetch_ids.add(sibling_id)
+
+            # Fetch any remaining sibling chunks (pass 2 fetch).
+            _remaining = [nid for nid in _hierarchy_fetch_ids if nid not in payloads]
+            if _remaining:
+                _fetched2 = await qdrant.client.retrieve(
+                    collection_name=collection_name,
+                    ids=_remaining,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for point in _fetched2:
+                    pid = str(point.id)
+                    if pid not in payloads:
+                        payloads[pid] = point.payload or {}
+                        fused[pid] = 0.0
+                        _hierarchy_count += 1
+
+            # Materialize expansion chunks and append to result list.
+            _already_chunk_ids = {c.chunk_id for c in chunks}
+            for exp_id in _hierarchy_fetch_ids:
+                if exp_id in _already_chunk_ids:
+                    continue  # already in result
+                payload = payloads.get(exp_id) or {}
+                try:
+                    node = metadata_dict_to_node(payload)
+                    meta = node.metadata or {}
+                    text = node.text or ""  # type: ignore[attr-defined]
+                except Exception:
+                    meta = payload
+                    text = payload.get("text", "")
+                extra_meta = {
+                    mk: mv
+                    for mk, mv in meta.items()
+                    if mk not in ("document_id", "source", "title", "chunk_index", "token_count")
+                }
+                chunks.append(
+                    RetrievedChunk(
+                        chunk_id=str(exp_id),
+                        text=text,
+                        score=0.0,  # expansion chunks get neutral score
+                        hybrid_score=0.0,
+                        dense_score=round(dense_raw.get(exp_id, 0.0), 6),
+                        sparse_score=round(sparse_raw.get(exp_id, 0.0), 6),
+                        document_id=meta.get("document_id", ""),
+                        source=meta.get("source", ""),
+                        title=meta.get("title", ""),
+                        chunk_index=int(meta.get("chunk_index", 0) or 0),
+                        token_count=int(meta.get("token_count", 0) or 0),
+                        metadata=extra_meta,
+                    )
+                )
+        except Exception as exc:
+            logger.warning(f"Hierarchical expansion fetch failed: {exc}")
+
     logger.debug(
         "Hybrid retrieval complete",
         results=len(chunks),
@@ -357,6 +506,7 @@ async def hybrid_search(
         pool_max_sparse=round(pool_max_sparse, 4),
         dense_available=dense_available,
         sparse_available=sparse_available,
+        hierarchy_expanded=_hierarchy_count,
         query=query[:60],
         collection=collection_name,
     )

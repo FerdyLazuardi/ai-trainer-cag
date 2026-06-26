@@ -20,8 +20,15 @@ st.set_page_config(
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 load_dotenv(env_path)
 
-API_URL = st.secrets.get("API_URL", os.getenv("API_URL", "http://localhost:8000/api/v1"))
-ADMIN_API_KEY = st.secrets.get("ADMIN_API_KEY", os.getenv("ADMIN_API_KEY", "dev_secret_key"))
+try:
+    API_URL = st.secrets["API_URL"]
+except Exception:
+    API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
+
+try:
+    ADMIN_API_KEY = st.secrets["ADMIN_API_KEY"]
+except Exception:
+    ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "dev_secret_key")
 
 @st.cache_data(ttl=60)
 def fetch_dashboard_data(limit=500):
@@ -38,6 +45,10 @@ def fetch_dashboard_data(limit=500):
 def show_chat_details(row):
     with st.chat_message("user"):
         st.write(row['query'])
+        if pd.notna(row.get('rewritten_query')) and row.get('rewritten_query') and row.get('rewritten_query') != row['query']:
+            st.caption(f"**AI Query Rewrite (for DB search):** {row['rewritten_query']}")
+        else:
+            st.caption("**AI Query Rewrite:** *(No rewrite needed / Exact match)*")
         
     with st.chat_message("assistant"):
         st.write(row['answer'])
@@ -157,7 +168,7 @@ with tab_overview:
             )
 
         # Defensive programming: ensure new columns exist in case the backend API is outdated
-        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved', 'or_cached_tokens']:
+        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved', 'or_cached_tokens', 'rewritten_query']:
             if col not in df_logs.columns:
                 df_logs[col] = None
                 

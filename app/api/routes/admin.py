@@ -112,7 +112,8 @@ async def get_dashboard_logs(
             SELECT created_at, id, intent, latency_ms, cache_hit, query, answer,
                    conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
-                   retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider
+                   retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
+                   rewritten_query
             FROM agent_logs
             WHERE {chat_where}
               {cursor_clause}
@@ -197,6 +198,7 @@ async def get_dashboard_logs(
             "or_cached_tokens": int(row[16]) if row[16] is not None else 0,
             "or_completion_tokens": int(row[17]) if row[17] is not None else 0,
             "or_provider": str(row[18]) if row[18] else "",
+            "rewritten_query": str(row[19]) if len(row) > 19 and row[19] else None,
         }
         for row in log_rows
     ]

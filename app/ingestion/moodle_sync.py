@@ -302,25 +302,7 @@ async def _ingest_markdown(
     # ── 3. Split by Markdown Headers (H1 / H2 / H3) ─────────────────────
     ensure_llamaindex_configured(chunk_size=512, chunk_overlap=50)
     parser = MarkdownNodeParser()
-    header_nodes = parser.get_nodes_from_documents([llama_doc])
-
-    # Defense-in-depth: if any single header section is oversized (> 600 tokens),
-    # re-split it via the configured TokenTextSplitter so it doesn't dilute retrieval.
-    from llama_index.core import Settings as LISettings
-    nodes = []
-    for n in header_nodes:
-        if count_tokens(n.text) > 600:  # type: ignore[attr-defined]  # TextNode at runtime
-            sub_doc = LlamaDocument(text=n.text, metadata=dict(n.metadata or {}))  # type: ignore[attr-defined]  # TextNode at runtime
-            sub_nodes = LISettings.text_splitter.get_nodes_from_documents([sub_doc])
-            logger.info(
-                "Oversized header section re-split via TokenTextSplitter",
-                source=filename,
-                original_tokens=count_tokens(n.text),  # type: ignore[attr-defined]  # TextNode at runtime
-                sub_chunks=len(sub_nodes),
-            )
-            nodes.extend(sub_nodes)
-        else:
-            nodes.append(n)
+    nodes = parser.get_nodes_from_documents([llama_doc])
 
     # Filter out empty or whitespace-only nodes
     original_node_count = len(nodes)
