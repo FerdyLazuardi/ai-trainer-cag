@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # ─── PostgreSQL ─────────────────────────────────────────────────────────
     postgres_host: str = "localhost"
-    postgres_port: int = 5432
+    postgres_port: int = 5445
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
     # No default. 'admin'/'postgres' defaults that ship in tutorials let a
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
 
     # ─── Redis ──────────────────────────────────────────────────────────────
     redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_port: int = 6381
     redis_db: int = 0
     redis_password: str = ""
     redis_max_connections: int = 100
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
 
     # ─── Qdrant ─────────────────────────────────────────────────────────────
     qdrant_host: str = "localhost"
-    qdrant_port: int = 6333
+    qdrant_port: int = 6335
     # gRPC port — SEPARATE from HTTP port. The qdrant-client library's
     # AsyncQdrantClient computes its gRPC port independently of HTTP, and
     # the qdrant container exposes 6334 (gRPC) and 6333 (HTTP) by default.
@@ -149,8 +149,8 @@ class Settings(BaseSettings):
     # bge-m3's sparse/ColBERT modes are NOT exposed through OpenRouter
     # (only dense); the hybrid retriever's fastembed BM25 arm continues
     # to do the lexical work.
-    embedding_model: str = "baai/bge-m3"
-    embedding_dim: int = 1024
+    embedding_model: str = "qwen/qwen3-embedding-8b"
+    embedding_dim: int = 4096
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     # ⚠️  RUNTIME VALUES COME FROM `.env`, NOT THESE DEFAULTS.
@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     # OpenRouter is the SOLE LLM provider (no 9Router, no localhost, no Ollama).
     # Default is the real OpenRouter cloud; override in .env only when routing
     # through a different OpenRouter-compatible gateway.
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1/"
     openrouter_embedding_url: str | None = None
     # Main model: DeepSeek V4 Flash — defaults aligned with `.env` so reading
     # either file shows the SAME model (no Gemini/DeepSeek ambiguity). Run via
@@ -348,42 +348,37 @@ class Settings(BaseSettings):
 
     # ─── Context Engineering ────────────────────────────────────────────────
     # Hard ceiling on the retrieved-context block sent to the generate LLM.
-    # 3000 (was 6000): production telemetry showed median context fill was
-    # ~1100 tokens; 6000 was 5x headroom for ~zero gain on quality. Cuts
-    # input tokens on the generate call by ~45% on full-context turns.
-    max_context_tokens: int = 3000
+    # 6000 covers compound queries (multi-sub-question retrieval returns
+    # 10-15 chunks that need room). Overridable via MAX_CONTEXT_TOKENS in .env.
+    max_context_tokens: int = 6000
     # Candidate pool pulled per modality (dense + sparse BM25) before fusion.
-    # 20 (was 10): at ~42 KB chunks 10 already covered ~25% of the corpus, but
-    # the KB is scaling toward ~300+ chunks where a narrow pool would miss
-    # relevant hits before fusion. Widening the pool costs ~nothing — it does
-    # NOT add embedding calls or LLM tokens (only final_top_k reaches the LLM).
-    retrieval_top_k: int = 30
-    # Final number of fused chunks fed to the generate LLM. 5 (was 3): raised
-    # for better recall on multi-item / enumeration questions ("produk apa aja",
-    # "sebutkan semua") where the answer can span several chunks — the prior 3
-    # occasionally missed an item that lived in a 4th/5th chunk. NOTE: tried 8
-    # to fix an enumeration completeness bug (a product dropping from the list),
-    # but a retrieval dump proved the doc's SUMMARY chunk (full item list) is
-    # already retrieved at 5 — the dropout was the model enumerating from
-    # per-item chunks, not the summary. 8 only pulled in distractor chunks
-    # (business-model/security) that made the model MIS-classify a support
-    # service as a product. The real fix is prompt-side (anchor enumeration to
-    # the summary list); top_k stays 5. The whole context block is bounded by
-    # max_context_tokens=3000 (truncate_to_tokens). Lower to 3 if cost bites.
-    final_top_k: int = 8
-    # Per-chunk char cap for the LMS generate path. 1600 (was 1000): 5/52
-    # KB chunks exceed 1000 (largest 1513) and were silently trimmed at
-    # retrieval — "Profile-Amartha.md" 8-DNA list was cut at "Planning &
-    # Organi…". 1600 covers p100 of current KB. Fits 2 chunks × 1600 ≈
-    # 3200 chars ≈ 800 tokens under max_context_tokens=3000 ceiling.
-    # Phase 3 (switch TokenTextSplitter→MarkdownNodeParser + re-ingest)
-    # is the proper fix so oversized chunks stop existing at all; this
-    # is the stopgap that fixes the user-reported budaya bug now.
+    # Wider pool = more candidates for fusion to rank, but NOT more LLM tokens
+    # (only final_top_k reaches the LLM). Overridable via RETRIEVAL_TOP_K in .env.
+    retrieval_top_k: int = 20
+    # Final number of fused chunks fed to the generate LLM. Overridable via
+    # FINAL_TOP_K in .env. Bounded by max_context_tokens (truncate_to_tokens).
+    # NOTE: tried 8 — pulled in distractor chunks that made the model
+    # MIS-classify a support service as a product. The real fix is prompt-side
+    # (anchor enumeration to the summary list). Lower to 3 if cost bites.
+    final_top_k: int = 5
+
+    # Cohere Rerank Configuration
+    rerank_enabled: bool = Field(default=False, alias="RERANK_ENABLED")
+    rerank_model: str = Field(default="cohere/rerank-v3.5", alias="RERANK_MODEL")
+    rerank_base_url: str = Field(default="https://openrouter.ai/api/v1/rerank", alias="RERANK_BASE_URL")
+    rerank_top_k: int = Field(default=15, alias="RERANK_TOP_K")
+    # Per-chunk char cap for the LMS generate path. 1600 covers p100 of
+    # current KB (largest chunk is 1513 chars). Overridable via
+    # LMS_CHUNK_TEXT_MAX_CHARS in .env.
     lms_chunk_text_max_chars: int = 1600
     # Relative-score fusion weights: fused = vector_weight * dense_norm +
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
-    bm25_weight: float = 0.3
-    vector_weight: float = 0.6
+    # Both overridable via BM25_WEIGHT / VECTOR_WEIGHT in .env.
+    bm25_weight: float = Field(default=0.3, alias="BM25_WEIGHT")
+    vector_weight: float = Field(default=0.7, alias="VECTOR_WEIGHT")
+    # Compound query: multiplier for final_top_k after merge+dedup.
+    # 2 sub-queries → final_top_k × 2. Set to 1 to disable scaling.
+    compound_final_top_k_multiplier: int = 2
     # MANDATORY DENSE FLOOR for the NOT-FOUND gate (app/graph/pipeline.py
     # _route_after_rag). Below this RAW DENSE COSINE pool-max, treat retrieval as
     # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
@@ -443,9 +438,9 @@ class Settings(BaseSettings):
     # a stiff form-filler; kept moderate (0.4) so it stays grounded when
     # <retrieved_context> is present. Tunable without a code change — raise for
     # more warmth/variation, lower if it drifts off the grounded facts.
-    chat_llm_temperature: float = 0.4
-    empathy_llm_temperature: float = 0.6
-    cheap_llm_temperature: float = 0.3
+    chat_llm_temperature: float = 0.2
+    empathy_llm_temperature: float = 0.3
+    cheap_llm_temperature: float = 0.0
     judge_llm_temperature: float = 0.0
     preprocessor_llm_temperature: float = 0.0
     generate_llm_temperature: float = 0.0
@@ -561,7 +556,7 @@ class Settings(BaseSettings):
     # silently accepted any value, which let a mis-config set
     # JWT_ALGORITHM=none — pyjwt then validates unsigned tokens.
     jwt_algorithm: Literal["HS256", "HS384", "HS512", "RS256", "RS384", "RS512"] = "HS256"
-    rate_limit_per_minute: int = 20
+    rate_limit_per_minute: int = 10
     admin_api_key: str = Field(..., alias="ADMIN_API_KEY", min_length=16)
     # Off by default. Must be explicitly enabled (DEV_BYPASS_ENABLED=true)
     # for the local-dev token-less auth bypass in app/api/auth.py to fire.

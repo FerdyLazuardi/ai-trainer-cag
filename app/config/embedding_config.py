@@ -45,7 +45,15 @@ def ensure_llamaindex_configured(
             "model_name": settings.embedding_model,
             "api_key": emb_api_key,
         }
-        
+
+        # OpenRouter provider fallback (embed). Without this, a single upstream
+        # blip on qwen3-embedding-8b's only provider had no fallback → tenacity
+        # retried 3×8s = ~30s per embed (the 30s-latency fire). allow_fallbacks
+        # lets OpenRouter auto-route to a healthy provider; measured 4-5× faster
+        # on the same query (5.6s → 1.2s). Mirrors the LLM client's provider
+        # fallback in app/llm/client.py:_provider_extra_body.
+        kwargs["additional_kwargs"] = {"extra_body": {"provider": {"allow_fallbacks": True}}}
+
         # OpenRouter uses OpenAI-compatible API
         if settings.openrouter_embedding_url:
             base = settings.openrouter_embedding_url

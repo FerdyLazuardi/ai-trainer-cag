@@ -82,6 +82,10 @@ async def ingest_document(
         ensure_llamaindex_configured(chunk_size, chunk_overlap)
         
         # Build Document
+        # ponytail: only pass metadata fields we actually need in Qdrant payload
+        # (avoids leaking admin-request baggage like department/topic/course_id)
+        _SAFE_META_KEYS = {"course_name", "keywords", "section_name"}
+        _clean_meta = {k: v for k, v in meta.items() if k in _SAFE_META_KEYS}
         llama_doc = LlamaDocument(
             text=text,
             doc_id=document_id,
@@ -89,7 +93,7 @@ async def ingest_document(
                 "document_id": document_id,
                 "source": source,
                 "title": title,
-                **meta
+                **_clean_meta
             }
         )
         

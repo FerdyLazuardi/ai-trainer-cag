@@ -131,7 +131,7 @@ services:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
     ports:
-      - "5433:5432"
+      - "5445:5432"
     volumes:
       - peped_postgres_data:/var/lib/postgresql/data
     restart: unless-stopped

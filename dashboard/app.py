@@ -30,7 +30,7 @@ try:
 except Exception:
     ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "dev_secret_key")
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=15)
 def fetch_dashboard_data(limit=500):
     headers = {"X-API-Key": ADMIN_API_KEY}
     try:
@@ -60,7 +60,10 @@ def show_chat_details(row):
         if isinstance(retrieved_context, list) and len(retrieved_context) > 0:
             with st.expander(f"View Retrieved Context ({len(retrieved_context)} chunks)"):
                 for idx, chunk in enumerate(retrieved_context):
-                    st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{chunk.get('score', 0):.4f}`)")
+                    score = chunk.get('score', 0.0)
+                    dense = chunk.get('dense_score', 0.0)
+                    sparse = chunk.get('sparse_score', 0.0)
+                    st.markdown(f"**[{idx+1}] {chunk.get('course_name') or chunk.get('title') or 'Unknown'}** (Score: `{score:.4f}` | Dense: `{dense:.4f}` | Sparse: `{sparse:.4f}`)")
                     st.text(chunk.get('text', ''))
                     st.divider()
         
@@ -79,7 +82,15 @@ def show_chat_details(row):
 
 # --- UI Layout ---
 
-st.title("Agent Observability Dashboard")
+col_title, col_refresh = st.columns([5, 1])
+with col_title:
+    st.title("Agent Observability Dashboard")
+with col_refresh:
+    st.write("")  # vertical alignment hack
+    if st.button("🔄 Refresh", help="Hapus cache & muat ulang data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 st.markdown("Dashboard ini mengambil data via REST API FastAPI secara aman dan ringan.")
 
 data = fetch_dashboard_data(limit=500)

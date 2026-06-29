@@ -78,4 +78,10 @@ class RAGState(TypedDict):
     # ("query" | "history" | "history_ordinal") for observability.
     drilldown_section: Optional[str]
     drilldown_resolution: Optional[str]
+    # Query decomposition (Jul 2026): the rewrite LLM splits compound queries
+    # into multiple search queries (one per sub-question). _rag_node reads this
+    # list — if len > 1, runs parallel hybrid_search per sub-query and merges
+    # + deduplicates by chunk_id. Single-question queries have len=1. Set by
+    # _pre_processor; defaults to [raw_message] for non-KNOWLEDGE intents.
+    rewritten_queries: Optional[List[str]]
 

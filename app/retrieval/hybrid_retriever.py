@@ -23,6 +23,7 @@ import hashlib
 import time
 from typing import Any
 
+import httpx
 from loguru import logger
 from qdrant_client import models as rest
 from tenacity import (
@@ -42,6 +43,49 @@ from app.database.qdrant_client import get_qdrant_client
 from app.retrieval.schemas import RetrievedChunk, HybridSearchResult
 
 settings = get_settings()
+
+
+async def _call_openrouter_rerank(
+    query: str,
+    chunks: list[RetrievedChunk],
+    settings: Any,
+) -> list[tuple[int, float]]:
+    """
+    Call OpenRouter's Rerank API to reorder the given chunks.
+    Returns a list of tuples: (original_index, relevance_score) sorted by relevance.
+    """
+    documents = [c.text for c in chunks]
+    payload = {
+        "model": settings.rerank_model,
+        "query": query,
+        "documents": documents,
+        "top_n": len(chunks),
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/FerdyLazuardi/peped-BE",
+        "X-OpenRouter-Title": "Peped BE RAG System",
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            settings.rerank_base_url,
+            json=payload,
+            headers=headers,
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        results = result.get("results", [])
+        parsed_results = []
+        for r in results:
+            idx = r.get("index")
+            score = r.get("relevance_score", 0.0)
+            if idx is not None:
+                parsed_results.append((int(idx), float(score)))
+        return parsed_results
 
 # Vector names match QdrantManager._create_*_collection (dense + sparse).
 _DENSE_VECTOR_NAME = "text-dense"
@@ -349,14 +393,14 @@ async def hybrid_search(
         for node_id in payloads
     }
 
-    # 5. Rank by fused score; keep top-k.
-    ranked_ids = sorted(fused, key=lambda node_id: fused[node_id], reverse=True)[:k]
+    # 5. Rank by fused score; keep intermediate rerank pool if enabled, else keep top-k.
+    intermediate_k = settings.rerank_top_k if settings.rerank_enabled else k
+    ranked_ids = sorted(fused, key=lambda node_id: fused[node_id], reverse=True)[:intermediate_k]
 
-    # 6. Materialize RetrievedChunk. `node.metadata` carries the clean
+    # 6. Materialize intermediate RetrievedChunk list. `node.metadata` carries the clean
     #    frontmatter dict (course_name, doc_type, etc.); `metadata` on the chunk
     #    excludes the promoted top-level fields, matching the prior contract.
-    chunks: list[RetrievedChunk] = []
-    # Materialize ALL top-k first so we can read parent/child metadata properly.
+    candidate_chunks: list[RetrievedChunk] = []
     _node_meta: dict[str, dict] = {}  # node_id → extracted metadata dict
     for node_id in ranked_ids:
         payload = payloads.get(node_id) or {}
@@ -373,7 +417,7 @@ async def hybrid_search(
             for mk, mv in meta.items()
             if mk not in ("document_id", "source", "title", "chunk_index", "token_count")
         }
-        chunks.append(
+        candidate_chunks.append(
             RetrievedChunk(
                 chunk_id=str(node_id),
                 text=text,
@@ -389,6 +433,38 @@ async def hybrid_search(
                 metadata=extra_meta,
             )
         )
+
+    # 6.0 Rerank candidates if enabled.
+    if settings.rerank_enabled and len(candidate_chunks) > 0:
+        try:
+            rerank_results = await _call_openrouter_rerank(query, candidate_chunks, settings)
+            ranked_chunks = []
+            seen_indices = set()
+            for orig_idx, score in rerank_results:
+                if 0 <= orig_idx < len(candidate_chunks):
+                    chunk = candidate_chunks[orig_idx]
+                    chunk.score = round(score, 6)
+                    ranked_chunks.append(chunk)
+                    seen_indices.add(orig_idx)
+            # Append any candidates not returned (fallback safety)
+            for orig_idx, chunk in enumerate(candidate_chunks):
+                if orig_idx not in seen_indices:
+                    chunk.score = 0.0
+                    ranked_chunks.append(chunk)
+            candidate_chunks = ranked_chunks
+            logger.info(
+                f"Reranking successful via {settings.rerank_model}. "
+                f"Top chunk score: {candidate_chunks[0].score if candidate_chunks else 0.0}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Reranking failed: {exc}. Falling back to original Relative Score Fusion order."
+            )
+            # Fallback: candidate_chunks remains sorted by fused score.
+
+    # Keep top-k final results
+    chunks = candidate_chunks[:k]
+    ranked_ids = [c.chunk_id for c in chunks]
 
     # 6.1 Hierarchical expansion: H3 ↔ H2 parent/children.
     #     Check each top-k chunk for parent/child metadata.
@@ -461,10 +537,30 @@ async def hybrid_search(
                         _hierarchy_count += 1
 
             # Materialize expansion chunks and append to result list.
+            # ponytail: sibling/parent expansion noise filter — drop any
+            # expansion chunk that scored ZERO on BOTH modalities in the
+            # initial top-pool (i.e. neither dense nor sparse saw any
+            # lexical/semantic overlap with the query). Such chunks are
+            # topically distant from the user's question and only pad the
+            # context window. Top-k chunks always have a fused score > 0,
+            # so the original top-k keeps priority above the filter.
             _already_chunk_ids = {c.chunk_id for c in chunks}
+            # Skip if either modality didn't run — no raw scores available.
+            _can_filter_noise = dense_available and sparse_available
+            
+            # Sibling/parent noise thresholds to prevent weak candidates
+            # from padding the context when fetch_k is large.
+            DENSE_SIBLING_FLOOR = 0.60
+            SPARSE_SIBLING_FLOOR = 5.0
+            
             for exp_id in _hierarchy_fetch_ids:
                 if exp_id in _already_chunk_ids:
                     continue  # already in result
+                if _can_filter_noise:
+                    d_raw = dense_raw.get(exp_id, 0.0)
+                    s_raw = sparse_raw.get(exp_id, 0.0)
+                    if d_raw < DENSE_SIBLING_FLOOR and s_raw < SPARSE_SIBLING_FLOOR:
+                        continue  # too weak/noisy to be included
                 payload = payloads.get(exp_id) or {}
                 try:
                     node = metadata_dict_to_node(payload)
@@ -485,7 +581,7 @@ async def hybrid_search(
                         score=0.0,  # expansion chunks get neutral score
                         hybrid_score=0.0,
                         dense_score=round(dense_raw.get(exp_id, 0.0), 6),
-                        sparse_score=round(sparse_raw.get(exp_id, 0.0), 6),
+                        sparse_score=sparse_raw.get(exp_id, 0.0),
                         document_id=meta.get("document_id", ""),
                         source=meta.get("source", ""),
                         title=meta.get("title", ""),
@@ -509,6 +605,124 @@ async def hybrid_search(
         hierarchy_expanded=_hierarchy_count,
         query=query[:60],
         collection=collection_name,
+    )
+    return HybridSearchResult(
+        chunks=chunks,
+        pool_max_dense=round(pool_max_dense, 6),
+        pool_max_sparse=round(pool_max_sparse, 6),
+        dense_available=dense_available,
+        sparse_available=sparse_available,
+    )
+
+
+async def hybrid_search_multi(
+    queries: list[str],
+    top_k: int | None = None,
+    *,
+    final_k_multiplier: int = 1,
+    query_embeddings: list[list[float] | None] | None = None,
+) -> HybridSearchResult:
+    """Run one hybrid_search per sub-query in parallel, then merge + dedup.
+
+    For a compound rewrite like ["kemampuan bayar mitra rendah",
+    "skill negosiasi Business Partner", "fraud Business Partner"] the old path
+    searched ONLY queries[0] — the other two topics were never retrieved, so a
+    3-topic question got 5 chunks relevant to one topic only. This searches
+    every sub-query, fuses results across queries, and returns
+    `top_k * final_k_multiplier` (the COMPOUND_FINAL_TOP_K_MULTIPLIER) so a
+    multi-faceted question gets multi-faceted context.
+
+    Merge rule per chunk_id: keep max dense_score / sparse_score (absolute
+    signals the NOT-FOUND gate reads), sum the fused hybrid_score across the
+    sub-queries that surfaced it (a chunk relevant to 2 sub-queries outranks
+    one relevant to 1), and carry the metadata of the highest-scoring hit.
+    Pool-level maxes are the max across all sub-query pools; dense_available
+    is OR (one sub-query's dense arm succeeding is enough to keep the gate
+    out of the C5 sparse-only degraded window).
+
+    Falls back to a single hybrid_search when only one query is passed — no
+    merge overhead for the common single-query case.
+    """
+    if not queries:
+        return HybridSearchResult()
+    if len(queries) == 1:
+        emb = query_embeddings[0] if query_embeddings else None
+        return await hybrid_search(queries[0], top_k=top_k, query_embedding=emb)
+
+    k = top_k or settings.retrieval_top_k
+    embs = query_embeddings or [None] * len(queries)
+    # ponytail: per-subquery top_k stays at final_top_k (not scaled) so each
+    # query contributes its own top hits; the post-merge cut scales up.
+    results = await asyncio.gather(
+        *(
+            hybrid_search(q, top_k=k, query_embedding=e)
+            for q, e in zip(queries, embs)
+        ),
+        return_exceptions=True,
+    )
+
+    merged: dict[str, RetrievedChunk] = {}
+    fused_accum: dict[str, float] = {}
+    pool_max_dense = 0.0
+    pool_max_sparse = 0.0
+    dense_available = False
+    sparse_available = False
+    sub_ok = 0
+
+    for res in results:
+        if isinstance(res, BaseException) or res is None:
+            continue
+        sub_ok += 1
+        dense_available = dense_available or res.dense_available
+        sparse_available = sparse_available or res.sparse_available
+        pool_max_dense = max(pool_max_dense, res.pool_max_dense)
+        pool_max_sparse = max(pool_max_sparse, res.pool_max_sparse)
+        for c in res.chunks:
+            cid = c.chunk_id
+            fused_accum[cid] = fused_accum.get(cid, 0.0) + c.hybrid_score
+            prev = merged.get(cid)
+            if prev is None:
+                merged[cid] = c
+            else:
+                # keep the strongest absolute signals + richest metadata hit
+                if c.dense_score > prev.dense_score:
+                    prev.dense_score = c.dense_score
+                if c.sparse_score > prev.sparse_score:
+                    prev.sparse_score = c.sparse_score
+                if c.hybrid_score > prev.hybrid_score:
+                    prev.text = c.text or prev.text
+                    prev.metadata = c.metadata or prev.metadata
+                    prev.document_id = c.document_id or prev.document_id
+                    prev.source = c.source or prev.source
+                    prev.title = c.title or prev.title
+
+    if sub_ok == 0 or not merged:
+        return HybridSearchResult(
+            chunks=[],
+            pool_max_dense=round(pool_max_dense, 6),
+            pool_max_sparse=round(pool_max_sparse, 6),
+            dense_available=dense_available,
+            sparse_available=sparse_available,
+        )
+
+    # Rank by accumulated fused score (a chunk hitting 2 sub-queries wins),
+    # then cut to the scaled final_k.
+    ranked = sorted(merged.values(), key=lambda c: fused_accum[c.chunk_id], reverse=True)
+    final_k = k * max(1, final_k_multiplier) if final_k_multiplier > 1 else k
+    chunks = ranked[:final_k]
+    # Reflect the cross-query accumulated score on the returned chunks so
+    # generate_node's source ordering and the dashboard read the merged rank.
+    for c in chunks:
+        c.score = round(fused_accum[c.chunk_id], 6)
+        c.hybrid_score = c.score
+
+    logger.debug(
+        "Multi-query retrieval merged",
+        sub_queries=len(queries),
+        sub_ok=sub_ok,
+        unique_chunks=len(merged),
+        final_k=final_k,
+        returned=len(chunks),
     )
     return HybridSearchResult(
         chunks=chunks,

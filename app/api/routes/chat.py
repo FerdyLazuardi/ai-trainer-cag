@@ -28,7 +28,6 @@ from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
 from app.llm.client import get_cheap_llm
 from app.api.user_utils import is_real_user
-from app.agents.long_term_memory_qdrant import qdrant_ltm
 from app.database.redis_client import get_redis_client
 from app.worker import sync_ltm_task, eval_turn_task  # noqa: E402
 
@@ -484,22 +483,9 @@ async def _prepare_rag_context(
     _tier1_intent = _tier1_classify(resolved_query)
     _skip_embedding = _tier1_intent in ("GREETING", "AMBIGUOUS")
 
-    # Embed once — reused by cache lookup, LTM lookup, and cache write.
-    # ponytail: Redis-cached via _embed_query_resilient (sha256 key, 24h TTL).
-    # Cold miss is the same cost as before; warm hit is <50ms. The LTM lookup
-    # below depends on `query_embedding` — keeping it sequential so the
-    # dependency is unambiguous and we never race the closure variable.
+    # NOTE: embed+rewrite moved BELOW history fetch + cache check so cache hits
+    # skip both (~1s+ savings on cache hits, and embed/rewrite overlap on miss).
     query_embedding = None
-    if not _skip_embedding:
-        try:
-            from app.retrieval.hybrid_retriever import _embed_query_resilient
-            query_embedding = await _embed_query_resilient(resolved_query)
-            logger.debug(f"[TIMING] embedding: {_time.perf_counter()-_t0:.2f}s")
-        except Exception as exc:
-            logger.warning(f"Failed to compute query embedding once: {exc}")
-            query_embedding = None
-
-    # Cache pre-filter: skip cache lookup for queries that need fresh
     # synthesis/empathy. Cache stores KNOWLEDGE-shaped answers — feeding them
     # to opinion/vent queries causes shape mismatch (e.g. user asks "menurut
     # kamu mana paling kritis" but cache returns a flat list).
@@ -580,49 +566,30 @@ async def _prepare_rag_context(
             "skip_cache": skip_cache,
         }
 
-    async def _load_ltm_if_eligible():
-        if not ltm_eligible:
-            return {"summary": "", "course_names": []}
-        return await qdrant_ltm.load(
-            user_id=user_id,
-            query=resolved_query,
-            query_embedding=query_embedding,
-        )
-
-    async def _load_user_profile_if_eligible():
-        if not ltm_eligible:
-            return None
-        async with AsyncSessionLocal() as session:
-            return await session.get(UserProfile, user_id)
-
-    logger.debug(f"[TIMING] pre-gather: {_time.perf_counter()-_t0:.2f}s")
-    _t_gather_start = _time.perf_counter()
-    (
-        (summary, recent_history),
-        ltm_profile,
-        user_profile_obj,
-    ) = await asyncio.gather(
-        get_or_summarize_history(
-            conversation_id=conversation_id,
-            llm=get_cheap_llm(),
-            max_fresh_turns=settings.max_fresh_turns,
-            persist=False,  # C7: no LLM, no write on the hot path
-        ),
-        _load_ltm_if_eligible(),
-        _load_user_profile_if_eligible(),
+    # History fetch runs FIRST so cache hits can short-circuit before embed.
+    # On miss it also gives the rewrite input (langchain messages) we fan out
+    # alongside embed+LTM+profile below — rewrite no longer blocks the graph's
+    # critical path (it ran sequentially there before).
+    logger.debug(f"[TIMING] pre-history: {_time.perf_counter()-_t0:.2f}s")
+    _t_hist = _time.perf_counter()
+    summary, recent_history = await get_or_summarize_history(
+        conversation_id=conversation_id,
+        llm=get_cheap_llm(),
+        max_fresh_turns=settings.max_fresh_turns,
+        persist=False,  # C7: no LLM, no write on the hot path
     )
-    logger.debug(f"[TIMING] gather(history+ltm+profile): {_time.perf_counter()-_t_gather_start:.2f}s, total_so_far: {_time.perf_counter()-_t0:.2f}s")
-    if recent_history or summary:
+    logger.debug(f"[TIMING] history: {_time.perf_counter()-_t_hist:.2f}s")
+    if (recent_history or summary) and len(resolved_query.split()) <= 3:
         skip_cache = True
-        logger.debug("Cache lookup skipped - conversation history is not empty, query is context-dependent")
+        logger.debug("Cache lookup skipped - short follow-up query (context-dependent)")
 
     cached = None
     if not skip_cache:
         _t_cache_start = _time.perf_counter()
-        
+
         private_ns = f"rag_user_{current_user.user_id}"
         global_ns = "rag"
-        
+
         private_cached, global_cached = await asyncio.gather(
             get_cached_response(
                 resolved_query,
@@ -638,14 +605,19 @@ async def _prepare_rag_context(
         cached = private_cached or global_cached
         logger.debug(f"[TIMING] get_cached_response (private+global): {_time.perf_counter()-_t_cache_start:.2f}s")
     if cached:
-        return {"cached": cached, "query_embedding": query_embedding}
-
+        return {
+            "cached": cached,
+            "query_embedding": None,
+            "initial_state": {},
+            "was_personalized": False,
+            "skip_cache": skip_cache,
+        }
 
     # C7: kick the out-of-band summary refresh (fire-and-forget). Only enqueues
-    # if the conversation overflowed the fresh window; NX-deduped. Keeps the
-    # (slow) rolling-summary LLM call off this request path.
+    # if the conversation overflowed the fresh window; NX-deduped.
     asyncio.create_task(_schedule_summary_refresh(conversation_id))
 
+    # Build langchain messages for both graph state and rewrite input.
     messages: list[BaseMessage] = []
     for turn in recent_history:
         if turn["role"] == "user":
@@ -653,6 +625,102 @@ async def _prepare_rag_context(
         else:
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
+
+    # Sequential rewrite and single embedding lifecycle to optimize latency:
+    # 1. Determine if rewrite is needed.
+    # 2. If rewrite is needed, execute the LLM query rewrite first. Split it into a list of queries.
+    # 3. Compute a single embedding of the retrieval query (rewritten or original).
+    # 4. Perform LTM lookup using this embedding.
+    _should_rewrite = (
+        _tier1_intent is None
+        and len(messages) > 1  # Only rewrite if there is conversation history to resolve
+        and not _is_bare_affirmation(resolved_query)
+        and not bool(_META_CONVO_RE.search(resolved_query))
+        and len(resolved_query.strip()) <= 1000
+        # ponytail: skip rewrite for long self-contained queries. A 10-word
+        # case-study ("klo ibu retno telat bayar 7 hari masuk par brapa") carries
+        # its own topic+keyword; rewriting it through history makes the model
+        # drag in the PREVIOUS topic (e.g. Client Protection) instead of the PAR
+        # case the user actually asked about. Short follow-ups (pronoun, ordinal,
+        # ≤5 words) still go through — those genuinely need coreference resolve.
+        and len(re.findall(r"[a-zA-Z]+", resolved_query)) <= 5
+    )
+
+    async def _load_ltm_if_eligible(emb: list[float] | None, query_text: str):
+        # ponytail: LTM Qdrant lookup disabled — user_ltm_memories collection is
+        # empty (no writer ever populated it), so every load returned {} and the
+        # Qdrant round-trip was wasted. User prefs live in Postgres (UserProfile),
+        # loaded separately via _load_user_profile_if_eligible. Embed for LTM is
+        # no longer needed here; gate + retrieval still use query_embedding.
+        return {"summary": "", "course_names": []}
+
+    async def _load_user_profile_if_eligible():
+        if not ltm_eligible:
+            return None
+        async with AsyncSessionLocal() as session:
+            return await session.get(UserProfile, user_id)
+
+    logger.debug(f"[TIMING] pre-gather (rewrite+embed): {_time.perf_counter()-_t0:.2f}s")
+    _t_gather_start = _time.perf_counter()
+
+    # Load UserProfile in parallel with the sequential rewrite + embedding chain
+    profile_task = asyncio.create_task(_load_user_profile_if_eligible())
+
+    rewrite_queries = None
+    _retrieval_query = resolved_query
+    _rewritten_queries = None
+
+    if _should_rewrite:
+        try:
+            from app.graph.pipeline import _rewrite_search_query, _apply_glossary
+            logger.debug("Running query rewrite...")
+            rewrite_res = await _rewrite_search_query(messages, _apply_glossary(resolved_query.strip()))
+            if rewrite_res:
+                # If rewrite_res is a string, split by " | "
+                if isinstance(rewrite_res, str):
+                    queries_list = [q.strip() for q in rewrite_res.split(" | ") if q.strip()]
+                else:
+                    queries_list = rewrite_res
+                
+                _stripped = resolved_query.strip()
+                if queries_list and queries_list != [_stripped]:
+                    total_len = sum(len(q) for q in queries_list)
+                    if total_len > max(len(_stripped) * 4, 100):
+                        logger.warning("Query rewrite suspiciously long, using original")
+                    else:
+                        logger.info(f"Query rewritten: {_stripped!r} → {queries_list}")
+                        _rewritten_queries = queries_list
+                        _retrieval_query = queries_list[0]
+        except Exception as exc:
+            logger.debug(f"Rewrite (sequential) skipped/failed: {exc}")
+            _rewritten_queries = None
+
+    # Compute a SINGLE embedding for the final retrieval query (rewritten or original)
+    query_embedding = None
+    if not _skip_embedding:
+        try:
+            from app.retrieval.hybrid_retriever import _embed_query_resilient
+            logger.debug(f"Computing query embedding for: {_retrieval_query[:50]}")
+            query_embedding = await _embed_query_resilient(_retrieval_query)
+            logger.debug(f"[TIMING] embedding computed: {_time.perf_counter()-_t_gather_start:.2f}s")
+        except Exception as exc:
+            logger.warning(f"Failed to compute query embedding once: {exc}")
+            query_embedding = None
+
+    # Load LTM (depends on computed embedding)
+    ltm_profile = {"summary": "", "course_names": []}
+    if ltm_eligible:
+        try:
+            ltm_profile = await _load_ltm_if_eligible(query_embedding, _retrieval_query)
+        except Exception as exc:
+            logger.warning(f"LTM lookup failed: {exc}")
+
+    user_profile_obj = await profile_task
+
+    logger.debug(
+        f"[TIMING] sequential gather (rewrite+embed+ltm+profile): {_time.perf_counter()-_t_gather_start:.2f}s, "
+        f"total_so_far: {_time.perf_counter()-_t0:.2f}s"
+    )
 
     user_pref_dict = None
 
@@ -706,13 +774,18 @@ async def _prepare_rag_context(
         "user_profile": ltm_profile,
         "user_preferences": user_pref_dict,
         "user_context": user_context,
-        # H5 — hand the already-computed query embedding to rag_node so it can
-        # skip a second embed. `query_embedding_text` is the EXACT string we
-        # embedded (resolved_query); rag_node reuses the vector only when the
-        # retrieval query matches this text, else it re-embeds (post-rewrite the
-        # retrieval query can differ). None when embedding failed (C5 degrade).
+        # H5 — hand the already-computed query embedding to rag_node. It is the
+        # embedding of resolved_query (original), consumed by LTM + semantic
+        # gate. rag_node reuses it ONLY if the retrieval query == resolved_query
+        # (no rewrite); otherwise it re-embeds the rewritten retrieval_query.
+        # None when embedding failed (C5 degrade).
         "query_embedding": query_embedding,
-        "query_embedding_text": resolved_query if query_embedding is not None else None,
+        "query_embedding_text": _retrieval_query if query_embedding is not None else None,
+        # Pre-computed rewrite (parallel with embed above) so _pre_processor
+        # skips its own rewrite LLM call. None → pre_processor falls back to its
+        # own rewrite (graph invoked without chat.py pre-compute, e.g. tests).
+        "rewritten_queries": _rewritten_queries,
+        "retrieval_query": _retrieval_query,
         # Socratic coaching toggle (opt-in via UI). When True, _pre_processor
         # promotes a real question to COACHING → SOCRATIC_PROMPT.
         "coaching_mode": request.coaching_mode,
@@ -793,6 +866,15 @@ async def _run_chat(
     await _verify_conversation_ownership(conversation_id, current_user)
 
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
+    from app.graph.pipeline import _apply_glossary
+    resolved_query = _apply_glossary(resolved_query)
+    # Cache key MUST hash the SAME string the READ path hashes. READ (chat.py
+    # _prepare_rag_context) passes `resolved_query` to get_cached_response, and
+    # _query_hash normalizes via .strip().lower(). resolved_query is glossary +
+    # numeric-resolved — deterministic, NO LLM — so it's safe to key on. Hashing
+    # raw request.query here wrote to a key the read never produced → 0 hits
+    # whenever glossary/numeric mutated the query.
+    _raw_query_for_cache = resolved_query
     logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
     context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
@@ -935,7 +1017,7 @@ async def _run_chat(
     # paraphrase. COACHING is excluded: a Socratic guiding question is
     # conversational and turn-dependent, never a reusable answer.
     if (
-        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
+        intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE")
         and not is_low_relevance
         and not _is_bare_affirmation(request.query)
         and not context.get("skip_cache", False)
@@ -943,7 +1025,7 @@ async def _run_chat(
         ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
         background_tasks.add_task(
             set_cached_response,
-            query=resolved_query,
+            query=_raw_query_for_cache,
             answer=answer,
             sources=sources, # we can pass dict directly since the schema validation handles it
             # Key the write on request.course_id — the SAME value the read path
@@ -955,12 +1037,14 @@ async def _run_chat(
             course_id=request.course_id,
             cache_namespace=ns,
         )
-    background_tasks.add_task(
-        append_to_history,
-        conversation_id=conversation_id,
-        user_message=resolved_query,
-        assistant_message=answer,
-    )
+    # ponytail: persist history synchronously before the response returns,
+    # not as a BackgroundTask. BackgroundTasks run AFTER the response is sent,
+    # so the next turn's rewrite would read Redis before this commits → stale
+    # history → wrong pronoun/ordinal resolution (same bug as the stream path).
+    try:
+        await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=answer)
+    except Exception as hist_err:
+        logger.warning(f"append_to_history (non-stream) failed: {hist_err}")
     background_tasks.add_task(
         batch_logger.add_log,
         {
@@ -1169,6 +1253,11 @@ async def chat_stream(
         await _verify_conversation_ownership(conversation_id, current_user)
 
         resolved_query = await resolve_numeric_query(request.query, conversation_id)
+        from app.graph.pipeline import _apply_glossary
+        resolved_query = _apply_glossary(resolved_query)
+        # Cache key MUST hash the SAME string the READ path hashes (mirror non-
+        # stream chat() at line 877). Used by set_cached_response in _stream_rag_body.
+        _raw_query_for_cache = resolved_query
         logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
         context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
@@ -1258,6 +1347,54 @@ async def chat_stream(
         stream_provider = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
+        # ponytail: hoisted defaults so the finally-block log emitter can run on
+        # EVERY exit path (normal done, client disconnect mid-stream, stall
+        # timeout, pipeline error, GeneratorExit). Before this, add_log lived
+        # only on the success path → knowledge turns with long answers routinely
+        # lost their agent_logs row when the client closed the SSE before
+        # reading to the end, so the dashboard only ever showed greetings.
+        stream_max_score = None
+        is_low_relevance_stream = False
+        _logged = False
+
+        async def _emit_log() -> None:
+            """Write the agent_logs row once, regardless of how the stream ended.
+
+            Cache/history/eval stay on the success path only (they gate on a
+            complete answer); this is logging-only so a partial/disconnected
+            turn is still observable in the dashboard — answer may be empty,
+            retrieved_context is whatever rag_node emitted before the break.
+            """
+            nonlocal _logged
+            if _logged:
+                return
+            _logged = True
+            try:
+                await batch_logger.add_log({
+                    "turn_id": turn_id,
+                    "endpoint": "chat-stream",
+                    "conversation_id": conversation_id,
+                    "query": request.query,
+                    "rewritten_query": resolved_query,
+                    "answer": full_answer,
+                    "chunks_retrieved": len(retrieved_context),
+                    "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                    "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
+                    "or_prompt_tokens": stream_prompt_tokens,
+                    "or_cached_tokens": stream_cached_tokens,
+                    "or_completion_tokens": stream_completion_tokens,
+                    "or_provider": stream_provider,
+                    "cache_hit": False,
+                    "retrieved_context": retrieved_context,
+                    **_quality_log_fields(
+                        intent,
+                        stream_intent_scores,
+                        stream_max_score,
+                        _serialize_gate_score(stream_gate_score),
+                    ),
+                })
+            except Exception as log_err:
+                logger.warning(f"Stream add_log failed: {log_err}")
 
         try:
             config: RunnableConfig = {"run_name": "ava-chat-stream"}
@@ -1517,6 +1654,17 @@ async def chat_stream(
         # streams to the user, so there's nothing to leak.
         coaching_done = False
 
+        # ponytail: persist history BEFORE the client gets the "done" signal.
+        # Otherwise the frontend fires the next turn immediately on done, and
+        # that turn's rewrite reads Redis before this append commits → it sees
+        # stale history and resolves "yang pertama" against the PREVIOUS topic
+        # (e.g. Microfinance) instead of the list Ava just gave. Cache-set/eval/
+        # LTM stay after done (they don't gate the next turn's history read).
+        try:
+            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
+        except Exception as hist_err:
+            logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
+
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 
         try:
@@ -1544,14 +1692,14 @@ async def chat_stream(
             # cache is Redis exact-match only (no semantic layer), so a cached
             # answer is only ever re-served to a byte-identical re-ask.
             if (
-                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING")
+                intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE")
                 and not is_low_relevance_stream
                 and not _is_bare_affirmation(request.query)
                 and not context.get("skip_cache", False)
             ):
                 ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
                 await set_cached_response(
-                    query=resolved_query,
+                    query=_raw_query_for_cache,
                     answer=full_answer,
                     sources=sources,
                     # Key the write on request.course_id — SAME value the read path
@@ -1562,34 +1710,7 @@ async def chat_stream(
                     course_id=request.course_id,
                     cache_namespace=ns,
                 )
-            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
-            await batch_logger.add_log({
-                "turn_id": turn_id,
-                "endpoint": "chat-stream",
-                "conversation_id": conversation_id,
-                "query": request.query,
-                "rewritten_query": resolved_query,
-                "answer": full_answer,
-                "chunks_retrieved": len(retrieved_context),
-                "latency_ms": round(latency_ms, 2),
-                # Prefer the real total from the provider's response_metadata
-                # (captured at generate_node on_chain_end). Fall back to the
-                # chunk-event counter only if the provider didn't report
-                # usage (older Gemini/DeepSeek models occasionally omit it).
-                "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
-                "or_prompt_tokens": stream_prompt_tokens,
-                "or_cached_tokens": stream_cached_tokens,
-                "or_completion_tokens": stream_completion_tokens,
-                "or_provider": stream_provider,
-                "cache_hit": False,
-                "retrieved_context": retrieved_context,
-                **_quality_log_fields(
-                    intent,
-                    stream_intent_scores,
-                    stream_max_score,
-                    _serialize_gate_score(stream_gate_score),
-                ),
-            })
+            await _emit_log()
             await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
             await _track_session_courses(conversation_id, retrieved_context)
 
@@ -1610,6 +1731,13 @@ async def chat_stream(
                 )
         except Exception as bg_err:
             logger.warning(f"Stream background task error: {bg_err}")
+        finally:
+            # Log on EVERY exit path, not just success. A knowledge turn whose
+            # answer is long enough that the client disconnects mid-stream used
+            # to never reach add_log (it lived above the success-only tail) →
+            # the dashboard saw greetings but not knowledge. _emit_log is
+            # idempotent (_logged guard) so the success-path call is a no-op here.
+            await _emit_log()
 
     async def _stream_rag():
         # Outer wrapper guarantees the pipeline permit is released on EVERY

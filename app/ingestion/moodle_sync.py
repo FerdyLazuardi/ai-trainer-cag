@@ -227,18 +227,15 @@ async def _ingest_markdown(
     frontmatter, body = _parse_frontmatter(raw_content)
     
     # Use course_id from frontmatter, fallback to moodle_course_id if not present
+    # ponytail: only keep fields that belong in Qdrant payload.
+    # department/topic/course_id/moodle_course_id are legacy cruft that
+    # leaked from Moodle frontmatter and caused metadata bloat + confusion.
     metadata = {
-        "department": frontmatter.get("department", "Global"),
-        "topic": frontmatter.get("topic", ""),
-        "course_id": frontmatter.get("course_id", moodle_course_id),
-        # The ACTUAL Moodle course this file was synced from. Distinct from
-        # `course_id` (which comes from frontmatter and is often unrelated, e.g.
-        # 10/2205). Stale-cleanup scopes by THIS so it reliably identifies
-        # KB-synced docs (and never touches Askfer/portfolio docs).
-        "moodle_course_id": moodle_course_id,
         "course_name": frontmatter.get("course_name", ""),
         "section_name": (section_name or "").strip(),
         "source": filename,
+        # Keep moodle_course_id for stale-cleanup scoping (line 247-270)
+        "moodle_course_id": moodle_course_id,
     }
 
     document_id = str(existing.id) if existing else str(uuid.uuid4())
@@ -289,13 +286,16 @@ async def _ingest_markdown(
     await session.flush()
 
     # ── 2. Build LlamaDocument ───────────────────────────────────────────
+    # ponytail: only pass metadata fields we actually need in Qdrant payload
+    _SAFE_META_KEYS = {"course_name", "keywords", "section_name"}
+    _clean_meta = {k: v for k, v in metadata.items() if k in _SAFE_META_KEYS}
     llama_doc = LlamaDocument(
         text=body,
         doc_id=document_id,
         metadata={
             "document_id": document_id,
             "title": title,
-            **metadata,
+            **_clean_meta,
         },
     )
 
@@ -316,14 +316,36 @@ async def _ingest_markdown(
 
     # Attach frontmatter metadata to every node
     for node in nodes:
-        node.metadata.update(metadata)
+        node.metadata.update(_clean_meta)
+
+    # ── Hierarchical linking (H3 ↔ H2 parent/children) ────────────────────
+    # Mirrors app/ingestion/pipeline.py. Without this, moodle-ingested chunks
+    # carry no parent_chunk_id/child_chunk_ids, so the retriever's hierarchical
+    # expansion (sibling/parent fetch) never fires — multi-topic retrieval stays
+    # flat at top-k. MarkdownNodeParser splits by H1/H2/H3 already; here we link.
+    import re as _re_hier
+    _last_h2_id = None
+    _h2_children: dict[str, list[str]] = {}
+    for node in nodes:
+        text = getattr(node, "text", "") or ""
+        first_line = text.split("\n", 1)[0].strip()
+        is_h3 = bool(_re_hier.match(r"^###\s+", first_line))
+        is_h2 = bool(_re_hier.match(r"^##\s+", first_line))
+        if is_h2:
+            _last_h2_id = node.node_id
+            _h2_children.setdefault(node.node_id, [])
+        elif is_h3 and _last_h2_id:
+            node.metadata["parent_chunk_id"] = _last_h2_id
+            _h2_children.setdefault(_last_h2_id, []).append(node.node_id)
+    for node in nodes:
+        if node.node_id in _h2_children and _h2_children[node.node_id]:
+            node.metadata["child_chunk_ids"] = _h2_children[node.node_id]
 
     logger.info(
         "Markdown parsed into nodes",
         source=filename,
         nodes=len(nodes),
-        department=metadata["department"],
-        topic=metadata["topic"],
+        course_name=metadata.get("course_name", ""),
     )
 
     # ── 4. Embed & Upsert to Knowledge_Base collection ───────────────────

@@ -96,14 +96,14 @@ async def get_dashboard_logs(
     recent_limit = limit + 1
 
     total_q, avg_lat, cache_hits, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
-        _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {non_askfer}"),
-        _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {non_askfer}"),
-        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens) FROM agent_logs WHERE {non_askfer}"),
-        _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {non_askfer} GROUP BY intent"),
+        _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {chat_where}"),
+        _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {chat_where}"),
+        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens) FROM agent_logs WHERE {chat_where}"),
+        _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {chat_where} GROUP BY intent"),
         _run_one(f"""
             SELECT DATE(created_at) AS date, COUNT(*) AS queries
             FROM agent_logs
-            WHERE {non_askfer}
+            WHERE {chat_where}
               AND created_at > NOW() - INTERVAL '30 days'
             GROUP BY DATE(created_at)
             ORDER BY date ASC

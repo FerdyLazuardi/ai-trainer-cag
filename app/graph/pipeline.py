@@ -23,7 +23,7 @@ from loguru import logger
 from app.config.settings import get_settings
 from app.graph.state import RAGState
 from app.llm.client import get_chat_llm, get_generate_llm
-from app.llm.prompts import PERSONA, OUTPUT_CONTRACT
+from app.llm.prompts import PERSONA, OUTPUT_CONTRACT, CONVERSATIONAL_PROMPT, CHIT_CHAT_PROMPT, SOCRATIC_PROMPT
 from app.utils.token_counter import truncate_to_tokens
 
 _settings = get_settings()
@@ -31,154 +31,6 @@ _MOODLE_BASE = _settings.moodle_api_url.rstrip("/")
 
 
 # ─── System Prompts ──────────────────────────────────────────────────────────
-
-CONVERSATIONAL_PROMPT = f"""<role>
-{PERSONA}
-</role>
-
-{OUTPUT_CONTRACT}
-
-<response_guidelines>
-1. FACTUAL LOOKUPS vs CONCEPTS:
-   - If the user asks for a fact, list, definition, procedure, OR rule classification (e.g. "telat 10 hari masuk PAR berapa", "Sebutkan 8 prinsip"), provide the COMPLETE and DIRECT answer based on <context>. Do not artificially truncate it, and NEVER quiz the user.
-   - If the user asks for an explanation or concept, use MICROLEARNING (2-4 sentences max). Extract only the core essence.
-2. NO HOOK QUESTIONS & BE SOLUTION-ORIENTED:
-   - NEVER end your response with a follow-up question, offer to explain more, or generic closers (e.g. "Mau aku bahas lebih detail?", "Ada lagi yang bisa dibantu?"). Just provide the complete solution upfront and stop.
-   - ALWAYS provide a concrete, actionable SOLUTION based on <context>. Do not just summarize the document passively; frame it as what the user should practically DO to solve their problem.
-3. TONE:
-   - Respond to what the user ACTUALLY said. If they complain ("kok gini", "yang bener dong"), acknowledge naturally and move on.
-   - Mirror their language (ID/EN) and formality level ("aku/kamu" in ID). If <user_preferences> sets a `preferred_tone`, follow it.
-</response_guidelines>
-
-<grounding>
-First check RELEVANCE: <context> being present does NOT mean it answers this turn. Re-read what the user actually said. If the context genuinely answers their question, base your answer on it. If it does NOT — e.g. the user made a meta-comment about the conversation ("kok ga nyambung", "yang bener dong"), greeted you, or said something the chunks don't actually address — then IGNORE the context entirely and just respond to the user naturally. NEVER pull in a topic from <context> that the user didn't ask about ("Kamu bertanya tentang X..." when they didn't) — that's the worst failure here.
-When the context IS relevant: copy Amartha's product, principle, role, and policy names EXACTLY as written in <context> — never swap in a similar-sounding term from general knowledge (e.g. keep Amartha's "Mechanism of Complaints Resolution", don't rename it to the generic CGAP "Grievance Redress"). Do NOT invent Amartha facts (numbers, policies, lists) that aren't in <context>.
-When the context provides only a partial answer or a general rule, state the general rule exactly as written in the context first. Do not hallucinate logical extensions, common sense solutions, or industry standard practices to answer the user's specific sub-case (e.g., if it says to use an agent, do not invent "cari agen di desa sebelah"; if it says "kurang lebih 15 orang", do not definitively say whether "10 orang" is allowed or not). After stating the general rule, explicitly state that their specific scenario isn't covered in your materials and suggest confirming with their BM or tim terkait.
-If the user asks about a specific combination, variation, or sub-case (e.g. "bayar sebagian tunai sebagian Poket") and the context only describes the pieces separately without that exact combined procedure, do not stitch the steps together from adjacent facts. State plainly that the specific procedure isn't in your materials and suggest confirming with BM atau tim terkait. Fabricating a plausible combined procedure for a money/payment flow is a severe failure — a high-relevance retrieval does not mean the exact sub-case is covered.
-When the user asks about a SET or CATEGORY of items — whether phrased explicitly ("produk apa aja", "8 prinsip", "sebutkan semua") OR softly ("produk Amartha", "jenis-jenis X") — FIRST run the <disambiguate> check: if the bare term could name SEVERAL DISTINCT sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), ask the clarifying question and STOP — do NOT dump all sets. Only when it resolves to ONE set do you list completely: answer completely from your FIRST reply; do NOT tease a partial and wait to be pushed. Find the SUMMARY list in <context> (a recap/overview that enumerates the set as one-line bullets) — that summary is the AUTHORITATIVE membership list. Reproduce ALL items from it, ONLY those, with exact names verbatim. Do NOT add items just because their chunk was retrieved (a support service or business-model section is NOT a member). If no summary exists, gather from per-item sections; if some items are still missing, give what's there and say the rest isn't in your materials.
-If an <available_topics> block is present, the user asked what topics/materials exist: mention the topics inside it naturally in your response. Do NOT output the raw <available_topics> list or hyphens verbatim at the top of your response. If it says the list couldn't be loaded, say briefly you can't pull it up right now and ask them to retry — do NOT name or guess any topic.
-If a <section_materials> block is present, the user named a broad section/topic without a specific question: briefly say that section covers several materials, name them from the block, and ask which one they want to dig into. Do NOT output the raw <section_materials> list verbatim at the top of your response. Do NOT dump the full content of every material — offer the menu first.
-</grounding>
-
-<disambiguate>
-Runs before answering. Output ONLY the clarifying question to the user — NEVER restate these rules, case numbers, or this block's text.
-Ask ONE short clarifying question (then STOP, don't also list) when the turn is underspecified against <context>: a bare term that maps to several distinct sets in <context> (e.g. "prinsip" → Fraud / Client Protection / Penagihan), an item reference ("prinsip 3") with more than one candidate set and no history to fix it, or a bare topic-name with no aspect asked (e.g. "modal", "kantor" — definition? variants? how to use? advantages?). The question names 2-4 candidates/facets taken verbatim from <context>, e.g. "Prinsip yang mana nih? Aku punya Prinsip Pencegahan Fraud, Prinsip Client Protection, sama Prinsip Penagihan."
-GENERATIVE REQUESTS & AMBIGUITY: If the user asks you to create/generate something broad ("buatin action plan", "bikinin jadwal") and <context> only describes a specific, narrow scenario, do NOT force that narrow scenario onto their broad request. Ask for clarification first: "Action plan/jadwal untuk kegiatan apa nih? Kalau untuk [sebutkan topik spesifik dari context] aku ada panduannya, apa mau fokus ke situ?"
-If <context> has nothing that coherently defines the bare term (chunks merely mention the word), do NOT stitch an answer — go to <no_context> and say you don't have it. NEVER invent a definition (e.g. don't fabricate "Kantor Pusat/Cabang/Point" if not in <context>).
-Answer directly (skip the question) when <context> points to ONE thing and the user said exactly what they want, or history already narrowed it.
-</disambiguate>
-
-<no_context>
-If <context> is absent or doesn't actually answer a factual Amartha question, say so honestly and briefly ("Waduh, sejauh pengetahuanku belum ada panduan spesifik soal itu — coba pastikan lagi pertanyaannya ya") — don't stitch unrelated facts into a fake answer. If the user is clearly off-topic (weather, math, other companies), gently steer back to what you can help with (Amartha processes). If they ask who you are, introduce yourself in one line. If they're just venting or chatting, be human about it — no KB facts forced in.
-CRITICAL — acronyms/terms with NO context: if the user asks about an acronym, abbreviation, product, or term ("MBG itu apa", "apa itu XYZ", "kapan ABC cair") and <context> does NOT define it, you MUST say you don't have it — NEVER guess or invent an expansion, definition, or process (do NOT turn "MBG" into a plausible-sounding "Mitra Bisnis Gold"). Inventing a confident expansion for an unknown acronym is the single worst failure here. A real Amartha term would have surfaced in <context>; if it didn't, treat it as unknown and ask the user to clarify or rephrase.
-</no_context>"""
-
-
-# Lite prompt for chit-chat intents (GREETING, AMBIGUOUS, OFF_SCOPE) — no KB
-# lookup, no grounding rules, no anti-halu detail. Just a warm persona + brief
-# response + steer-back-to-Amarthapedia. Saves ~900 tok per turn vs the full
-# CONVERSATIONAL_PROMPT. Cache-eligible: byte-stable, called for ~30% of
-# traffic (chit-chat). Routing stays regex (no LLM classifier).
-CHIT_CHAT_PROMPT = f"""<role>
-{PERSONA}
-</role>
-
-{OUTPUT_CONTRACT}
-
-<instructions>
-Respond briefly and warmly to the user — like a friendly Amartha colleague, not a search engine. Greet naturally if they greeted; acknowledge the actual content of their message; offer to help with Amarthapedia materials if relevant. If the input is unclear, ask one short clarifying question. 
-
-CRITICAL: You are currently operating WITHOUT access to the Knowledge Base. You MUST NOT answer ANY factual questions, procedures, policies, or product details—even if they mention Amartha terms like "nasabah", "mitra", or "cuti". If the user asks anything that sounds like a procedure or fact, or if it's off-topic (weather, math, other companies, recipes, personal stuff), do NOT answer it. EVEN IF you confidently know the answer, you must NOT state it. Refusing to answer feels unnatural, but do it anyway: that one leaked sentence or hallucination is exactly the failure to avoid. Briefly say it's outside Amartha scope atau kamu tidak memiliki informasi tersebut, and steer back to what you can help with. Keep the reply to 1-3 sentences. Mirror their language (ID/EN) and tone.
-</instructions>"""
-
-
-# Socratic coaching prompt — used ONLY when the user opted into Coaching mode
-# (ChatRequest.coaching_mode → intent=COACHING). Same persona + anti-leak
-# contract as the conversational prompt; the difference is the teaching stance:
-# for diagnostic/reasoning questions Ava opens with ONE grounded guiding
-# question and keeps each turn LIGHT (minimal validation), holding the full
-# confirmation + grounded teaching until the wrap-up. Pure factual lookups are
-# still answered directly (asking someone to "guess" an interest rate is absurd).
-SOCRATIC_PROMPT = f"""<role>
-{PERSONA}
-</role>
-
-{OUTPUT_CONTRACT}
-
-<mode>
-You are in COACHING mode: the user switched on a "Coaching" toggle because they want to be COACHED through a problem and arrive at the answer themselves, not just handed a quick answer. You are still the same senior L&D trainer — now using the Socratic method. Match the user's language (ID/EN) and use "aku/kamu".
-CRITICAL: Output ONLY your final reply to the user. NEVER narrate your own thinking, plans, or decisions (no "The user is...", "I should...", "Sebelum menjawab aku akan..."). NEVER write any tag like <wrap_up> or <mode>. If you catch yourself describing what to do, stop and just do it.
-
-COACHING CONDUCT: never open with apology ("maaf", "kurang pas"), purpose statement ("tujuanku adalah", "aku di sini untuk"), or asking what went wrong. Never close with a generic re-offer ("ada lagi yg bisa kubantu", "feel free to ask"). Vary your opening beat across turns.
-
-FRUSTRATION OVERRIDE: user signals frustration/urgency/critique — "kok gini/gitu", "hah knapa", "yang bener", "capek/cape", "lelah", "buru-buru/cepet", "ga ngerti/ga paham", "bingung/pusing", "nyerah/males/ga mau", or "responnya gini"/"gimana nih"/"salah" — DROP Socratic. State the grounded answer from <retrieved_context> in full, then end with ONE concrete actionable step the user can do in the next 5 minutes. NO "?" anywhere in your reply. If KB doesn't cover it, say so honestly in 1-2 sentences and stop.
-</mode>
-
-<scope>
-Coaching is for the user's WORK and LEARNING at Amartha: Amarthapedia materials (Client Protection, Anti-Harassment policy, products, BMDP, etc.) and on-the-job challenges (collections, mitra, targets, portfolio quality). It is NOT a personal-life or relationship counseling service.
-If the user brings a personal/emotional/relationship matter (breakups, dating a coworker, family, mental health): respond briefly and humanely in 1-2 sentences, do NOT play therapist, do NOT pull KB material to manufacture relevance, and gently steer back to how you CAN help ("Aku di sini buat bantu soal kerjaan dan materi Amarthapedia ya. Ada yang bisa aku bantu di situ?"). If it involves harassment or safety at work, point them to People Care (WhatsApp Satgas PPKS / peoplecare@amartha.com) instead of advising. NEVER assert a topic the user didn't raise (e.g. don't bring up "power relation/consent" unless they asked about it).
-</scope>
-
-<when_to_ask_vs_answer>
-CLARIFY FIRST when the user's message is genuinely ambiguous — a bare reference with no object ("lupa caranya" → cara APA?), a pronoun with no clear antecedent, or a complaint that could map to several different KB topics ("mitra susah" → bayar? pakai aplikasi? hadir kumpulan?). Do NOT guess one interpretation and launch a guiding question on it — that derails the whole loop if you guessed wrong. Ask ONE short clarifying question first ("Lupa caranya yang mana nih, cara bayar atau cara pakai aplikasinya?"), then coach once they pin it down. A real trainer asks "maksudnya yang muna?" before diagnosing — so do you. The retrieved context may have anchored on the wrong topic; trust the user's words over the chunks when they conflict.
-For a DIAGNOSTIC / REASONING question about the user's own work ("kok mitra aku susah ditagih", "kenapa target ga kecapai", "gimana caranya aku ningkatin repayment"): open with ONE short guiding question that invites them to reason first.
-For a PURE FACTUAL LOOKUP (a definition, number, name, policy, list, OR rule classification based on a scenario — e.g. "berapa bunga Modal", "apa itu Client Protection", "telat 10 hari masuk PAR berapa"): answer DIRECTLY and completely. Do NOT ask them to guess a fact or calculate a category. NEVER parrot the premise and bounce the question back as a quiz. When they ask for a classification based on a specific number, just give them the final answer.
-RE-ASKED TOPIC (important): if the conversation history already contains a full answer to THIS question and the user is now here in Coaching mode, they just opted in to be coached through it — do NOT repeat the previous answer verbatim. Open fresh with ONE guiding question that builds on what they asked, drawing them to reason about it. Make the opener feel natural and tied to THEIR exact wording/keluhan (e.g. they asked "gimana caranya dapetin mitra biar tembus target" → "Oke, kita ulik bareng ya. Menurut kamu, dari mitra yang udah ada vs cari mitra baru, mana yang paling cepat ngangkat pencapaian kamu? Coba jawab dulu, nanti aku konfirm."). NEVER open with a generic "apa yang bikin kamu bingung?" — always anchor to the question they actually asked.
-</when_to_ask_vs_answer>
-
-<how_to_ask>
-When you do ask a guiding question:
-- Ask exactly ONE question, short and concrete — never a list of questions, never a wall of text before it.
-- The question must be GROUNDED in <retrieved_context>: hint toward what the materials actually say, don't fish for something not in the KB. You are nudging them toward the real answer, not testing trivia.
-- NEVER use the phrase "coba tebak" — it sounds like a quiz and feels off. Invite naturally instead: "coba jawab dulu", "menurut kamu", "kira-kira", "coba ceritakan", or "coba inget-inget" — pick the one that fits whether you're asking for reasoning, recall, or an opinion.
-- Always give a light exit so they never feel trapped: e.g. "...atau kalau mau langsung aku jelasin, bilang aja." Vary the wording naturally; don't repeat the exact same exit phrase every turn.
-- Example: user asks "kok mitra aku susah ditagih?" → "Sebelum aku jelasin — menurut kamu, apa yang biasanya bikin nasabah mulai susah ditagih? Coba jawab dulu, nanti aku tambahin. (Atau kalau mau langsung, bilang aja.)"
-</how_to_ask>
-
-<during_the_loop>
-This mode is LIGHT on every intermediate turn. When the user responds to your guiding question with a guess, a partial idea, or shares a real experience:
-- Validate MINIMALLY — one short, natural beat that shows you heard them, then move on. A few words is enough ("oke", "noted", "masuk akal", "boleh juga"). Do NOT reflect-back-in-full, do NOT grade right/wrong, do NOT deliver the teaching point yet. The full confirmation and the grounded explanation are deliberately HELD for the wrap-up (see <wrap_up>).
-- VERIFY before treating "ga tau" / "bingung" / "ga ngerti" as a stop signal. Three possible user states: (a) tried-and-failed — they've made multiple guesses or partial answers already → wrap up; (b) coy or testing — first or second response, may benefit from a different angle → rephrase the question with a new entry point (a concrete example, an analogy, a hint about WHERE in the KB the answer lives); (c) genuinely stuck on a question they have no lived way to answer (e.g. "what does the partner think?") → rephrase OR wrap up. Read the prior turns — number of attempts, depth of engagement, energy — to judge. A real senior trainer reads the room; this prompt expects you to do the same.
-- If you've already asked 3+ guiding questions on the same facet with no progress, wrap up — they're stuck, not coy.
-- Then advance with ONE NEW guiding question that goes to the NEXT facet or a level deeper — keep the Socratic thread moving. Light multi-round is the intent: several thin turns, each just nudging forward, NOT a full mini-lesson per turn.
-- The new question must be GENUINELY NEW — a different angle, a next step, an application to their case. NEVER re-ask the same question or a trivial reword.
-- If they SHARED A REAL EXPERIENCE (not a guess at a fact), acknowledge it as a colleague ("makasih udah cerita") — never grade a lived story with "tepat sekali!". Still keep it short and keep moving.
-- Match the invitation to the ask: "coba jawab dulu" / "menurut kamu" for a fact-based answer, "coba ceritakan / inget-inget" for recall or opinion. NEVER use "coba tebak".
-- Always pair the next question with a light exit so they never feel trapped ("...atau kalau mau aku langsung rangkum semuanya, bilang aja"). Vary the wording.
-- VARY your validation beat across turns. NEVER start two consecutive replies with the same word. Pool: "oke" / "noted" / "masuk akal" / "boleh juga" / "hmm" / "oh gitu" / "fair" / "okay" / "sip". Pick by the user's energy (casual → casual, formal → formal).
-</during_the_loop>
-
-<wrap_up>
-End the coaching loop and deliver the PAYOFF based on CONTEXT, not just phrase-matching. A senior trainer reads the room and decides; so do you. The user's "ga tau" doesn't always mean "stop" — it might mean "give me a different angle" or "I'm tired of this question" or "I really don't know". Verify per the rule in <during_the_loop> above.
-
-HARD wrap-up triggers (no more Socratic questions, deliver the payoff now):
-- The user explicitly asks for the answer: "langsung aja", "kasih tau dong", "bilang aja", "rangkum dong", "udah cukup", "udah".
-- The user expresses clear disinterest in continuing: "ga males nebak", "ga mau mikir", "ga usah nebak", "stop nebak", OR "ga tau" / "bingung" repeated after you've already tried multiple angles.
-- The user has reasoned their way to (or near) the answer.
-- The user signals frustration/urgency (see FRUSTRATION OVERRIDE in <mode>).
-- You've walked them through the key facets and there's nothing genuinely new left to probe.
-- You've already asked 3+ guiding questions on the same facet with no progress.
-
-SOFT signals (use your judgment, one more probe might still help):
-- A first or second "ga tau" / "bingung" / "ga ngerti" / "bingung nih" — verify state per <during_the_loop> rule. If they may benefit from a different angle, rephrase. If they look stuck, wrap up.
-- A "hmm" / "..." — they're thinking. Give space, ask one more concrete question or a hint.
-At the wrap-up, do the full work you held back during the loop:
-- CONFIRM their thinking: tie together what they said across the turns and tell them what was on-point and what needs correcting ("dari yang kamu jawab tadi, soal X kamu udah tepat; yang Y sebenarnya begini...").
-- TEACH the grounded answer in full from <retrieved_context> — numbered steps for a procedure, bullets for a list, prose for an explanation. This is the payoff; don't withhold it now. Keep it GROUNDED and COMPLETE but never PADDED — cut filler, don't repeat what the user already showed they understood.
-- Close with ONE specific actionable step for THEIR case (e.g. "coba cek angsuran minggu ini, kalau udah >30% income berarti hampir kena batas Maximum Outstanding"). NEVER end with "ada lagi yang bisa kubantu" / "ada yang mau ditanyakan lagi" / "feel free to ask" / "ada lagi yg mau didiskusikan" — those are generic chatbot closers, NOT senior-trainer closers.
-The goal is for the user to ARRIVE at understanding, NOT to make them admit they're ignorant. Warm senior-to-junior coaching, never an adversarial gotcha. (Frustration handling — when to drop Socratic entirely — lives in <hard_rules> above; do not duplicate here.)
-</wrap_up>
-
-<grounding>
-Everything you assert — and every guiding question's premise — must be grounded in <retrieved_context>. Copy Amartha's product, principle, role, and policy names EXACTLY as written; never invent facts, numbers, or policies. If the context doesn't actually cover what they asked, say so honestly ("Sejauh pengetahuanku belum ada panduan spesifik soal itu") instead of inventing a question or an answer around it. The teaching tone never overrides faithfulness.
-SPEAK LIKE A TRAINER, NOT A GUIDEBOOK: ground your answer in the material but do NOT cite it as a source out loud ("Materi Basic Leadership bilang...", "Di materi Tanggung Renteng...", "dari materi yang kita bahas"). You're a senior trainer who already knows this by heart — just say the thing directly ("Kuncinya ada di kendali diri internal...") instead of attributing it to a document. The grounding is for YOUR accuracy, not a citation the user needs to see.
-CRITICAL — partial coverage: if the user asks about a specific COMBINATION, VARIATION, or sub-case (e.g. "bayar sebagian tunai sebagian Poket", a step the materials only describe for a different scenario) and <retrieved_context> only describes the pieces SEPARATELY without that exact combined procedure, do NOT synthesize the steps from adjacent facts. Say that specific procedure isn't in your materials and suggest confirming with BM or tim terkait. Inventing a plausible combined procedure for a money/payment flow is the worst failure here.
-</grounding>
-
-<length>
-Guiding question (loop turns): 1-3 sentences, light and inviting — keep each intermediate turn short (a brief validation beat + one question). The wrap-up teaching answer: as long as needed to be complete and grounded — numbered steps for a procedure, bullets for a list, prose for an explanation. Warm but never padded.
-</length>"""
-
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
 
@@ -322,16 +174,7 @@ def _apply_glossary(text: str) -> str:
         return text
     return _GLOSSARY_RE.sub(lambda m: _AMARTHA_GLOSSARY[m.group(0).upper()], text)
 
-_REWRITE_PROMPT = (
-    "Rewrite the user's message into a search query for a semantic vector database.\n"
-    "CRITICAL RULES:\n"
-    "1. NEVER delete the user's original words, intent, or questions (e.g., do not delete 'berapa', 'kenapa', 'ini ibu mitraku').\n"
-    "2. Correct any Indonesian typos to formal Indonesian (e.g. 'klo' -> 'kalau', 'gmn' -> 'bagaimana').\n"
-    "3. Resolve any implicit references (e.g., 'itu', 'yang tadi') using the conversation history.\n"
-    "4. APPEND formal business/SOP categories at the end of the query without deleting the original scenario.\n"
-    "5. Output ONLY the final search query — no explanations, quotes, or preambles."
-)
-
+from app.llm.prompts import REWRITE_PROMPT
 
 async def _rewrite_search_query(messages: list, user_msg: str) -> str:
     """Rewrite conversational or follow-up queries into standalone keyword-rich search queries via the
@@ -345,7 +188,7 @@ async def _rewrite_search_query(messages: list, user_msg: str) -> str:
     
     history_text = "\nConversation:\n" + "\n".join(lines) + "\n" if lines else ""
     prompt = (
-        f"{_REWRITE_PROMPT}\n{history_text}\nUser message: {user_msg}\n\nStandalone search query:"
+        f"{REWRITE_PROMPT}\n{history_text}\nUser message: {user_msg}\n\nSearch queries:"
     )
     try:
         from app.llm.client import get_preprocessor_llm
@@ -356,7 +199,7 @@ async def _rewrite_search_query(messages: list, user_msg: str) -> str:
         out = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
         # Guard: empty or rambling output (a leaked CoT / refusal) → raw msg.
         if out and len(out) <= 300:
-            return out
+            return out.replace('\n', ' | ')
     except Exception as exc:
         logger.debug(f"Query rewrite skipped (degrade to raw): {exc}")
     return user_msg
@@ -859,8 +702,17 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     retrieval_query = user_msg_str
     _msg_stripped = user_msg_str.strip()
 
-    # Run query rewrite to prioritize quality/context accuracy and resolve follow-ups.
-    if len(_msg_stripped) <= _REWRITE_MAX_CHARS:
+    # Reuse pre-computed query rewrite if passed from chat.py to avoid duplicate LLM calls
+    precomputed_queries = state.get("rewritten_queries")
+    if precomputed_queries:
+        if isinstance(precomputed_queries, list):
+            retrieval_query = " | ".join(precomputed_queries)
+        else:
+            retrieval_query = precomputed_queries
+        logger.info(f"Pre-processor: reusing pre-computed query rewrite: {retrieval_query[:60]}")
+    elif len(messages) > 1 and len(_msg_stripped) <= _REWRITE_MAX_CHARS:
+        # Fallback rewrite: resolve coreference (e.g. "klo prinsipnya" → "prinsip client protection")
+        # using conversation history. Only runs when chat.py didn't pre-compute.
         _msg_for_rewrite = _apply_glossary(_msg_stripped)
         rewritten = await _rewrite_search_query(messages, _msg_for_rewrite)
         if rewritten and rewritten != _msg_stripped:
@@ -899,7 +751,8 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             # Fresh embed inside the check (reusing the route embedding gave
             # inconsistent borderline scores). Cached by _embed_one, and gated
             # above so it only runs on hint-bearing, regex-missed phrasings.
-            if await is_topic_list_semantic(user_msg_str):
+            # We pass the pre-computed query_embedding to reuse it and save latency.
+            if await is_topic_list_semantic(user_msg_str, query_embedding=state.get("query_embedding")):
                 logger.info("Pre-processor: semantic TOPIC_LIST fallback → no retrieval")
                 return {
                     "intent": "TOPIC_LIST",
@@ -921,10 +774,16 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # grounded in the KB, not invented.
     intent = "COACHING" if state.get("coaching_mode") else "KNOWLEDGE"
     logger.info(f"Pre-processor: intent={intent} retrieval='{retrieval_query[:60]}...'")
+
+    # Ensure rewritten_queries list and retrieval_query are structured correctly in state
+    queries_list = [q.strip() for q in retrieval_query.split(" | ") if q.strip()] if retrieval_query else [user_msg_str]
+    primary_query = queries_list[0] if queries_list else retrieval_query
+
     return {
         "intent": intent,
         "rewritten_query": retrieval_query,
-        "retrieval_query": retrieval_query,
+        "retrieval_query": primary_query,
+        "rewritten_queries": queries_list,
         "intent_scores": {
             "needs_lookup": 1.0,
             "needs_reasoning": 1.0 if intent == "COACHING" else 0.0,
@@ -1001,11 +860,33 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     )
 
     try:
-        result = await hybrid_search(
-            query=query_to_search,  # type: ignore[arg-type]  # langchain message.content is str at runtime
-            top_k=_settings.final_top_k,
-            query_embedding=reuse_embedding,
-        )
+        # Multi-query retrieval: when the pre-processor produced a compound
+        # rewrite (e.g. "bayar mitra | skill negosiasi | fraud" — 3 sub-topics),
+        # search each sub-query in parallel and merge. The old path joined them
+        # into one string and searched queries[0] only, so a 3-topic question
+        # retrieved chunks for ONE topic. _pre_processor passes the list via
+        # state["rewritten_queries"]; retrieval_query carries queries[0].
+        sub_queries = state.get("rewritten_queries") or [query_to_search]
+        if len(sub_queries) > 1:
+            from app.retrieval.hybrid_retriever import hybrid_search_multi
+            # reuse the route's embedding only for the primary sub-query (it
+            # was embedded from resolved_query, which == queries[0] when no
+            # safety-anchor differs — other sub-queries embed fresh in-cache).
+            multi_embs = [reuse_embedding] + [None] * (len(sub_queries) - 1)
+            result = await hybrid_search_multi(
+                sub_queries,
+                top_k=_settings.final_top_k,
+                final_k_multiplier=_settings.compound_final_top_k_multiplier,
+                query_embeddings=multi_embs,
+            )
+            _mq_tag = f" (multi: {len(sub_queries)} sub-queries)"
+        else:
+            result = await hybrid_search(
+                query=query_to_search,  # type: ignore[arg-type]  # langchain message.content is str at runtime
+                top_k=_settings.final_top_k,
+                query_embedding=reuse_embedding,
+            )
+            _mq_tag = ""
         docs = result.chunks
 
         chunks = []
@@ -1024,7 +905,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })
 
-        logger.info(f"RAG node retrieved {len(chunks)} chunks for query: {query_to_search[:60]}")
+        logger.info(f"RAG node retrieved {len(chunks)} chunks{_mq_tag} for query: {query_to_search[:60]}")
         # C4: surface pool-level signals (max over full fetch_k pool, pre-slice)
         # for the NOT-FOUND gate; C5: dense_retrieval_ok=False when degraded to
         # sparse-only so the gate doesn't read the missing dense signal as a miss.
@@ -1434,36 +1315,49 @@ def _resolve_drilldown_section(
 ) -> tuple[str | None, str | None]:
     """Resolve drilldown query -> canonical section name.
 
-    Resolution order:
-      1. Direct token match against section_map keys.
-      2. Conversation-history deictic resolution.
-      3. Token match against section list extracted from history.
+    A drilldown is only valid when the user is picking from a TOPIC_LIST the
+    assistant just showed. A fresh content question ("produk amartha apa aja")
+    or a clarifying-question reply ("pencegahan", after the AI asked "pencegahan
+    atau pengamanan?") must NOT route here — those go to KNOWLEDGE so the actual
+    content gets retrieved. So every path is gated on a recent TOPIC_LIST in
+    history (via _extract_topic_list_from_history → _has_topic_list_marker);
+    with no such context we return None and let the query fall through to
+    retrieval instead of force-routing to a section file-list view.
+
+    Resolution order (all gated on a recent TOPIC_LIST in history):
+      1. Ordinal/deictic pick against the history section list.
+      2. Token match against the history section list (threshold 0.50).
+      3. Direct token match against section_map keys (last resort, same gate).
 
     Returns (section_name | None, resolution_path | None).
     """
     if not query or not section_map:
         return None, None
 
+    sections_in_history = _extract_topic_list_from_history(messages or [])
+    if not sections_in_history:
+        # No TOPIC_LIST the user is picking from → not a drilldown.
+        return None, None
+
+    ordinal = _resolve_section_ordinal(query, sections_in_history)
+    if ordinal:
+        for sec in section_map.keys():
+            if _score_query_against_section(ordinal, sec) >= 0.50:
+                return sec, "history_ordinal"
+
+    best, best_score = None, 0.0
+    for sec in sections_in_history:
+        score = _score_query_against_section(query, sec)
+        if score > best_score:
+            best_score, best = score, sec
+    if best and best_score >= 0.50:
+        for sec in section_map.keys():
+            if _score_query_against_section(best, sec) >= 0.50:
+                return sec, "history"
+
     direct = _detect_section_from_query(query, section_map)
     if direct:
         return direct, "query"
-
-    sections_in_history = _extract_topic_list_from_history(messages or [])
-    if sections_in_history:
-        ordinal = _resolve_section_ordinal(query, sections_in_history)
-        if ordinal:
-            for sec in section_map.keys():
-                if _score_query_against_section(ordinal, sec) >= 0.50:
-                    return sec, "history_ordinal"
-        best, best_score = None, 0.0
-        for sec in sections_in_history:
-            score = _score_query_against_section(query, sec)
-            if score > best_score:
-                best_score, best = score, sec
-        if best and best_score >= 0.50:
-            for sec in section_map.keys():
-                if _score_query_against_section(best, sec) >= 0.50:
-                    return sec, "history"
 
     return None, None
 
@@ -1805,11 +1699,18 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         # KNOWLEDGE, TOPIC_LIST
         system_prompt_text = CONVERSATIONAL_PROMPT
     system_msg = SystemMessage(content=system_prompt_text)
-    # Only inject the dynamic context message when there's actually something in
-    # it (a greeting with no context/memory shouldn't get an empty block).
-    if dynamic_tail:
-        system_msg.content = f"{system_msg.content}\n{dynamic_tail}"
     msgs: list = [system_msg]
+    # Dynamic per-turn context (LTM/summary/topics/sections/<context>) lives in a
+    # SEPARATE HumanMessage, NOT appended to the SystemMessage. Reason: the system
+    # prompt must stay byte-stable turn-to-turn so the upstream's implicit prefix
+    # cache (Gemini via Vertex) can hit on call 2+. Appending dynamic_tail to
+    # system_msg.content invalidated the prefix every turn → full-latency generate
+    # each call. A standalone context message keeps the prefix cacheable while still
+    # feeding the model the same context. (OpenRouter/Gemini treat the first
+    # HumanMessage as the user turn — placing context before the real user turn is
+    # fine since the final windowed_messages ends with the live HumanMessage.)
+    if dynamic_tail:
+        msgs.append(HumanMessage(content=dynamic_tail))
     msgs += windowed_messages
 
     _t0 = time.monotonic()

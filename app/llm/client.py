@@ -27,23 +27,33 @@ def _shared_http_client() -> httpx.AsyncClient:
     )
 
 
-_GEMINI_PROVIDER = {
-    "order": ["google-vertex"],
-    "allow_fallbacks": True,
-}
-
-
 def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
     body: dict = {}
     if include_usage:
         body["usage"] = {"include": True}
     m = model.lower()
-    if m.startswith("google/") or "gemini" in m:
-        body["provider"] = _GEMINI_PROVIDER
-    elif m.startswith("deepseek/"):
-        order = settings.llm_provider_order_list or ["deepseek"]
+    
+    # As per settings.py, Gemini stays pinned to google-vertex since it has
+    # implicit cache wins and AI Studio auto-routing has been hitting rate limits
+    # causing 10-20s latency spikes.
+    if m.startswith("google/"):
+        body["provider"] = {"order": ["google-vertex"], "allow_fallbacks": True}
+
+    elif m.startswith("deepseek/") or m.startswith("xiaomi/"):
+        main_model = settings.llm_model.lower()
+        is_main_family = (
+            (m.startswith("deepseek/") and main_model.startswith("deepseek/")) or
+            (m.startswith("xiaomi/") and main_model.startswith("xiaomi/"))
+        )
+        if is_main_family:
+            default_provider = "xiaomi" if m.startswith("xiaomi/") else "deepseek"
+            order = settings.llm_provider_order_list or [default_provider]
+        else:
+            order = ["xiaomi"] if m.startswith("xiaomi/") else ["deepseek"]
+
         body["provider"] = {"order": order, "allow_fallbacks": True}
-        body["reasoning"] = {"effort": "none", "exclude": True}
+        if m.startswith("deepseek/"):
+            body["reasoning"] = {"effort": "none", "exclude": True}
     return body
 
 
@@ -109,13 +119,7 @@ def get_judge_llm() -> ChatOpenAI:
         temperature=settings.judge_llm_temperature,
         max_tokens=1024,
         model_kwargs={"response_format": {"type": "json_object"}},
-        extra_body={
-            "provider": {
-                "order": list(settings.llm_provider_order_list or ["deepseek"]),
-                "allow_fallbacks": True,
-            },
-            "reasoning": {"effort": "none", "exclude": True},
-        },
+        extra_body=_provider_extra_body(settings.judge_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Judge)",
