@@ -1422,13 +1422,30 @@ async def chat_stream(
             # slow-but-streaming answer never trips it because every token is an
             # event that resets the clock.
             _events = rag_graph.astream_events(initial_state, config=config, version="v2")
+            # Non-stream generate is atomic — astream_events emits NOTHING for the
+            # 2-9s the LLM call blocks. That idle gap lets ngrok/free proxies cut
+            # the SSE connection (and Starlette's own 60s no-yield timeout abort
+            # the response). A short wait_for + emit an SSE comment ping (": ping",
+            # ignored by the browser EventSource/reader) on each timeout keeps the
+            # connection alive while the LLM works. A real stall is still detected:
+            # if NO genuine event arrives within `_stall_s` (75s), we error out.
+            _ping_s = 2.0
             _stall_s = settings.pipeline_stream_stall_timeout_s
+            import time as _time
+            _last_real_event = _time.monotonic()
             while True:
                 try:
-                    event = await asyncio.wait_for(_events.__anext__(), timeout=_stall_s)
+                    event = await asyncio.wait_for(_events.__anext__(), timeout=_ping_s)
+                    _last_real_event = _time.monotonic()
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
+                    # No event in 2s. If we're still within the overall stall
+                    # window, emit a keepalive ping and keep waiting. Only a
+                    # sustained 75s silence is a real stall.
+                    if _time.monotonic() - _last_real_event < _stall_s:
+                        yield ": ping\n\n"
+                        continue
                     logger.error(
                         "Stream stalled — no events within stall window; freeing slot",
                         stall_s=_stall_s,
@@ -1490,6 +1507,27 @@ async def chat_stream(
                         msgs_out = output.get("messages") or []
                         if msgs_out:
                             last_msg = msgs_out[-1]
+                            # generate_node runs with streaming=False (see
+                            # client.py get_generate_llm) so NO on_chat_model_stream
+                            # fires — the whole reply arrives here as one AIMessage.
+                            # Emit it as a single token through the leak guard.
+                            # Why non-stream: with streaming=True the OpenRouter
+                            # google-ai-studio fallback corrupts the SSE callback
+                            # mid-generation ("JSON error injected into SSE stream"),
+                            # which raises inside astream_events (NOT inside the
+                            # ainvoke the retry wraps) → uncatchable mid-stream →
+                            # empty answer. Non-stream surfaces the error as a clean
+                            # exception on ainvoke that the generate_node retry
+                            # catches, and on success this node-end emits the full
+                            # reply atomically.
+                            if "generate_node" not in streamed_nodes:
+                                content = getattr(last_msg, "content", None) or ""
+                                if content:
+                                    full_answer += content
+                                    safe = leak_guard.feed(content)
+                                    safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
+                                    if safe:
+                                        yield f"data: {json.dumps({'token': safe})}\n\n"
                             rm = getattr(last_msg, "response_metadata", None) or {}
                             tu = rm.get("token_usage") or {}
                             real_total = tu.get("total_tokens")
@@ -1565,7 +1603,7 @@ async def chat_stream(
                                 return
 
         except Exception as exc:
-            logger.error("Stream pipeline error", error=str(exc), query=request.query[:60])
+            logger.exception("Stream pipeline error", query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
             # Still append partial history so the turn isn't silently lost.
             # full_answer may be empty/partial — that's acceptable for error turns.
@@ -1664,6 +1702,66 @@ async def chat_stream(
             await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
         except Exception as hist_err:
             logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
+
+        # Empty-answer safety net. Two failure modes converge here:
+        #   1. OpenRouter google-vertex flake: ainvoke returns "successfully"
+        #      with 0 completion tokens (no exception → generate_node retry
+        #      never triggers).
+        #   2. LangGraph astream_events v2 + streaming=False ChatOpenAI
+        #      sometimes does NOT emit generate_node's on_chain_end (the
+        #      node ran, the LLM answered, but the event never lands) → the
+        #      stream loop ends with full_answer empty even though the graph
+        #      produced a real answer.
+        # Both leave the user with an empty bubble → frontend "Hmm, jawabanku...".
+        # Fix: re-run the graph via ainvoke (full non-stream, generate_node's
+        # 4-attempt retry applies) and emit the result as a single token.
+        # ainvoke reads result["messages"][-1].content directly — no dependency
+        # on astream_events event emission. The 2nd run almost always succeeds
+        # because the flake is sub-second transient. Bounded by the graph's
+        # own timeout; the keepalive ping above keeps ngrok alive during it.
+        if not full_answer.strip():
+            logger.warning(
+                "Stream produced empty answer (provider flake OR astream_events "
+                f"dropped generate_node event); re-running graph via ainvoke "
+                f"conv={conversation_id}"
+            )
+            try:
+                _fb_result = await asyncio.wait_for(
+                    rag_graph.ainvoke(initial_state, config={"run_name": "ava-chat-stream-fb"}),
+                    timeout=settings.pipeline_total_timeout_s,
+                )
+                _fb_msgs = _fb_result.get("messages") or []
+                if _fb_msgs:
+                    _fb_msg = _fb_msgs[-1]
+                    _fb_content = getattr(_fb_msg, "content", None) or ""
+                    if isinstance(_fb_content, str) and _fb_content.strip():
+                        _fb_content = _sanitize_answer(_fb_content)
+                        full_answer = _fb_content
+                        # Refresh sources/retrieved_context from the fallback run
+                        # so the done payload + agent_logs reflect what was used.
+                        _fb_ctx = _fb_result.get("retrieved_context") or []
+                        if _fb_ctx:
+                            retrieved_context = _fb_ctx
+                            sources = _extract_sources(retrieved_context)
+                        # Token usage from the fallback AIMessage
+                        _rm = getattr(_fb_msg, "response_metadata", None) or {}
+                        _tu = _rm.get("token_usage") or {}
+                        if isinstance(_tu.get("total_tokens"), int) and _tu["total_tokens"] > 0:
+                            stream_total_tokens = _tu["total_tokens"]
+                            stream_prompt_tokens = _tu.get("prompt_tokens", 0)
+                            stream_completion_tokens = _tu.get("completion_tokens", 0)
+                            stream_cached_tokens = (_tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                            stream_provider = _rm.get("model_name")
+                        yield f"data: {json.dumps({'token': _fb_content})}\n\n"
+            except Exception as fb_exc:
+                logger.warning(f"Fallback ainvoke also failed: {type(fb_exc).__name__}: {fb_exc}")
+
+        if not full_answer.strip():
+            # Both the stream AND the fallback ainvoke came back empty — the
+            # upstream is genuinely down. Surface a retryable error so the
+            # frontend shows the "Waduh, coba lagi" message instead of a blank.
+            yield f"event: error\ndata: {json.dumps({'error': 'empty response, please retry'})}\n\n"
+            return
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 

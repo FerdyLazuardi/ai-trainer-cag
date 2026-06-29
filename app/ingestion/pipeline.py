@@ -84,7 +84,9 @@ async def ingest_document(
         # Build Document
         # ponytail: only pass metadata fields we actually need in Qdrant payload
         # (avoids leaking admin-request baggage like department/topic/course_id)
-        _SAFE_META_KEYS = {"course_name", "keywords", "section_name"}
+        # `source` included so _extract_sources (chat.py) can show the filename —
+        # without it every chunk reports "Unknown" and the UI source list is empty.
+        _SAFE_META_KEYS = {"course_name", "keywords", "section_name", "source"}
         _clean_meta = {k: v for k, v in meta.items() if k in _SAFE_META_KEYS}
         llama_doc = LlamaDocument(
             text=text,

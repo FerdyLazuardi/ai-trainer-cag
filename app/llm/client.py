@@ -35,9 +35,14 @@ def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
     
     # As per settings.py, Gemini stays pinned to google-vertex since it has
     # implicit cache wins and AI Studio auto-routing has been hitting rate limits
-    # causing 10-20s latency spikes.
+    # causing 10-20s latency spikes. allow_fallbacks=False: when vertex 429s,
+    # do NOT fall through to google-ai-studio — ai-studio corrupts the SSE
+    # stream mid-generation ("JSON error injected into SSE stream"), which
+    # with streaming=True kills the reply at 0 tokens. A clean vertex 429
+    # surfaces as a retry-able error (generate_node's ainvoke retry catches
+    # it) instead of a silent mid-stream abort.
     if m.startswith("google/"):
-        body["provider"] = {"order": ["google-vertex"], "allow_fallbacks": True}
+        body["provider"] = {"order": ["google-vertex"], "allow_fallbacks": False}
 
     elif m.startswith("deepseek/") or m.startswith("xiaomi/"):
         main_model = settings.llm_model.lower()
@@ -161,9 +166,8 @@ def get_generate_llm() -> ChatOpenAI:
         model=settings.llm_model,
         temperature=settings.generate_llm_temperature,
         max_tokens=settings.llm_max_tokens,
-        request_timeout=30,
-        streaming=True,
-        stream_usage=True,
+        request_timeout=60,
+        streaming=False,
         default_headers={
             "HTTP-Referer": "https://github.com/peped-BE",
             "X-Title": "AI LMS RAG Agent (Generate)",
@@ -177,9 +181,8 @@ def get_chat_llm() -> ChatOpenAI:
         model=settings.llm_model,
         temperature=settings.chat_llm_temperature,
         max_tokens=settings.llm_max_tokens,
-        request_timeout=30,
-        streaming=True,
-        stream_usage=True,
+        request_timeout=60,
+        streaming=False,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
             "X-Title": "AI LMS RAG Agent (Chat)",

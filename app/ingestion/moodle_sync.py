@@ -287,7 +287,10 @@ async def _ingest_markdown(
 
     # ── 2. Build LlamaDocument ───────────────────────────────────────────
     # ponytail: only pass metadata fields we actually need in Qdrant payload
-    _SAFE_META_KEYS = {"course_name", "keywords", "section_name"}
+    # `source` MUST be here — without it the filename never reaches the Qdrant
+    # payload, so _extract_sources (chat.py) sees "Unknown" for every KB chunk
+    # and the UI's source list renders empty for all Moodle-sourced answers.
+    _SAFE_META_KEYS = {"course_name", "keywords", "section_name", "source"}
     _clean_meta = {k: v for k, v in metadata.items() if k in _SAFE_META_KEYS}
     llama_doc = LlamaDocument(
         text=body,
