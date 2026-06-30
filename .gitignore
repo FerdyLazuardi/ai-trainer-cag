@@ -23,6 +23,9 @@ docs/
 .tests/
 scripts/
 tests/
+!tests/
+tests/*
+!tests/test_ava_hardening.py
 
 # Moodle plugin — managed/deployed separately, not part of the app repo
 plugin_moodle/

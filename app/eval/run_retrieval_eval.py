@@ -24,7 +24,9 @@ RUN:
     (exit code 0 = all gates passed, 1 = regression — CI-friendly)
 """
 import asyncio
+import math
 import sys
+import time
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -116,14 +118,17 @@ class CaseResult:
     pool_max_sparse: float = 0.0
     dense_ok: bool = True
     gate: bool = False
+    latency_ms: float = 0.0
     top_rows: list[str] = field(default_factory=list)  # human-readable top-k lines
     passed: bool = False
     reason: str = ""
 
 
 async def _eval_case(case: Case) -> CaseResult:
+    started = time.perf_counter()
     res = await hybrid_search(query=case.query, top_k=s.final_top_k)
     r = CaseResult(case=case)
+    r.latency_ms = round((time.perf_counter() - started) * 1000, 2)
     r.pool_max_dense = round(res.pool_max_dense, 4)
     r.pool_max_sparse = round(res.pool_max_sparse, 4)
     r.dense_ok = res.dense_available
@@ -185,7 +190,8 @@ def _print_report(results: list[CaseResult]) -> bool:
             print(f"  [{mark}] {r.case.query!r}")
             print(f"      → {r.reason}   "
                   f"(gate={'PASS' if r.gate else 'reject'}, "
-                  f"pool_dense={r.pool_max_dense}, pool_sparse={r.pool_max_sparse}"
+                  f"pool_dense={r.pool_max_dense}, pool_sparse={r.pool_max_sparse}, "
+                  f"latency_ms={r.latency_ms}"
                   + ("" if r.dense_ok else ", DENSE-DEGRADED") + ")")
             for line in r.top_rows:
                 print(line)
@@ -201,6 +207,9 @@ def _print_report(results: list[CaseResult]) -> bool:
     title_hits = sum(1 for r in title_cases if r.title_hit)
     gate_in_ok = sum(1 for r in in_scope if r.gate)
     gate_off_ok = sum(1 for r in off_scope if not r.gate)
+    latencies = sorted(r.latency_ms for r in results)
+    p50 = latencies[len(latencies) // 2] if latencies else 0.0
+    p95 = latencies[math.ceil(len(latencies) * 0.95) - 1] if latencies else 0.0
 
     print("\n" + "=" * 78)
     print("AGGREGATE METRICS")
@@ -213,6 +222,8 @@ def _print_report(results: list[CaseResult]) -> bool:
         print(f"  Title-specific hit:    {title_hits}/{len(title_cases)}  ({title_hits/len(title_cases)*100:.0f}%)")
     print(f"  Gate pass (in-scope):  {gate_in_ok}/{n_in}  (want {n_in})")
     print(f"  Gate reject (off):     {gate_off_ok}/{len(off_scope)}  (want {len(off_scope)})")
+    print(f"  Retrieval latency p50: {p50:.0f} ms")
+    print(f"  Retrieval latency p95: {p95:.0f} ms")
 
     # ── Pass/fail thresholds (regression gate) ──
     THRESH = {

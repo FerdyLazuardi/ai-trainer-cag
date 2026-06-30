@@ -20,6 +20,7 @@ documents (`Qdrant/bm25`). This keeps query/document encodings aligned.
 import asyncio
 from functools import lru_cache
 import hashlib
+import json
 import time
 from typing import Any
 
@@ -205,12 +206,65 @@ async def _embed_query_resilient(query: str) -> list[float] | None:
     return vec
 
 
+async def _embed_queries_batch(
+    queries: list[str], precomputed: list[list[float] | None]
+) -> list[list[float] | None]:
+    """Embed all sub-queries in ONE batched API call.
+
+    Best practice for multi-query RAG: one round-trip for N sub-queries instead
+    of N separate embed calls. Reuses Redis cache per-query (hits skip the batch)
+    and fills misses via `aget_text_embedding_batch`. Returns vectors aligned to
+    `queries`; a slot is None when that sub-query's embedding failed.
+    """
+    if not queries:
+        return []
+    # ponytail: per-query Redis cache + precomputed reuse first, batch only misses.
+    out: list[list[float] | None] = [None] * len(queries)
+    misses_idx: list[int] = []
+    misses_text: list[str] = []
+    for i, q in enumerate(queries):
+        if precomputed[i] is not None:
+            out[i] = precomputed[i]
+            continue
+        try:
+            redis = get_redis_client()
+            cached = await redis.get(f"rag:embed:{hashlib.sha256(q.encode()).hexdigest()[:32]}")
+            if cached:
+                out[i] = json.loads(cached)
+                continue
+        except Exception:
+            pass
+        misses_idx.append(i)
+        misses_text.append(q)
+
+    if misses_text:
+        ensure_llamaindex_configured()
+        try:
+            batch_vectors = await Settings.embed_model.aget_text_embedding_batch(misses_text)
+            for j, vec in enumerate(batch_vectors):
+                i = misses_idx[j]
+                out[i] = vec
+                try:
+                    redis = get_redis_client()
+                    await redis.set(
+                        f"rag:embed:{hashlib.sha256(queries[i].encode()).hexdigest()[:32]}",
+                        json.dumps(vec),
+                        ex=24 * 3600,
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning(f"Batch embed failed ({len(misses_text)} queries): {exc}")
+    return out
+
+
 async def hybrid_search(
     query: str,
     top_k: int | None = None,
     collection: str | None = None,
     fetch_k: int | None = None,
     query_embedding: list[float] | None = None,
+    skip_rerank: bool = False,
 ) -> HybridSearchResult:
     """
     Perform native hybrid (dense + sparse BM25) retrieval against Qdrant.
@@ -434,8 +488,8 @@ async def hybrid_search(
             )
         )
 
-    # 6.0 Rerank candidates if enabled.
-    if settings.rerank_enabled and len(candidate_chunks) > 0:
+    # 6.0 Rerank candidates if enabled (and not deferred to the multi-query merge).
+    if settings.rerank_enabled and not skip_rerank and len(candidate_chunks) > 0:
         try:
             rerank_results = await _call_openrouter_rerank(query, candidate_chunks, settings)
             ranked_chunks = []
@@ -650,12 +704,17 @@ async def hybrid_search_multi(
         return await hybrid_search(queries[0], top_k=top_k, query_embedding=emb)
 
     k = top_k or settings.retrieval_top_k
-    embs = query_embeddings or [None] * len(queries)
+    precomputed = query_embeddings or [None] * len(queries)
+    # Batch-embed ALL sub-queries in one API call (best practice for multi-query
+    # RAG): 1 round-trip instead of N. Falls back to per-query embed inside
+    # hybrid_search if this fails (slot stays None → sparse-only degrade).
+    embs = await _embed_queries_batch(queries, precomputed)
     # ponytail: per-subquery top_k stays at final_top_k (not scaled) so each
     # query contributes its own top hits; the post-merge cut scales up.
+    # skip_rerank=True: rerank once on the MERGED pool below, not N times.
     results = await asyncio.gather(
         *(
-            hybrid_search(q, top_k=k, query_embedding=e)
+            hybrid_search(q, top_k=k, query_embedding=e, skip_rerank=True)
             for q, e in zip(queries, embs)
         ),
         return_exceptions=True,
@@ -715,6 +774,34 @@ async def hybrid_search_multi(
     for c in chunks:
         c.score = round(fused_accum[c.chunk_id], 6)
         c.hybrid_score = c.score
+
+    # Single rerank pass on the MERGED pool (replaces N per-subquery reranks).
+    # The compound query's facets are best judged against the deduped candidate
+    # set, not each sub-query's slice in isolation.
+    if settings.rerank_enabled and len(chunks) > 0:
+        try:
+            # ponytail: rerank against the primary sub-query — it's the
+            # canonical phrasing of the user's intent; per-sub-query rerank
+            # would need N rerank calls and a second merge.
+            primary_query = queries[0]
+            rerank_results = await _call_openrouter_rerank(primary_query, chunks, settings)
+            reranked: list[RetrievedChunk] = []
+            seen: set[int] = set()
+            for orig_idx, score in rerank_results:
+                if 0 <= orig_idx < len(chunks):
+                    c = chunks[orig_idx]
+                    c.score = round(score, 6)
+                    c.hybrid_score = c.score
+                    reranked.append(c)
+                    seen.add(orig_idx)
+            for orig_idx, c in enumerate(chunks):
+                if orig_idx not in seen:
+                    c.score = 0.0
+                    c.hybrid_score = 0.0
+                    reranked.append(c)
+            chunks = reranked
+        except Exception as exc:
+            logger.warning(f"Merged-pool rerank failed: {exc}. Keeping fused order.")
 
     logger.debug(
         "Multi-query retrieval merged",

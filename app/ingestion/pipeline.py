@@ -14,6 +14,7 @@ from app.config.settings import get_settings
 from app.config.embedding_config import ensure_llamaindex_configured
 from app.database.models import Chunk, Document
 from app.database.qdrant_client import get_qdrant_client
+from app.utils.cache import flush_cache
 from app.utils.token_counter import count_tokens
 
 from llama_index.core import Document as LlamaDocument
@@ -183,6 +184,7 @@ async def ingest_document(
         doc.ingestion_state = "completed"
         doc.total_chunks = len(nodes)
         await session.flush()
+        await flush_cache()
 
         logger.info(
             "Ingestion complete",

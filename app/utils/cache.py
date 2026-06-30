@@ -223,8 +223,8 @@ async def flush_cache_by_course(course_id: int) -> None:
     patterns = [
         f"{_PREFIX}{course_id}:*",          # rag:cache:{cid}:*
         f"rag_user_*:cache:{course_id}:*",  # rag_user_{uid}:cache:{cid}:*
-        f"{_PREFIX}None:*",                 # rag:cache:None:* (global queries)
-        f"rag_user_*:cache:None:*",         # rag_user_{uid}:cache:None:*
+        f"{_PREFIX}global:*",               # rag:cache:global:* (global queries)
+        "rag_user_*:cache:global:*",        # rag_user_{uid}:cache:global:*
     ]
     for match in patterns:
         try:
@@ -242,18 +242,19 @@ async def flush_cache_by_course(course_id: int) -> None:
 
 
 async def flush_cache() -> None:
-    """Clear the entire Redis exact cache (all `rag:cache:*` keys)."""
+    """Clear the entire Ava Redis exact cache, including user-scoped keys."""
     redis = get_redis_client()
     try:
         # 5000: see flush_cache_by_namespace.
-        cursor = 0
-        while True:
-            cursor, keys = await redis.scan(cursor, match=f"{_PREFIX}*", count=5000)
-            if keys:
-                # UNLINK is non-blocking; background reclamation.
-                await redis.unlink(*keys)
-            if cursor == 0:
-                break
+        for match in (f"{_PREFIX}*", "rag_user_*:cache:*"):
+            cursor = 0
+            while True:
+                cursor, keys = await redis.scan(cursor, match=match, count=5000)
+                if keys:
+                    # UNLINK is non-blocking; background reclamation.
+                    await redis.unlink(*keys)
+                if cursor == 0:
+                    break
         logger.info("Redis cache flushed successfully")
     except Exception as exc:
         logger.warning("Redis cache flush failed", error=str(exc))

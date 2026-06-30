@@ -678,7 +678,8 @@ async def _prepare_rag_context(
             if rewrite_res:
                 # If rewrite_res is a string, split by " | "
                 if isinstance(rewrite_res, str):
-                    queries_list = [q.strip() for q in rewrite_res.split(" | ") if q.strip()]
+                    # ponytail: split by NEWLINE (rewrite prompt outputs one/per line, never '|')
+                    queries_list = [q.strip() for q in rewrite_res.replace("\r\n", "\n").split("\n") if q.strip()]
                 else:
                     queries_list = rewrite_res
                 
@@ -686,11 +687,13 @@ async def _prepare_rag_context(
                 if queries_list and queries_list != [_stripped]:
                     total_len = sum(len(q) for q in queries_list)
                     if total_len > max(len(_stripped) * 4, 100):
-                        logger.warning("Query rewrite suspiciously long, using original")
-                    else:
-                        logger.info(f"Query rewritten: {_stripped!r} → {queries_list}")
-                        _rewritten_queries = queries_list
-                        _retrieval_query = queries_list[0]
+                        logger.warning(
+                            f"Query rewrite long ({total_len} chars), "
+                            f"but reusing it to avoid a second LLM call"
+                        )
+                    _rewritten_queries = queries_list
+                    _retrieval_query = queries_list[0]
+                    logger.info(f"Query rewritten: {_stripped!r} → {queries_list}")
         except Exception as exc:
             logger.debug(f"Rewrite (sequential) skipped/failed: {exc}")
             _rewritten_queries = None
@@ -1347,6 +1350,7 @@ async def chat_stream(
         stream_provider = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
+        token_count = 0
         # ponytail: hoisted defaults so the finally-block log emitter can run on
         # EVERY exit path (normal done, client disconnect mid-stream, stall
         # timeout, pipeline error, GeneratorExit). Before this, add_log lived
@@ -1462,6 +1466,7 @@ async def chat_stream(
                             )
                         except Exception:
                             pass
+                    await _emit_log()
                     return
 
                 kind = event.get("event", "")
@@ -1600,9 +1605,10 @@ async def chat_stream(
                             # Periodic disconnect check — bail out early if user closed the tab.
                             if token_count % 10 == 0 and await req.is_disconnected():
                                 logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                                await _emit_log()
                                 return
 
-        except Exception as exc:
+        except Exception:
             logger.exception("Stream pipeline error", query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
             # Still append partial history so the turn isn't silently lost.
@@ -1616,6 +1622,7 @@ async def chat_stream(
                     )
                 except Exception:
                     pass
+            await _emit_log()
             return
 
         # Drain any buffered preamble. If the guard caught a leak, this
@@ -1698,11 +1705,6 @@ async def chat_stream(
         # stale history and resolves "yang pertama" against the PREVIOUS topic
         # (e.g. Microfinance) instead of the list Ava just gave. Cache-set/eval/
         # LTM stay after done (they don't gate the next turn's history read).
-        try:
-            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
-        except Exception as hist_err:
-            logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
-
         # Empty-answer safety net. Two failure modes converge here:
         #   1. OpenRouter google-vertex flake: ainvoke returns "successfully"
         #      with 0 completion tokens (no exception → generate_node retry
@@ -1761,7 +1763,13 @@ async def chat_stream(
             # upstream is genuinely down. Surface a retryable error so the
             # frontend shows the "Waduh, coba lagi" message instead of a blank.
             yield f"event: error\ndata: {json.dumps({'error': 'empty response, please retry'})}\n\n"
+            await _emit_log()
             return
+
+        try:
+            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
+        except Exception as hist_err:
+            logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 

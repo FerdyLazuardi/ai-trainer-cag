@@ -440,7 +440,7 @@ async def is_topic_list_semantic(
         vec = query_embedding if query_embedding is not None else await _embed_one(text.strip())
         vec = _l2_normalize(vec)
         sims = {k: _cosine(vec, c) for k, c in centroids.items()}
-        best = max(sims, key=sims.get)
+        best = max(sims, key=lambda k: sims[k])
         return best == "TOPIC_LIST" and sims["TOPIC_LIST"] >= threshold
     except Exception as e:
         logger.debug(f"is_topic_list_semantic failed (non-fatal): {e}")

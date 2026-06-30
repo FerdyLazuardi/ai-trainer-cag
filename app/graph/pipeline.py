@@ -9,6 +9,7 @@ Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent 
 """
 import asyncio
 from functools import lru_cache
+from pathlib import Path
 import re
 import time
 from typing import Any
@@ -52,7 +53,11 @@ _LEAK_OPEN_TAG_RE = re.compile(
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
 # Distinctive pattern; never appears in legitimate prose.
 _LEAK_CITATION_HEAD_RE = re.compile(
-    r"^\s*\[\d+\]\s*Course:\s*[^\n]*?\(ID:[^)]*\)",
+    r"^\s*(?:[>\-*]\s*)?(?:\d+[.)]\s*)?(?:\[\d+\]\s*)?Course:\s*[^\n]*",
+    re.MULTILINE | re.IGNORECASE,
+)
+_META_CONTEXT_LINE_RE = re.compile(
+    r"^\s*>?\s*\*\*\[Meta-(?:Context|Konteks)\]\*\*[^\n]*",
     re.MULTILINE | re.IGNORECASE,
 )
 # ATX markdown headings — "# Foo", "## Bar". Stripping these from chunk text
@@ -103,6 +108,7 @@ _DIRECTIVE_LINE_RE = re.compile(
     r"Runs before answering|"
     r"Check if the turn is UNDERSPECIFIED|"
     r"Ask ONE short clarifying question|"
+    r"Irrelevant with the user question|"
     r"\(\d\)\s+A (?:broad|bare|reference|BARE)"
     r")"
     # Eat the rest of the line (often continues with quoted examples / em-dash rules)
@@ -244,6 +250,7 @@ def _sanitize_answer(text: str) -> str:
     cleaned = _LEAK_BLOCK_RE.sub("", text)
     cleaned = _LEAK_OPEN_TAG_RE.sub("", cleaned)
     cleaned = _INLINE_CITE_RE.sub("", cleaned)
+    cleaned = _META_CONTEXT_LINE_RE.sub("", cleaned)
     # Layer 4: strip prompt-directive echoes (untagged prompt content the
     # LLM recites when it has no good answer — e.g. "Default: SHORT — 2-4
     # sentences..." from the <length> block, leaked without its wrapper).
@@ -272,7 +279,10 @@ def _sanitize_answer(text: str) -> str:
         else:
             cleaned = "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
 
-    return _normalize_dashes(cleaned.lstrip())
+    cleaned = _normalize_dashes(cleaned.lstrip())
+    if text.strip() and not cleaned.strip():
+        return "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
+    return cleaned
 
 
 class StreamLeakGuard:
@@ -602,14 +612,26 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # agreement-check once Prometheus metrics land, so we can verify
     # the drift signal is meaningful before paying the embed cost).
     gate_score_out = None
-    if _settings.intent_semantic_gate_enabled:
+    if _settings.intent_semantic_gate_enabled and rule_intent is not None:
+        from app.graph.intent_classifier import GateScore
+
+        gate_score_out = GateScore(
+            decision="SKIP",
+            committed=None,
+            best_intent=None,
+            best_cosine=0.0,
+            second_intent=None,
+            second_cosine=0.0,
+            margin=0.0,
+        )
+    if _settings.intent_semantic_gate_enabled and rule_intent is None:
         try:
             from app.graph.intent_classifier import classify_semantic_with_scores
             gate_score_out = await classify_semantic_with_scores(
                 user_msg_str,
                 query_embedding=state.get("query_embedding"),
             )
-            if rule_intent is None and gate_score_out.committed is not None:
+            if gate_score_out.committed is not None:
                 logger.info(
                     f"Pre-processor: semantic gate → {gate_score_out.committed} "
                     f"(regex miss, embedding gate caught it)"
@@ -775,8 +797,15 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     intent = "COACHING" if state.get("coaching_mode") else "KNOWLEDGE"
     logger.info(f"Pre-processor: intent={intent} retrieval='{retrieval_query[:60]}...'")
 
-    # Ensure rewritten_queries list and retrieval_query are structured correctly in state
-    queries_list = [q.strip() for q in retrieval_query.split(" | ") if q.strip()] if retrieval_query else [user_msg_str]
+    # Ensure rewritten_queries list and retrieval_query are structured correctly in state.
+    # Supports both newline-separated (rewrite LLM output per REWRITE_PROMPT rule #9)
+    # and pipe-separated (precomputed join from chat.py " | ".join).
+    if not retrieval_query:
+        queries_list = [user_msg_str]
+    elif "\n" in retrieval_query:
+        queries_list = [q.strip() for q in retrieval_query.replace("\r\n", "\n").split("\n") if q.strip()]
+    else:
+        queries_list = [q.strip() for q in retrieval_query.split(" | ") if q.strip()]
     primary_query = queries_list[0] if queries_list else retrieval_query
 
     return {
@@ -840,11 +869,12 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
 
     # Use the guarded retrieval query if available; it preserves critical
     # anchors that a standalone rewrite may legitimately hide from the UI.
-    query_to_search = (
+    raw_query_to_search = (
         state.get("retrieval_query")
         or state.get("rewritten_query")
         or state["messages"][-1].content
     )
+    query_to_search = raw_query_to_search if isinstance(raw_query_to_search, str) else str(raw_query_to_search)
 
     # H5 — reuse the embedding the chat route already computed, but ONLY if it
     # was computed from the exact text we're about to search. The route embeds
@@ -866,7 +896,12 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
         # into one string and searched queries[0] only, so a 3-topic question
         # retrieved chunks for ONE topic. _pre_processor passes the list via
         # state["rewritten_queries"]; retrieval_query carries queries[0].
-        sub_queries = state.get("rewritten_queries") or [query_to_search]
+        raw_sub_queries = state.get("rewritten_queries")
+        sub_queries = (
+            [q for q in raw_sub_queries if isinstance(q, str)]
+            if isinstance(raw_sub_queries, list)
+            else [query_to_search]
+        )
         if len(sub_queries) > 1:
             from app.retrieval.hybrid_retriever import hybrid_search_multi
             # reuse the route's embedding only for the primary sub-query (it
