@@ -23,7 +23,7 @@ from loguru import logger
 
 from app.config.settings import get_settings
 from app.graph.state import RAGState
-from app.llm.client import get_chat_llm, get_generate_llm
+from app.llm.client import get_chat_llm, get_generate_llm, get_generate_llm_nostream
 from app.llm.prompts import PERSONA, OUTPUT_CONTRACT, CONVERSATIONAL_PROMPT, CHIT_CHAT_PROMPT, SOCRATIC_PROMPT
 from app.utils.token_counter import truncate_to_tokens
 
@@ -1749,7 +1749,23 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     msgs += windowed_messages
 
     _t0 = time.monotonic()
-    response = await llm.ainvoke(msgs, config=config)
+    try:
+        response = await llm.ainvoke(msgs, config=config)
+    except Exception as gen_exc:
+        # Streaming retry-fallback: get_generate_llm runs streaming=True. If a
+        # pinned provider (alibaba/baidu/novita) corrupts the SSE stream
+        # mid-generation, the error raises inside astream_events at the chat.py
+        # layer — uncatchable there. ainvoke here surfaces it as a clean
+        # exception, so fall back to the non-stream client and retry once.
+        # Non-stream is atomic: either it returns a full AIMessage or it raises
+        # again (re-raised to the graph's error path). This keeps a provider
+        # SSE flake from producing a partial/empty answer.
+        logger.warning(
+            f"generate_node stream ainvoke failed ({type(gen_exc).__name__}), "
+            f"retrying non-stream: {gen_exc}"
+        )
+        _t0 = time.monotonic()
+        response = await get_generate_llm_nostream().ainvoke(msgs, config=config)
     await _log_cache_usage(
         response,
         "generate",

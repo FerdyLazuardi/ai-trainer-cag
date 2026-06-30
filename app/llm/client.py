@@ -167,6 +167,33 @@ def get_generate_llm() -> ChatOpenAI:
         temperature=settings.generate_llm_temperature,
         max_tokens=settings.llm_max_tokens,
         request_timeout=60,
+        streaming=True,
+        # ponytail: stream_usage=False — alibaba/baidu/novita intermittently
+        # mangle stream_options:{include_usage:true}, injecting a usage JSON
+        # mid-stream that langchain-openai can't parse → astream_events aborts
+        # → empty answer → safety-net ainvoke (1-block reply). Token usage is
+        # still captured from the final AIMessage.response_metadata at on_chain_end.
+        stream_usage=False,
+        default_headers={
+            "HTTP-Referer": "https://github.com/peped-BE",
+            "X-Title": "AI LMS RAG Agent (Generate)",
+        },
+    )
+
+
+@lru_cache(maxsize=1)
+def get_generate_llm_nostream() -> ChatOpenAI:
+    """Non-streaming fallback for generate_node. Same params as get_generate_llm
+    but streaming=False — used when the streaming call corrupts mid-generation
+    (a pinned provider's SSE flake). Non-stream surfaces the error as a clean
+    exception on ainvoke (caught by the retry in _generate_node) instead of
+    raising mid-stream inside astream_events (uncatchable → empty/partial answer).
+    """
+    return create_llm(
+        model=settings.llm_model,
+        temperature=settings.generate_llm_temperature,
+        max_tokens=settings.llm_max_tokens,
+        request_timeout=60,
         streaming=False,
         default_headers={
             "HTTP-Referer": "https://github.com/peped-BE",

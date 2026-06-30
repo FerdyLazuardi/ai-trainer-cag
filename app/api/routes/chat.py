@@ -1512,19 +1512,21 @@ async def chat_stream(
                         msgs_out = output.get("messages") or []
                         if msgs_out:
                             last_msg = msgs_out[-1]
-                            # generate_node runs with streaming=False (see
-                            # client.py get_generate_llm) so NO on_chat_model_stream
-                            # fires — the whole reply arrives here as one AIMessage.
-                            # Emit it as a single token through the leak guard.
-                            # Why non-stream: with streaming=True the OpenRouter
-                            # google-ai-studio fallback corrupts the SSE callback
-                            # mid-generation ("JSON error injected into SSE stream"),
-                            # which raises inside astream_events (NOT inside the
-                            # ainvoke the retry wraps) → uncatchable mid-stream →
-                            # empty answer. Non-stream surfaces the error as a clean
-                            # exception on ainvoke that the generate_node retry
-                            # catches, and on success this node-end emits the full
-                            # reply atomically.
+                            # generate_node now runs with streaming=True (see
+                            # client.py get_generate_llm) so on_chat_model_stream
+                            # fires per-token (handled at the handler below) and
+                            # `streamed_nodes` marks the node as already emitted.
+                            # This on_chain_end block is the FALLBACK: if streaming
+                            # produced zero tokens (provider flake / stream corrupt
+                            # surfaced as an empty/partial AIMessage), `streamed_nodes`
+                            # won't contain generate_node → emit the whole content
+                            # here as one token through the leak guard.
+                            # History: streaming was disabled because google-ai-studio
+                            # fallback corrupted SSE mid-generation. Generator is now
+                            # deepseek-v4-flash pinned to alibaba,baidu,novita —
+                            # google-ai-studio is no longer in the path. If a pinned
+                            # provider corrupts the stream, the safety net at ~L1761
+                            # re-runs the graph non-stream.
                             if "generate_node" not in streamed_nodes:
                                 content = getattr(last_msg, "content", None) or ""
                                 if content:
