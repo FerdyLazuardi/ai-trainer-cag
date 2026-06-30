@@ -182,17 +182,82 @@ def _apply_glossary(text: str) -> str:
 
 from app.llm.prompts import REWRITE_PROMPT
 
+_REWRITE_SPLIT_RE = re.compile(r"\s*(?:\r?\n|\s+\|\s+|[;?]+|,\s*)\s*")
+_REWRITE_NOISE_RE = re.compile(
+    r"\b(?:aku|saya|gw|gue|gua|kan|ini|itu|lagi|parah|harusn?|gapian|"
+    r"ngapain|ngpian|apa|apaan|gimana|bagaimana|gmn|gmna|biar|agar|angka|"
+    r"juga|tolong|dong|ya|deh|sih|kayak|kek|gitu)\b",
+    flags=re.IGNORECASE,
+)
+_POINT_LOCATION_RE = re.compile(
+    r"\bpoint\s+(?!(?:fraud|business|manager|operasional|amartha|mitra|"
+    r"pembiayaan|par|npl|dpd|surprise|visit|portofolio|portfolio|client|"
+    r"protection)\b)[\w-]+",
+    flags=re.IGNORECASE,
+)
+_CONTEXT_ONLY_RE = re.compile(
+    r"^(?:business manager|point|business manager point|point business manager)$",
+    flags=re.IGNORECASE,
+)
+def _clean_rewrite_line(text: str) -> str:
+    text = _apply_glossary(text)
+    text = _POINT_LOCATION_RE.sub("point", text)
+    text = _REWRITE_NOISE_RE.sub(" ", text)
+    text = re.sub(r"[^\w\s-]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _rewrite_context_terms(lines: list[str]) -> list[str]:
+    joined = "\n".join(lines).lower()
+    terms = []
+    if "business manager" in joined:
+        terms.append("Business Manager")
+    if "client protection" in joined:
+        terms.append("Client Protection")
+    if re.search(r"\bpoint\b", joined):
+        terms.append("point")
+    return terms
+
+
+def _append_rewrite_context(line: str, contexts: list[str]) -> str:
+    low = line.lower()
+    for ctx in contexts:
+        if ctx.lower() not in low:
+            line = f"{line} {ctx}"
+            low = line.lower()
+    return line
+
+
+def _postprocess_rewrite_query(out: str, user_msg: str) -> str:
+    cleaned: list[str] = []
+    for line in _REWRITE_SPLIT_RE.split(out):
+        q = _clean_rewrite_line(line)
+        if q:
+            cleaned.append(q)
+    if not cleaned:
+        return ""
+
+    contexts = _rewrite_context_terms(cleaned)
+    has_non_context = any(not _CONTEXT_ONLY_RE.fullmatch(q) for q in cleaned)
+    out_lines = []
+    for q in cleaned:
+        if has_non_context and _CONTEXT_ONLY_RE.fullmatch(q):
+            continue
+        q = _append_rewrite_context(q, contexts)
+        out_lines.append(q)
+    return "\n".join(dict.fromkeys(out_lines))
+
 async def _rewrite_search_query(messages: list, user_msg: str) -> str:
     """Rewrite conversational or follow-up queries into standalone keyword-rich search queries via the
     cheap LLM. Returns user_msg unchanged on bad output or failure."""
-    history = messages[-_FOLLOWUP_HISTORY_TURNS:-1]
+    history = list(reversed(messages[-(_FOLLOWUP_HISTORY_TURNS + 1):-1]))
     lines = []
     for m in history:
         role = "User" if isinstance(m, HumanMessage) else "Ava"
         content = m.content if isinstance(m.content, str) else str(m.content)
         lines.append(f"{role}: {content[:400]}")
     
-    history_text = "\nConversation:\n" + "\n".join(lines) + "\n" if lines else ""
+    history_text = "\nConversation (newest first):\n" + "\n".join(lines) + "\n" if lines else ""
     prompt = (
         f"{REWRITE_PROMPT}\n{history_text}\nUser message: {user_msg}\n\nSearch queries:"
     )
@@ -205,10 +270,10 @@ async def _rewrite_search_query(messages: list, user_msg: str) -> str:
         out = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
         # Guard: empty or rambling output (a leaked CoT / refusal) → raw msg.
         if out and len(out) <= 300:
-            return out.replace('\n', ' | ')
+            return _postprocess_rewrite_query(out, user_msg) or user_msg
     except Exception as exc:
         logger.debug(f"Query rewrite skipped (degrade to raw): {exc}")
-    return user_msg
+    return _postprocess_rewrite_query(user_msg, user_msg) or user_msg
 
 
 def _strip_md_headings_for_context(text: str) -> str:

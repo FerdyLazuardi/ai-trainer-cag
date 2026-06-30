@@ -1360,6 +1360,30 @@ async def chat_stream(
         stream_max_score = None
         is_low_relevance_stream = False
         _logged = False
+        restart_buffer = ""
+
+        def _dedupe_stream_text(text: str) -> str:
+            nonlocal full_answer, restart_buffer
+            if not text:
+                return ""
+            if restart_buffer:
+                restart_buffer += text
+                if full_answer.startswith(restart_buffer):
+                    return ""
+                if restart_buffer.startswith(full_answer):
+                    emit = restart_buffer[len(full_answer):]
+                    full_answer += emit
+                    restart_buffer = ""
+                    return emit
+                emit = restart_buffer
+                full_answer += emit
+                restart_buffer = ""
+                return emit
+            if full_answer and full_answer.startswith(text):
+                restart_buffer = text
+                return ""
+            full_answer += text
+            return text
 
         async def _emit_log() -> None:
             """Write the agent_logs row once, regardless of how the stream ended.
@@ -1457,15 +1481,6 @@ async def chat_stream(
                         tokens_so_far=token_count,
                     )
                     yield f"event: error\ndata: {json.dumps({'error': 'Response timed out'})}\n\n"
-                    if resolved_query:
-                        try:
-                            await append_to_history(
-                                conversation_id=conversation_id,
-                                user_message=resolved_query,
-                                assistant_message="[error: response timed out]",
-                            )
-                        except Exception:
-                            pass
                     await _emit_log()
                     return
 
@@ -1527,11 +1542,16 @@ async def chat_stream(
                             # google-ai-studio is no longer in the path. If a pinned
                             # provider corrupts the stream, the safety net at ~L1761
                             # re-runs the graph non-stream.
-                            if "generate_node" not in streamed_nodes:
-                                content = getattr(last_msg, "content", None) or ""
-                                if content:
-                                    full_answer += content
-                                    safe = leak_guard.feed(content)
+                            content = getattr(last_msg, "content", None) or ""
+                            if content:
+                                emit = ""
+                                if "generate_node" not in streamed_nodes:
+                                    emit = _dedupe_stream_text(content)
+                                elif isinstance(content, str) and content.startswith(full_answer):
+                                    emit = content[len(full_answer):]
+                                    full_answer = content
+                                if emit:
+                                    safe = leak_guard.feed(emit)
                                     safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
                                     if safe:
                                         yield f"data: {json.dumps({'token': safe})}\n\n"
@@ -1589,13 +1609,13 @@ async def chat_stream(
                         chunk = event.get("data", {}).get("chunk")
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             token = chunk.content
-                            full_answer += token
+                            emit = _dedupe_stream_text(token)
                             token_count += 1
 
                             # Pass through leak guard. Greeting/ambiguity
                             # don't carry retrieved_context, but the guard
                             # is a no-op on clean preambles so it's safe.
-                            safe = leak_guard.feed(token)
+                            safe = leak_guard.feed(emit)
                             if safe:
                                 # Model still emits em/en-dashes despite the prompt ban. Swap to a
                                 # comma (collapsing same-token surrounding spaces) so it reads
@@ -1613,17 +1633,6 @@ async def chat_stream(
         except Exception:
             logger.exception("Stream pipeline error", query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'RAG pipeline failed'})}\n\n"
-            # Still append partial history so the turn isn't silently lost.
-            # full_answer may be empty/partial — that's acceptable for error turns.
-            if resolved_query:
-                try:
-                    await append_to_history(
-                        conversation_id=conversation_id,
-                        user_message=resolved_query,
-                        assistant_message="[error: pipeline failed]",
-                    )
-                except Exception:
-                    pass
             await _emit_log()
             return
 

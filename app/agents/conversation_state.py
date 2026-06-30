@@ -541,12 +541,12 @@ async def resolve_numeric_query(
 ) -> str:
     """Resolve numeric input (1, 2, 3) to the matching follow-up question.
 
-    If `query` is a single digit 1-3 and the last assistant message contains
+    If `query` is a single digit 1-5 and the last assistant message contains
     follow-up questions, returns the corresponding full question text.
     Otherwise returns `query` unchanged.
     """
     stripped_query = query.strip()
-    if stripped_query not in ['1', '2', '3']:
+    if not re.fullmatch(r"[1-5]", stripped_query):
         return query
 
     history = await get_history(redis, conv_id)

@@ -46,15 +46,14 @@ def ensure_llamaindex_configured(
             "api_key": emb_api_key,
         }
 
-        # OpenRouter provider pin for embed (qwen3-embedding-8b has 3 providers:
-        # Nebius, DeepInfra, SiliconFlow). Pin order Nebius → SiliconFlow →
-        # DeepInfra — Nebius has the lowest, most stable latency per OpenRouter
-        # logs. allow_fallbacks stays True as a backstop: if Nebius 5xx/timeouts,
-        # OpenRouter routes to the next in order instead of tenacity retrying the
-        # same dead upstream (the old 3×8s=24-30s embed storm). Mirrors the LLM
-        # client's provider handling in app/llm/client.py:_provider_extra_body.
+        # OpenRouter Nitro routing for embed — `sort: "throughput"` makes
+        # OpenRouter pick the fastest serving provider for qwen3-embedding-8b
+        # (Nebius/DeepInfra/SiliconFlow) per request, instead of pinning to one.
+        # allow_fallbacks=True: if the nitro pick 5xx/timeouts, route onward
+        # instead of tenacity retrying the same dead upstream (the old
+        # 3×8s=24-30s embed storm). Mirrors app/llm/client.py:_provider_extra_body.
         kwargs["additional_kwargs"] = {"extra_body": {"provider": {
-            "order": ["Nebius", "SiliconFlow", "DeepInfra"],
+            "sort": "throughput",
             "allow_fallbacks": True,
         }}}
 

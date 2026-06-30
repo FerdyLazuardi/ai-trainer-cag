@@ -168,12 +168,11 @@ def get_generate_llm() -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         request_timeout=60,
         streaming=True,
-        # ponytail: stream_usage=False — alibaba/baidu/novita intermittently
-        # mangle stream_options:{include_usage:true}, injecting a usage JSON
-        # mid-stream that langchain-openai can't parse → astream_events aborts
-        # → empty answer → safety-net ainvoke (1-block reply). Token usage is
-        # still captured from the final AIMessage.response_metadata at on_chain_end.
-        stream_usage=False,
+        # stream_usage=True so OpenRouter emits a usage chunk → final AIMessage
+        # carries token_usage for _log_cache_usage + chat.py stream accounting.
+        # If a pinned provider mangles the usage chunk mid-stream, astream_events
+        # aborts and generate_node's safety-net ainvoke (get_generate_llm_nostream)
+        # replays non-stream — which still captures usage. Either way tokens land.
         default_headers={
             "HTTP-Referer": "https://github.com/peped-BE",
             "X-Title": "AI LMS RAG Agent (Generate)",
