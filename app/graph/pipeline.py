@@ -132,12 +132,10 @@ _META_CONVO_RE = re.compile(
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
     r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
     # Short deictic follow-ups: "which one?" / "the earlier one?" /
-    # "give me an example?" — need clarification, not KB retrieval.
+    # "how do I do it?" need clarification, not KB retrieval.
     r"|(?:yg|yang)\s+(?:mana|tadi|yg\s+tadi|sebelumnya|sebelum|yg\s+sebelumnya)\b"
     r"|(?:yg|yang)\s+(?:mana|tadi|sebelumnya)\s*[?.!\s]*$"
-    r"|(?:bisa|kasih|bs|boleh|blh)\s+(?:kasih|beri|berikan|ada)\s+(?:contoh|contohin)\b"
-    r"|(?:kasih|beri|berikan|ada)\s+contoh\b"
-    r"|(?:gimana|gmana|gmn|how)\s+(?:caranya|carany|caranya\s+ya)\b"
+    r"|(?:gimana|gmana|gmn|how)\s+(?:caranya|carany)(?:\s+(?:ya|yaa|dong|donk|sih))?\s*[?.!\s]*$"
     r"|(?:terus|trus|lanjut|next)\s+(?:gimana|gmn|apa|apanya)\b",
     re.IGNORECASE,
 )

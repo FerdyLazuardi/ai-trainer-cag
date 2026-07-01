@@ -37,6 +37,52 @@ async def test_preprocessor_regex_hit_skips_semantic_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "Gimana caranya menangani mitra yang telat bayar cicilan?",
+    "gimana caranya aku melindungi data mitra ya",
+])
+async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, query):
+    from app.graph import pipeline
+
+    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
+
+    result = await pipeline._pre_processor(
+        {"messages": [HumanMessage(content=query)]},
+        {},
+    )
+
+    assert result["intent"] == "KNOWLEDGE"
+
+
+@pytest.mark.asyncio
+async def test_meta_convo_regex_keeps_bare_how_to_ambiguous(monkeypatch):
+    from app.graph import pipeline
+
+    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
+
+    result = await pipeline._pre_processor(
+        {"messages": [HumanMessage(content="gimana caranya?")]},
+        {},
+    )
+
+    assert result["intent"] == "AMBIGUOUS"
+
+
+@pytest.mark.asyncio
+async def test_example_followup_can_use_knowledge_rewrite_path(monkeypatch):
+    from app.graph import pipeline
+
+    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
+
+    result = await pipeline._pre_processor(
+        {"messages": [HumanMessage(content="bisa kasih contoh ga")]},
+        {},
+    )
+
+    assert result["intent"] == "KNOWLEDGE"
+
+
+@pytest.mark.asyncio
 async def test_flush_cache_by_course_deletes_global_keys(monkeypatch):
     from app.utils import cache
 
