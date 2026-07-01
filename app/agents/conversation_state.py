@@ -193,6 +193,21 @@ async def get_courses(redis: Redis, conv_id: str) -> list[str]:
 
 
 # ── Write ────────────────────────────────────────────────────────────────────
+async def get_seen_chunk_ids(redis: Redis, conv_id: str) -> set[str]:
+    if not conv_id:
+        return set()
+    try:
+        raw = await redis.hget(_conv_key(conv_id), "seen_chunks")
+        values = json.loads(raw) if raw else []
+        if not isinstance(values, list):
+            return set()
+        return {str(v) for v in values if v}
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    except Exception:
+        return set()
+
+
 async def append_to_history(
     redis: Redis, conv_id: str,
     user_message: str, assistant_message: str,
@@ -420,6 +435,31 @@ async def add_courses(
         async with redis.pipeline(transaction=True) as pipe:
             pipe.hsetex(key, mapping={"courses": json.dumps(merged)}, ex=ttl)
             pipe.expire(key, _key_ttl())  # C6 key-level EXPIRE
+            await pipe.execute()
+    except Exception:
+        pass
+
+
+async def add_seen_chunk_ids(
+    redis: Redis, conv_id: str, chunk_ids: list[str], *, max_ids: int = 200
+) -> None:
+    if not conv_id or not chunk_ids:
+        return
+    key = _conv_key(conv_id)
+    try:
+        raw = await redis.hget(key, "seen_chunks")
+        try:
+            existing = json.loads(raw) if raw else []
+            if not isinstance(existing, list):
+                existing = []
+        except (json.JSONDecodeError, TypeError):
+            existing = []
+
+        merged = list(dict.fromkeys([str(x) for x in existing + chunk_ids if x]))
+        merged = merged[-max_ids:]
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hsetex(key, mapping={"seen_chunks": json.dumps(merged)}, ex=_key_ttl())
+            pipe.expire(key, _key_ttl())
             await pipe.execute()
     except Exception:
         pass

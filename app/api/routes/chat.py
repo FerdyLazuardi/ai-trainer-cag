@@ -114,6 +114,19 @@ async def get_conversation_history(conversation_id: str) -> list[dict]:
     return await _cs.get_history(get_redis_client(), conversation_id)
 
 
+async def get_seen_chunk_ids(conversation_id: str) -> set[str]:
+    return await _cs.get_seen_chunk_ids(get_redis_client(), conversation_id)
+
+
+async def add_seen_chunk_ids(conversation_id: str, retrieved_context: list) -> None:
+    chunk_ids = [
+        str(c.get("chunk_id"))
+        for c in retrieved_context or []
+        if c.get("chunk_id")
+    ]
+    await _cs.add_seen_chunk_ids(get_redis_client(), conversation_id, chunk_ids)
+
+
 async def clear_conversation_history(conversation_id: str) -> None:
     await _cs.clear_conversation(get_redis_client(), conversation_id)
 
@@ -578,6 +591,7 @@ async def _prepare_rag_context(
         max_fresh_turns=settings.max_fresh_turns,
         persist=False,  # C7: no LLM, no write on the hot path
     )
+    seen_chunk_ids = await get_seen_chunk_ids(conversation_id)
     logger.debug(f"[TIMING] history: {_time.perf_counter()-_t_hist:.2f}s")
     if (recent_history or summary) and len(resolved_query.split()) <= 3:
         skip_cache = True
@@ -784,6 +798,7 @@ async def _prepare_rag_context(
         # own rewrite (graph invoked without chat.py pre-compute, e.g. tests).
         "rewritten_queries": _rewritten_queries,
         "retrieval_query": _retrieval_query,
+        "seen_chunk_ids": list(seen_chunk_ids),
         # Socratic coaching toggle (opt-in via UI). When True, _pre_processor
         # promotes a real question to COACHING → SOCRATIC_PROMPT.
         "coaching_mode": request.coaching_mode,
@@ -895,7 +910,7 @@ async def _run_chat(
                 "cache_hit": True,
             }
         )
-        await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+        await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
 
         # FIX 2: a cache hit still counts as session activity. Refresh
         # last_active + (re)schedule the AFK LTM sync so an all-cache-hit
@@ -1040,9 +1055,13 @@ async def _run_chat(
     # so the next turn's rewrite would read Redis before this commits → stale
     # history → wrong pronoun/ordinal resolution (same bug as the stream path).
     try:
-        await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=answer)
+        await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=answer)
     except Exception as hist_err:
         logger.warning(f"append_to_history (non-stream) failed: {hist_err}")
+    try:
+        await add_seen_chunk_ids(conversation_id, retrieved_context)
+    except Exception as seen_err:
+        logger.debug(f"seen chunk tracking skipped: {seen_err}")
     background_tasks.add_task(
         batch_logger.add_log,
         {
@@ -1290,7 +1309,7 @@ async def chat_stream(
                 sources_list = list(cached.get("sources", []))
                 yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
 
-                await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=cached["answer"])
+                await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
 
                 # FIX 2: a cache hit is still session activity. Refresh last_active
                 # + (re)schedule the AFK LTM sync (the helper updates
@@ -1786,9 +1805,13 @@ async def chat_stream(
             return
 
         try:
-            await append_to_history(conversation_id=conversation_id, user_message=resolved_query, assistant_message=full_answer)
+            await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=full_answer)
         except Exception as hist_err:
             logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
+        try:
+            await add_seen_chunk_ids(conversation_id, retrieved_context)
+        except Exception as seen_err:
+            logger.debug(f"seen chunk tracking skipped: {seen_err}")
 
         yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
 

@@ -926,6 +926,16 @@ async def _handle_low_relevance(state: RAGState, config: RunnableConfig):
     ))]}
 
 
+def _filter_seen_chunks(chunks: list[dict], seen_chunk_ids: set[str]) -> list[dict]:
+    if not seen_chunk_ids:
+        return chunks
+    fresh = [
+        c for c in chunks
+        if not c.get("chunk_id") or str(c.get("chunk_id")) not in seen_chunk_ids
+    ]
+    return fresh or chunks[:1]
+
+
 async def _rag_node(state: RAGState, config: RunnableConfig):
     """
     Pure retrieval node — calls hybrid_search (dense + sparse BM25 fusion)
@@ -996,6 +1006,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
         for d in docs:
             m = d.metadata or {}
             chunks.append({
+                "chunk_id": d.chunk_id,
                 "text": d.text,
                 "course_id": m.get("course_id", ""),
                 "course_name": m.get("course_name", d.title),
@@ -1007,6 +1018,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
                 "source": d.source or m.get("source", "Unknown"),
                 "document_id": d.document_id or m.get("document_id", "Unknown"),
             })
+        chunks = _filter_seen_chunks(chunks, set(state.get("seen_chunk_ids") or []))
 
         logger.info(f"RAG node retrieved {len(chunks)} chunks{_mq_tag} for query: {query_to_search[:60]}")
         # C4: surface pool-level signals (max over full fetch_k pool, pre-slice)

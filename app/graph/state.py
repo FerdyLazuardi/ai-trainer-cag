@@ -84,4 +84,5 @@ class RAGState(TypedDict):
     # + deduplicates by chunk_id. Single-question queries have len=1. Set by
     # _pre_processor; defaults to [raw_message] for non-KNOWLEDGE intents.
     rewritten_queries: Optional[List[str]]
+    seen_chunk_ids: Optional[List[str]]
 
