@@ -626,24 +626,19 @@ async def _prepare_rag_context(
             messages.append(AIMessage(content=turn["content"]))
     messages.append(HumanMessage(content=resolved_query))
 
-    # Sequential rewrite and single embedding lifecycle to optimize latency:
-    # 1. Determine if rewrite is needed.
-    # 2. If rewrite is needed, execute the LLM query rewrite first. Split it into a list of queries.
-    # 3. Compute a single embedding of the retrieval query (rewritten or original).
-    # 4. Perform LTM lookup using this embedding.
+    # Always rewrite via the cheap LLM — it handles both:
+    #   - Coreference resolution (short follow-ups referencing history)
+    #   - Compound query splitting (multi-topic queries → parallel search)
+    # REWRITE_PROMPT Rules #2-#4 return long self-contained queries unchanged,
+    # so the extra ~200ms LLM call is harmless and we avoid false-negative
+    # edge cases from a word-count heuristic. History presence is NOT gated:
+    # a first-turn compound query ("baju senin apa, lapor fraud ke mana")
+    # still needs splitting even without prior conversation.
     _should_rewrite = (
         _tier1_intent is None
-        and len(messages) > 1  # Only rewrite if there is conversation history to resolve
         and not _is_bare_affirmation(resolved_query)
         and not bool(_META_CONVO_RE.search(resolved_query))
         and len(resolved_query.strip()) <= 1000
-        # ponytail: skip rewrite for long self-contained queries. A 10-word
-        # case-study ("klo ibu retno telat bayar 7 hari masuk par brapa") carries
-        # its own topic+keyword; rewriting it through history makes the model
-        # drag in the PREVIOUS topic (e.g. Client Protection) instead of the PAR
-        # case the user actually asked about. Short follow-ups (pronoun, ordinal,
-        # ≤5 words) still go through — those genuinely need coreference resolve.
-        and len(re.findall(r"[a-zA-Z]+", resolved_query)) <= 5
     )
 
     async def _load_ltm_if_eligible(emb: list[float] | None, query_text: str):
@@ -1756,15 +1751,28 @@ async def chat_stream(
                         if _fb_ctx:
                             retrieved_context = _fb_ctx
                             sources = _extract_sources(retrieved_context)
-                        # Token usage from the fallback AIMessage
+                        # Token usage from the fallback AIMessage — check both
+                        # response_metadata.token_usage (raw) and usage_metadata
+                        # (LangChain-normalized) like _log_cache_usage does.
                         _rm = getattr(_fb_msg, "response_metadata", None) or {}
                         _tu = _rm.get("token_usage") or {}
-                        if isinstance(_tu.get("total_tokens"), int) and _tu["total_tokens"] > 0:
-                            stream_total_tokens = _tu["total_tokens"]
+                        _real_total = _tu.get("total_tokens")
+                        if isinstance(_real_total, int) and _real_total > 0:
+                            stream_total_tokens = _real_total
                             stream_prompt_tokens = _tu.get("prompt_tokens", 0)
                             stream_completion_tokens = _tu.get("completion_tokens", 0)
                             stream_cached_tokens = (_tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
                             stream_provider = _rm.get("model_name")
+                        else:
+                            _um = getattr(_fb_msg, "usage_metadata", None) or {}
+                            _in = _um.get("input_tokens") or 0
+                            _out = _um.get("output_tokens") or 0
+                            if _in or _out:
+                                stream_total_tokens = int(_in) + int(_out)
+                                stream_prompt_tokens = int(_in)
+                                stream_completion_tokens = int(_out)
+                                stream_cached_tokens = (_um.get("input_token_details") or {}).get("cache_read") or 0
+                                stream_provider = getattr(_fb_msg, "response_metadata", {}).get("model_name")
                         yield f"data: {json.dumps({'token': _fb_content})}\n\n"
             except Exception as fb_exc:
                 logger.warning(f"Fallback ainvoke also failed: {type(fb_exc).__name__}: {fb_exc}")

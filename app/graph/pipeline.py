@@ -250,9 +250,14 @@ def _postprocess_rewrite_query(out: str, user_msg: str) -> str:
 async def _rewrite_search_query(messages: list, user_msg: str) -> str:
     """Rewrite conversational or follow-up queries into standalone keyword-rich search queries via the
     cheap LLM. Returns user_msg unchanged on bad output or failure."""
-    history = list(reversed(messages[-(_FOLLOWUP_HISTORY_TURNS + 1):-1]))
+    # Keep last 2 exchanges max — just enough to resolve "1" back to an option.
+    # Full 10-turn history floods the window with product lists and the rewrite
+    # LLM loses track of the user's intent.
+    history = messages[-(_FOLLOWUP_HISTORY_TURNS + 1):-1]
+    if len(history) > 4:
+        history = history[-4:]
     lines = []
-    for m in history:
+    for m in reversed(history):
         role = "User" if isinstance(m, HumanMessage) else "Ava"
         content = m.content if isinstance(m.content, str) else str(m.content)
         lines.append(f"{role}: {content[:400]}")
