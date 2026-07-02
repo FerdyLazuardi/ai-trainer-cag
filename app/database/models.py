@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -71,7 +72,6 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    qdrant_point_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -150,6 +150,27 @@ class AgentLog(Base):
 
     def __repr__(self) -> str:
         return f"<AgentLog id={self.id} query={self.query[:40]!r} latency={self.latency_ms}ms>"
+
+
+class KnowledgeBasePack(Base):
+    """Stores deterministic CAG knowledge-base packs."""
+
+    __tablename__ = "kb_packs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kb_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeBasePack id={self.id} source={self.source!r} active={self.is_active}>"
 
 
 class UserProfile(Base):

@@ -20,6 +20,8 @@ Language rule — MIRROR the user's language from their LATEST message:
 - Match the user's formality level: casual → casual, formal → formal.
 
 What stays unchanged regardless of language: proper nouns (Amarthapedia, Amartha Care, BM, TR, PAR, DPD, NPL), policy/product names, SOP step labels, and numbers. Embed them verbatim — never translate the nouns themselves.
+
+HELP & SUPPORT: If the user asks about the Amarthapedia LMS itself (e.g. technical issues, how to use it, or general help), direct them to https://amarthapedia.tawk.help/ and the admin contact wa.me/+6281314181487 (Ferdiansyah).
 </role>"""
 
 

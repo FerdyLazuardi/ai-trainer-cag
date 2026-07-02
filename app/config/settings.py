@@ -118,40 +118,6 @@ class Settings(BaseSettings):
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
 
-    # ─── Qdrant ─────────────────────────────────────────────────────────────
-    qdrant_host: str = "localhost"
-    qdrant_port: int = 6335
-    # gRPC port — SEPARATE from HTTP port. The qdrant-client library's
-    # AsyncQdrantClient computes its gRPC port independently of HTTP, and
-    # the qdrant container exposes 6334 (gRPC) and 6333 (HTTP) by default.
-    # Our docker-compose maps host 6335→container 6333 (HTTP) and host
-    # 6336→container 6334 (gRPC), so when running outside docker (eval
-    # scripts, ad-hoc scripts) the gRPC port must be 6336, NOT 6334
-    # (which only works inside the docker network). Without this, the
-    # qdrant-client's gRPC stub logs UNAVAILABLE on 127.0.0.1:6334 even
-    # when `prefer_grpc=False`, because some async paths still
-    # lazily initialize the gRPC channel.
-    qdrant_grpc_port: int = 6336
-    qdrant_collection: str = "documents"
-    qdrant_kb_collection: str = "Knowledge_Base"
-
-    # ─── Embedding ──────────────────────────────────────────────────────────
-    # BAAI/bge-m3 — 568M params, native 1024-dim, MIT license, $0.01/1M tok
-    # via OpenRouter. Chosen over qwen3-embedding-8b (which would be 3-5×
-    # slower at p50 400-700ms) and text-embedding-3-small (2× cost) because:
-    #   - MIRACL-id dense leader (56.1 nDCG@10) — the corpus is ID-heavy.
-    #   - p50 latency 80-180ms vs qwen3's 400-700ms → noticeably snappier
-    #     RAG (saves ~300-500ms per turn on the embedding call).
-    #   - Native 1024-dim matches EMBEDDING_DIM=1024 with no MRL truncation
-    #     loss (qwen3 would have to truncate 4096 → 1024).
-    #   - BM25 still carries exact-match jargon (course codes, brand names)
-    #     where bge-m3 dense is weaker, so hybrid design stays.
-    # bge-m3's sparse/ColBERT modes are NOT exposed through OpenRouter
-    # (only dense); the hybrid retriever's fastembed BM25 arm continues
-    # to do the lexical work.
-    embedding_model: str = "qwen/qwen3-embedding-8b"
-    embedding_dim: int = 4096
-
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
     # ⚠️  RUNTIME VALUES COME FROM `.env`, NOT THESE DEFAULTS.
     # The defaults below (Gemini Flash Lite, empty provider order) are the
@@ -166,12 +132,10 @@ class Settings(BaseSettings):
     # Do NOT change `.env` without re-checking this comment and the empirical
     # evidence in `docs/audit/E2E_AUDIT_600DAU_2026-06-17.md`.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    openrouter_embedding_key: str = Field(default="", alias="OPENROUTER_EMBEDDING_KEY")
     # OpenRouter is the SOLE LLM provider (no 9Router, no localhost, no Ollama).
     # Default is the real OpenRouter cloud; override in .env only when routing
     # through a different OpenRouter-compatible gateway.
     openrouter_base_url: str = "https://openrouter.ai/api/v1/"
-    openrouter_embedding_url: str | None = None
     # Main model: DeepSeek V4 Flash — defaults aligned with `.env` so reading
     # either file shows the SAME model (no Gemini/DeepSeek ambiguity). Run via
     # the alibaba/baidu/novita provider pin (see llm_provider_order) for the
@@ -181,7 +145,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
     # Cheap slot for background tasks (memory summarization, pre-processor,
     # generate node). Same model as the main slot.
-    cheap_llm_model: str = Field(default="google/gemini-2.5-flash-lite", alias="CHEAP_LLM_MODEL")
+    cheap_llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="CHEAP_LLM_MODEL")
 
     # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
     # Comma-separated OpenRouter provider SLUGS to pin the generator to, in
@@ -218,6 +182,12 @@ class Settings(BaseSettings):
     # rest of the market instead of failing the request.
     llm_provider_order: str = Field(default="", alias="LLM_PROVIDER_ORDER")
 
+
+    # ─── CAG mode ───────────────────────────────────────────────────────────
+    retrieval_mode: Literal["cag"] = Field(default="cag", alias="RETRIEVAL_MODE")
+    cag_kb_source: str = Field(default="moodle", alias="CAG_KB_SOURCE")
+    cag_moodle_course_id: int = Field(default=3, alias="CAG_MOODLE_COURSE_ID")
+
     @property
     def llm_provider_order_list(self) -> list[str]:
         """Parse LLM_PROVIDER_ORDER into a clean slug list (order preserved)."""
@@ -251,15 +221,10 @@ class Settings(BaseSettings):
     )
 
     # ─── OpenRouter prompt caching ───────────────────────────────────────────
-    # When True, system prompts are wrapped in content blocks with
-    # cache_control={type: "ephemeral", ttl: "1h"} so OpenRouter can
-    # serve the prefix from cache on the 2nd+ identical call. Static
-    # prompts (persona, output contract, mode rules) get the cache
-    # breakpoint; dynamic per-turn context (retrieved chunks, user
-    # history, preferences) lives in a separate non-cached user
-    # message so it doesn't invalidate the cache.
-    openrouter_prompt_cache_enabled: bool = True
-    openrouter_prompt_cache_ttl: str = "1h"  # "5m" or "1h" per OpenRouter spec
+    # MiMo/Xiaomi prompt caching is provider-side and automatic; OpenRouter does
+    # not expose a MiMo prompt-cache TTL knob. The app maximizes hits by keeping
+    # the stable system/KB prefix first and sending conversation_id as
+    # OpenRouter session_id in generate_node.
 
     # ─── Evaluation (LLM-as-judge, async via streaq) ─────────────────────────
     # Phase 1: faithfulness eval only. Sample to control cost — 100% eval
@@ -297,11 +262,11 @@ class Settings(BaseSettings):
     faithfulness_min: float = Field(default=0.75, alias="FAITHFULNESS_MIN")
 
     # ─── Intent Classification (Tier-0 semantic gate) ──────────────────────
-    # Used by app/graph/intent_classifier.classify_semantic. Embedding-based
+    # Legacy semantic-gate notes kept for calibration history. Embedding-based
     # cosine similarity against pre-computed intent centroids. Catches novel
     # greeting/ambiguous phrasings the regex Tier-1 misses (religious greetings,
     # regional slang, novel fillers) so we SKIP retrieval for them — saves a
-    # Qdrant round-trip and a full CONVERSATIONAL_PROMPT pass per query.
+    # vector-retrieval round-trip and a full CONVERSATIONAL_PROMPT pass per query.
     #
     # threshold: minimum best-centroid similarity to commit to an intent.
     #   Calibrated 2026-06-17 against app/eval/calibrate_intent_gate.py on the
@@ -310,7 +275,6 @@ class Settings(BaseSettings):
     # margin: minimum gap between best and second-best centroid. Stops the
     #   gate from committing on ambiguous queries that sit between two
     #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
-    intent_semantic_threshold: float = 0.60
     # 2026-06-17: lowered from 0.10 -> 0.06 after the 70-query FO quality
     # probe. At 0.10 the gate's margin floor was rejecting 4/20 chit-chat
     # queries whose best_cosine was 0.7+ but whose margin to the runner-up
@@ -318,16 +282,14 @@ class Settings(BaseSettings):
     # At 0.06 all 4 are caught and FP stays 0 — knowledge queries had
     # margins 0.04+ so they don't leak in. Tighten back if FP starts
     # appearing in production.
-    intent_semantic_margin: float = 0.06
     # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
-    # (intent_classifier.coaching_affinity vs the COACHING centroid). This is
+    # (legacy semantic affinity vs the COACHING centroid). This is
     # NOT a routing gate — it only decides whether to show a one-line
     # "mau ngulik bareng?" offer the user can click; a false positive just shows
     # an ignorable offer, never hijacks the answer. CALIBRATED 2026-06-10 against
     # the bge-m3 centroids: diagnostic/work questions scored 0.747-0.839,
     # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
     # margin each side. Re-check if the COACHING seeds in intent_seed.yaml change.
-    coaching_suggest_threshold: float = 0.70
     # Topic-streak auto-hook: offer coaching once the user has asked about the
     # SAME dominant topic this many turns in a row (counter lives in the
     # conversation HASH, see conversation_state.bump_topic_streak). Moved from
@@ -335,52 +297,37 @@ class Settings(BaseSettings):
     # renderer). A topic shift decays the streak by 1 rather than hard-resetting,
     # so drifting across 1-2 related sections doesn't kill an active streak.
     coaching_streak_threshold: int = 3
-    # Master switch for the semantic gate (app/graph/intent_classifier.
+    # Historical semantic-gate switch notes.
     # classify_semantic), wired into _pre_processor between the regex Tier-1 and
     # the no-retrieval bucket. Only short-circuits chit-chat intents
     # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/COACHING
     # (they need retrieval) and never MALICIOUS (injection detection stays on
     # the deterministic regex path). Defaults ON; calibrated against
     # app/eval/calibrate_intent_gate.py on 2026-06-17.
-    intent_semantic_gate_enabled: bool = Field(
-        default=True, alias="INTENT_SEMANTIC_GATE_ENABLED"
-    )
 
     # ─── Context Engineering ────────────────────────────────────────────────
     # Hard ceiling on the retrieved-context block sent to the generate LLM.
     # 6000 covers compound queries (multi-sub-question retrieval returns
     # 10-15 chunks that need room). Overridable via MAX_CONTEXT_TOKENS in .env.
-    max_context_tokens: int = 6000
     # Candidate pool pulled per modality (dense + sparse BM25) before fusion.
     # Wider pool = more candidates for fusion to rank, but NOT more LLM tokens
     # (only final_top_k reaches the LLM). Overridable via RETRIEVAL_TOP_K in .env.
-    retrieval_top_k: int = 20
     # Final number of fused chunks fed to the generate LLM. Overridable via
     # FINAL_TOP_K in .env. Bounded by max_context_tokens (truncate_to_tokens).
     # NOTE: tried 8 — pulled in distractor chunks that made the model
     # MIS-classify a support service as a product. The real fix is prompt-side
     # (anchor enumeration to the summary list). Lower to 3 if cost bites.
-    final_top_k: int = 5
 
-    # Cohere Rerank Configuration
-    rerank_enabled: bool = Field(default=False, alias="RERANK_ENABLED")
-    rerank_model: str = Field(default="cohere/rerank-v3.5", alias="RERANK_MODEL")
-    rerank_base_url: str = Field(default="https://openrouter.ai/api/v1/rerank", alias="RERANK_BASE_URL")
-    rerank_top_k: int = Field(default=15, alias="RERANK_TOP_K")
     # Per-chunk char cap for the LMS generate path. 1600 covers p100 of
     # current KB (largest chunk is 1513 chars). Overridable via
     # LMS_CHUNK_TEXT_MAX_CHARS in .env.
-    lms_chunk_text_max_chars: int = 1600
     # Relative-score fusion weights: fused = vector_weight * dense_norm +
     # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
     # Both overridable via BM25_WEIGHT / VECTOR_WEIGHT in .env.
-    bm25_weight: float = Field(default=0.3, alias="BM25_WEIGHT")
-    vector_weight: float = Field(default=0.7, alias="VECTOR_WEIGHT")
     # Compound query: multiplier for final_top_k after merge+dedup.
     # 2 sub-queries → final_top_k × 2. Set to 1 to disable scaling.
-    compound_final_top_k_multiplier: int = 2
     # MANDATORY DENSE FLOOR for the NOT-FOUND gate (app/graph/pipeline.py
-    # _route_after_rag). Below this RAW DENSE COSINE pool-max, treat retrieval as
+    # the old retrieval gate. Below this RAW DENSE COSINE pool-max, treat retrieval as
     # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
     # Absolute [0, 1] cosine. bge-m3 cleanly separates scope on this KB:
     # off-scope tops out ≈ 0.36 (weather/recipe/trivia), in-scope floors ≈ 0.50.
@@ -394,7 +341,6 @@ class Settings(BaseSettings):
     # hallucination from near-miss chunks. Re-run the calibrator after KB growth
     # or an embedding-model swap. Dense is the SOLE normal-op discriminator;
     # sparse is NOT OR'd in (see kb_min_sparse_score).
-    kb_min_dense_score: float = 0.40
     # DEGRADED-WINDOW ONLY sparse floor. This is NO LONGER an OR-rescue in normal
     # operation — raw BM25 does not separate scope on a small KB (off-scope
     # filler tokens like siapa/hari/jakarta accumulate BM25: "berita hari ini di
@@ -403,21 +349,16 @@ class Settings(BaseSettings):
     # (embedding outage → sparse-only retrieval, C5): in that window the gate
     # fails OPEN on sparse >= this floor so Ava stays usable during the blip,
     # accepting some off-scope leak until embeddings recover. Kept at 1.0.
-    kb_min_sparse_score: float = 1.0
 
     # ─── Embedding resilience (C5 — query-embedding SPOF) ────────────────────
     # The query embedding is produced by a SINGLE process-global
-    # OpenAILikeEmbedding (app/config/embedding_config.py) hitting a remote
+    # a process-global embedding client hitting a remote
     # provider. With no retry/timeout, a transient provider blip turned every
     # retrieval into a hard failure (the dense + sparse encodings are awaited in
     # one gather, so a dense-embed exception aborted sparse too → HTTP 500).
     # These knobs wrap the dense embed in a bounded tenacity retry; on final
     # failure hybrid_search degrades to SPARSE-ONLY (BM25) instead of raising,
     # so terse/lexical queries still return results during an embedding outage.
-    embedding_timeout_seconds: float = 8.0
-    embedding_max_attempts: int = 3
-    embedding_backoff_base_seconds: float = 0.5
-    embedding_backoff_max_seconds: float = 4.0
     # Max concurrent sparse BM25 (fastembed/onnxruntime) query encodings. The
     # encode runs CPU-bound in a thread (asyncio.to_thread). DEFAULT 1, and it
     # MUST stay coupled to OMP_NUM_THREADS in docker-compose.yml: each encode
@@ -427,9 +368,6 @@ class Settings(BaseSettings):
     # thrash that raises P95 and starves the asyncio loop — the exact failure
     # the OMP cap was added to prevent. Only raise this above 1 if you ALSO drop
     # OMP_NUM_THREADS to 1 (so total threads stay <= vCPUs) and load-test P95.
-    sparse_encode_concurrency: int = Field(
-        default=1, ge=1, le=4, alias="SPARSE_ENCODE_CONCURRENCY"
-    )
 
     # ─── Conversational LLM ──────────────────────────────────────────────────
     # The collapsed pipeline uses ONE conversational LLM (get_chat_llm →
@@ -501,26 +439,6 @@ class Settings(BaseSettings):
     # to sleep" rather than "stepped away for coffee" — short defers waste
     # worker capacity re-summarizing the same session.
     ltm_afk_threshold_seconds: int = 36000
-    # Per-user episode cap for Qdrant LTM (app/agents/long_term_memory_qdrant.py
-    # _max_episodes_per_user). Qdrant has no native TTL/eviction, so each session
-    # writes a permanent vector; after every write the oldest episodes beyond this
-    # cap are pruned per user (~220k vectors/year at 13k users without it). 50
-    # balances recall vs unbounded growth. Guarded 1..200 against env typos.
-    ltm_max_episodes_per_user: int = Field(
-        default=50, ge=1, le=200, alias="LTM_MAX_EPISODES_PER_USER"
-    )
-    # Min cosine for an LTM episode to be recalled into <user_history>
-    # (long_term_memory_qdrant.load). The episode VECTOR is the embedded
-    # session SUMMARY ("User asked about Amartha's vision and mission"), an
-    # English meta-sentence, while the live query is the user's raw Indonesian
-    # turn — so even an exact-topic re-ask lands ~0.67 cosine, below the old
-    # hardcoded 0.70 and was silently dropped. 0.55 clears that language/meta
-    # gap while still rejecting unrelated episodes (those sit <0.45).
-    # ponytail: raise toward 0.65 if irrelevant episodes start leaking in.
-    ltm_recall_score_threshold: float = Field(
-        default=0.55, ge=0.0, le=1.0, alias="LTM_RECALL_SCORE_THRESHOLD"
-    )
-
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
     # Default points at the dev/free-tier ngrok tunnel (interstitial warning
     # page on first visit, random subdomain, no custom domain, 1 tunnel at
@@ -530,20 +448,6 @@ class Settings(BaseSettings):
     # remain env-driven.
     moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
-
-    # ─── Askfer (Portfolio Chat) ────────────────────────────────────────────
-    qdrant_personal_collection: str = "Personal_Portfolio"
-    portfolio_sitemap_url: str = "https://ferdy-fadhil-lazuardi.my.id/sitemap.xml"
-    portfolio_homepage_url: str = "https://ferdy-fadhil-lazuardi.my.id/"
-    portfolio_project_url_pattern: str = r"^https://ferdy-fadhil-lazuardi\.my\.id/projects/[^/]+/?$"
-    portfolio_cv_url: str = "https://ferdy-fadhil-lazuardi.my.id/CV%20-%20Ferdy%20Fadhil%20Lazuardi.pdf"
-    askfer_admin_secret: str = Field(default="", alias="ASKFER_ADMIN_SECRET")
-    askfer_rate_limit_per_minute: int = 10
-    # Token-budget tuning — Askfer is stateless, so we can keep retrieval lean.
-    # Candidate pool per modality before fusion, then narrow to the final cut.
-    askfer_retrieval_top_k: int = 12
-    askfer_final_top_k: int = 3
-    askfer_chunk_text_max_chars: int = 600
 
     # ─── Security ───────────────────────────────────────────────────────────
     # Required, no default. A dev fallback string ("your-super-secret...") was
@@ -572,14 +476,10 @@ class Settings(BaseSettings):
     # OpenRouter-compatible endpoint). Cache hits are NOT counted — they make
     # no LLM call and return before the guard.
     #
-    # 12 (was 24): 24 concurrent LLM calls on 1 uvicorn worker / 2 vCPU over-
-    # subscribed the gateway side. The WAF in front of the local self-hosted
-    # gateway has been seen to return 429s under sustained >15 concurrent
-    # calls. 12 keeps us safely under that ceiling at peak (~5 req/s × ~3s/turn
-    # = 15 in-flight, but cache hits skip this guard so the real ceiling is 12
-    # LLMs-in-flight). Raise to 18-24 once the gateway's per-account rate limit
-    # is confirmed.
-    max_concurrent_pipelines: int = 12
+    # 8: conservative cap for 2 vCPU / 8 GB with long CAG prompts. The old 12
+    # setting was too eager for a small single-worker box; cache hits skip this
+    # guard, so exact-response hits still return without spending a pipeline slot.
+    max_concurrent_pipelines: int = 8
     # Seconds a request waits for a free pipeline slot before returning 503.
     # Small enough to fast-fail a sustained burst, large enough to absorb a
     # sub-second spike without rejecting.

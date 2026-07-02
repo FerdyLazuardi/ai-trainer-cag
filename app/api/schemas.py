@@ -14,7 +14,7 @@ class ChatRequest(BaseModel):
     )
     course_id: int | None = Field(
         default=None,
-        description="Optional course ID to scope the semantic cache and retrieval",
+        description="Optional course ID to scope the exact answer cache",
     )
     coaching_mode: bool = Field(
         default=False,

@@ -5,46 +5,12 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 
 @pytest.mark.asyncio
-async def test_preprocessor_regex_hit_skips_semantic_gate(monkeypatch):
-    from app.graph import intent_classifier, pipeline
-
-    called = False
-
-    async def fake_semantic_gate(*args, **kwargs):
-        nonlocal called
-        called = True
-        return intent_classifier.GateScore(
-            decision="SKIP",
-            committed=None,
-            best_intent=None,
-            best_cosine=0.0,
-            second_intent=None,
-            second_cosine=0.0,
-            margin=0.0,
-        )
-
-    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", True)
-    monkeypatch.setattr(intent_classifier, "classify_semantic_with_scores", fake_semantic_gate)
-
-    result = await pipeline._pre_processor(
-        {"messages": [HumanMessage(content="halo")]},
-        {},
-    )
-
-    assert result["intent"] == "GREETING"
-    assert result["gate_score"].decision == "SKIP"
-    assert called is False
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("query", [
     "Gimana caranya menangani mitra yang telat bayar cicilan?",
     "gimana caranya aku melindungi data mitra ya",
 ])
 async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, query):
     from app.graph import pipeline
-
-    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
 
     result = await pipeline._pre_processor(
         {"messages": [HumanMessage(content=query)]},
@@ -58,8 +24,6 @@ async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, q
 async def test_meta_convo_regex_keeps_bare_how_to_ambiguous(monkeypatch):
     from app.graph import pipeline
 
-    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
-
     result = await pipeline._pre_processor(
         {"messages": [HumanMessage(content="gimana caranya?")]},
         {},
@@ -71,8 +35,6 @@ async def test_meta_convo_regex_keeps_bare_how_to_ambiguous(monkeypatch):
 @pytest.mark.asyncio
 async def test_example_followup_can_use_knowledge_rewrite_path(monkeypatch):
     from app.graph import pipeline
-
-    monkeypatch.setattr(pipeline._settings, "intent_semantic_gate_enabled", False)
 
     result = await pipeline._pre_processor(
         {"messages": [HumanMessage(content="bisa kasih contoh ga")]},
@@ -253,160 +215,44 @@ async def test_seen_chunk_ids_merge_dedupe_and_cap(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rewrite_prompt_puts_newest_history_first(monkeypatch):
+async def test_prepare_rag_context_cag_skips_rewrite_and_embedding(monkeypatch):
+    from app.api.routes import chat
     from app.graph import pipeline
-    import app.llm.client as llm_client
 
-    captured = {}
+    async def fake_history(*args, **kwargs):
+        return "", []
 
-    class FakeLLM:
-        async def ainvoke(self, messages):
-            captured["prompt"] = messages[0].content
-            return AIMessage(content="resolved query")
+    async def fake_seen(*args, **kwargs):
+        return set()
 
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
+    async def fake_cached(*args, **kwargs):
+        return None
 
-    messages = [
-        HumanMessage(content="ancient user"),
-        AIMessage(content="ancient assistant"),
-        HumanMessage(content="oldest user"),
-        AIMessage(content="oldest assistant"),
-        HumanMessage(content="middle user"),
-        AIMessage(content="middle assistant"),
-        HumanMessage(content="newest user"),
-        AIMessage(content="newest options\n1. Latest A\n2. Latest B"),
-        HumanMessage(content="1"),
-    ]
+    async def fake_refresh(*args, **kwargs):
+        return None
 
-    await pipeline._rewrite_search_query(messages, "1")
-    prompt = captured["prompt"]
+    async def fake_rewrite(*args, **kwargs):
+        return "rewritten retrieval query"
 
-    assert prompt.index("Ava: newest options") < prompt.index("User: newest user")
-    assert prompt.index("User: newest user") < prompt.index("Ava: middle assistant")
-    assert "ancient user" not in prompt
+    monkeypatch.setattr(chat, "get_or_summarize_history", fake_history)
+    monkeypatch.setattr(chat, "get_seen_chunk_ids", fake_seen)
+    monkeypatch.setattr(chat, "get_cached_response", fake_cached)
+    monkeypatch.setattr(chat, "_schedule_summary_refresh", fake_refresh)
+    monkeypatch.setattr(chat, "get_cheap_llm", lambda: object())
+    monkeypatch.setattr(chat, "is_real_user", lambda **kwargs: False)
+    monkeypatch.setattr(pipeline, "_rewrite_search_query", fake_rewrite)
+    monkeypatch.setattr(pipeline, "_apply_glossary", lambda query: query)
 
-
-@pytest.mark.asyncio
-async def test_rewrite_prompt_forbids_dropping_subquestions_and_inventing_terms(monkeypatch):
-    from app.graph import pipeline
-    import app.llm.client as llm_client
-
-    captured = {}
-
-    class FakeLLM:
-        async def ainvoke(self, messages):
-            captured["prompt"] = messages[0].content
-            return AIMessage(content="baju hari kamis\nmelaporkan fraud")
-
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
-
-    await pipeline._rewrite_search_query(
-        [HumanMessage(content="sebelumnya"), HumanMessage(content="besok pake baju apa, cara lapor fraud gimana")],
-        "besok pake baju apa, cara lapor fraud gimana",
+    context = await chat._prepare_rag_context(
+        chat.ChatRequest(query="Apa itu Client Protection?"),
+        chat.User(user_id="user-a", role="moodle_user", username="User A"),
+        "conv-a",
+        "Apa itu Client Protection?",
     )
 
-    prompt = captured["prompt"]
-
-    assert "NEVER DROP" in prompt
-    assert "retrieval/gating decides relevance later" in prompt
-    assert "Do not invent new domain terms" in prompt
-
-
-@pytest.mark.asyncio
-async def test_rewrite_query_cleans_verbatim_noise_and_splits_fraud_facets(monkeypatch):
-    from app.graph import pipeline
-    import app.llm.client as llm_client
-
-    noisy = (
-        "aku kan Business Manager point lenteng, point aku ini lagi fraud parah, "
-        "aku harusn gapian biar angka fraud juga menurun"
-    )
-
-    class FakeLLM:
-        async def ainvoke(self, _messages):
-            return AIMessage(content=noisy)
-
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
-
-    rewritten = await pipeline._rewrite_search_query(
-        [HumanMessage(content="sebelumnya"), HumanMessage(content=noisy)],
-        noisy,
-    )
-
-    assert rewritten.splitlines() == [
-        "point fraud Business Manager",
-        "fraud menurun Business Manager point",
-    ]
-    assert "lenteng" not in rewritten.lower()
-    assert "aku" not in rewritten.lower()
-    assert "surprise visit" not in rewritten.lower()
-
-
-@pytest.mark.asyncio
-async def test_rewrite_query_cleans_generic_question_filler(monkeypatch):
-    from app.graph import pipeline
-    import app.llm.client as llm_client
-
-    class FakeLLM:
-        async def ainvoke(self, _messages):
-            return AIMessage(content="client protection itu apaan ya")
-
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
-
-    rewritten = await pipeline._rewrite_search_query(
-        [HumanMessage(content="sebelumnya"), HumanMessage(content="client protection itu apaan ya")],
-        "client protection itu apaan ya",
-    )
-
-    assert rewritten == "client protection"
-
-
-@pytest.mark.asyncio
-async def test_rewrite_query_splits_mixed_questions_without_compressing(monkeypatch):
-    from app.graph import pipeline
-    import app.llm.client as llm_client
-
-    mixed = "besok pake baju apa, cara lapor fraud gmna?"
-
-    class FakeLLM:
-        async def ainvoke(self, _messages):
-            return AIMessage(content="baju hari kamis\nmelaporkan fraud")
-
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
-
-    rewritten = await pipeline._rewrite_search_query(
-        [HumanMessage(content="sebelumnya"), HumanMessage(content=mixed)],
-        mixed,
-    )
-
-    assert rewritten.splitlines() == [
-        "baju hari kamis",
-        "melaporkan fraud",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_rewrite_query_raw_fallback_splits_without_semantic_hardcode(monkeypatch):
-    from app.graph import pipeline
-    import app.llm.client as llm_client
-
-    mixed = "besok pake baju apa, cara lapor fraud gmna?"
-
-    class FakeLLM:
-        async def ainvoke(self, _messages):
-            return AIMessage(content=mixed)
-
-    monkeypatch.setattr(llm_client, "get_preprocessor_llm", lambda: FakeLLM())
-
-    rewritten = await pipeline._rewrite_search_query(
-        [HumanMessage(content="sebelumnya"), HumanMessage(content=mixed)],
-        mixed,
-    )
-
-    assert rewritten.splitlines() == [
-        "besok pake baju",
-        "cara lapor fraud",
-    ]
+    assert context["query_embedding"] is None
+    assert context["initial_state"]["retrieval_query"] == "Apa itu Client Protection?"
+    assert context["initial_state"]["rewritten_queries"] is None
 
 
 def _patch_stream_basics(monkeypatch, graph):
@@ -631,7 +477,7 @@ async def test_stream_error_path_logs_and_does_not_write_cache(monkeypatch):
 
     body = await _collect_sse(response)
 
-    assert "RAG pipeline failed" in body
+    assert "CAG pipeline failed" in body
     assert len(logs) == 1
     assert logs[0]["endpoint"] == "chat-stream"
     assert logs[0]["answer"] == ""

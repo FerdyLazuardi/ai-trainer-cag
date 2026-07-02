@@ -19,6 +19,11 @@ from loguru import logger
 from app.eval.judge import judge_faithfulness
 
 
+async def _load_active_cag_kb_text() -> str:
+    from app.graph.pipeline import _load_active_cag_kb_text as load
+    return await load()
+
+
 async def eval_turn_task(
     query: str,
     answer: str,
@@ -40,10 +45,16 @@ async def eval_turn_task(
         return {"status": "skipped", "reason": "empty_answer"}
 
     try:
+        context = retrieved_context or []
+        if not context and intent in ("KNOWLEDGE", "COACHING"):
+            kb_text = await _load_active_cag_kb_text()
+            if kb_text:
+                context = [{"text": kb_text}]
+
         result = await judge_faithfulness(
             query=query,
             answer=answer,
-            retrieved_context=retrieved_context or [],
+            retrieved_context=context,
         )
     except Exception as exc:
         logger.warning(f"eval_turn_task: judge crashed: {exc}")

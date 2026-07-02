@@ -1,119 +1,61 @@
 """
-POST /ingest endpoint — accepts raw text and triggers the ingestion pipeline.
-POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync.
+POST /ingest endpoint — [DISABLED] accepts raw text and triggers the ingestion pipeline.
+POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync to CAG KB pack.
 """
 from datetime import timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
-from streaq import TaskStatus
 
 from app.api.schemas import IngestRequest, IngestEnqueuedResponse, IngestStatusResponse
-from app.database.postgres import get_db, AsyncSessionLocal
-from app.ingestion.pipeline import ingest_document
-from app.ingestion.moodle_sync import sync_moodle_knowledge_base
 from app.config.settings import get_settings
 import httpx
 from app.api.auth import get_current_user, User
-from app.worker import (
-    worker as _api_worker,  # shared Worker instance for status_by_id (read-only)
-    ingest_text_task,
-    sync_moodle_task,
-    dummy_task,
-)
 
 router = APIRouter()
 settings = get_settings()
 
-# ── streaq note ──────────────────────────────────────────────────────────────
-# streaq Task objects MUST be awaited for the enqueue to actually publish to
-# Redis (Task.__await__ → _chain → publish_task). Unlike arq's enqueue_job()
-# which is fire-and-forget, you need:
-#     task = some_task.enqueue(...)
-#     await task   # ← this is what writes to Redis
-#
-# For status polling, the shared `worker` instance is opened in the FastAPI
-# lifespan (`app/main.py:lifespan`) so `worker.status_by_id()` /
-# `worker.result_by_id()` are safe to call from any request handler without
-# raising `StreaqError: Worker not initialized`. See
-# https://streaq.readthedocs.io/en/latest/worker.html#task-related-functions.
 @router.post(
     "/ingest",
     response_model=IngestEnqueuedResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Enqueue a document for ingestion into the RAG knowledge base",
+    summary="[DISABLED] Enqueue a document for ingestion (RAG mode only)",
 )
 async def ingest(
     request: IngestRequest,
     current_user: User = Depends(get_current_user),
 ) -> IngestEnqueuedResponse:
     """
-    Enqueue raw text for background ingestion. Returns 202 with a job_id
-    that can be polled via GET /ingest/{job_id}. The job is processed by
-    the streaq worker so a 200 KB body no longer ties up the API process
-    or a Postgres session.
-    """
-    logger.info(
-        "Ingestion request received",
-        title=request.title,
-        source=request.source,
-        text_len=len(request.text),
-        user=current_user.username,
-    )
+    **[DISABLED in CAG mode]**
 
-    task = ingest_text_task.enqueue(
-        text=request.text,
-        title=request.title,
-        source=request.source,
-        metadata=request.metadata,
+    Raw text ingestion was used in RAG mode. In the current CAG mode, this endpoint is disabled (returns 410 Gone) because the knowledge base is compiled deterministically from Moodle via `/ingest/moodle/sync`.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Raw RAG ingestion is disabled in CAG mode. Use /ingest/moodle/sync."
     )
-    await task
-    logger.info("Ingestion enqueued", job_id=task.id, text_len=len(request.text))
-    return IngestEnqueuedResponse(job_id=task.id, status="queued")
 
 
 @router.get(
     "/ingest/{job_id}",
     response_model=IngestStatusResponse,
-    summary="Get the status of an enqueued ingestion job",
+    summary="[DISABLED] Get the status of an enqueued ingestion job (RAG mode only)",
 )
 async def ingest_status(
     job_id: str,
     current_user: User = Depends(get_current_user),
 ) -> IngestStatusResponse:
-    """Poll an ingestion job's status. 'complete' carries the document_id."""
-    # The shared worker instance is initialized by the FastAPI lifespan
-    # (`async with worker:` in app/main.py), so status_by_id/result_by_id
-    # are safe to call here without a per-request async-context enter.
-    streaq_status = await _api_worker.status_by_id(job_id)
-    if streaq_status == TaskStatus.DONE:
-        # Result is already in Redis (DONE state proved it). timeout=0 skips
-        # the pubsub wait. If we hit a TTL race, fall through to "queued".
-        try:
-            result = await _api_worker.result_by_id(job_id, timeout=timedelta(0))
-        except TimeoutError:
-            return IngestStatusResponse(job_id=job_id, status="queued")
-        if result.success:
-            result_dict = result.result if isinstance(result.result, dict) else None
-            return IngestStatusResponse(
-                job_id=job_id,
-                status="complete",
-                document_id=result_dict.get("document_id") if result_dict else None,
-                chunks_count=result_dict.get("chunks_count") if result_dict else None,
-                total_tokens=result_dict.get("total_tokens") if result_dict else None,
-            )
-        return IngestStatusResponse(
-            job_id=job_id,
-            status="failed",
-            error=str(result.exception),
-        )
-    if streaq_status == TaskStatus.RUNNING:
-        return IngestStatusResponse(job_id=job_id, status="in_progress")
-    # QUEUED, SCHEDULED, or NOT_FOUND (TTL'd/never-existed) — same caller
-    # response as the arq path: report "queued" optimistically.
-    return IngestStatusResponse(job_id=job_id, status="queued")
+    """
+    **[DISABLED in CAG mode]**
+
+    Get the status of an enqueued ingestion job. Since raw RAG ingestion is disabled, this endpoint is also disabled.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Raw RAG ingestion is disabled in CAG mode."
+    )
 
 
 class MoodleSyncRequest(BaseModel):
@@ -139,7 +81,7 @@ class MoodleSyncResponse(BaseModel):
 @router.post(
     "/ingest/moodle/sync",
     response_model=MoodleSyncResponse,
-    summary="Sync Moodle AI_Knowledge_Base course to Qdrant",
+    summary="Sync Moodle AI_Knowledge_Base course to the active CAG KB pack",
 )
 async def moodle_sync(
     request: MoodleSyncRequest,
@@ -157,13 +99,12 @@ async def moodle_sync(
 
     **What it does:**
     1. Enqueues a persistent job to the streaq worker.
-    2. Downloads all `.md` files from the specified Moodle course
-    3. Parses YAML frontmatter for metadata (department, topic, course_id, course_name)
-    4. Splits content by markdown headers
-    5. Embeds and upserts to Qdrant `Knowledge_Base` collection
-    6. Skips unchanged files (unless force_reingest=true)
+    2. Downloads Moodle `.md` files, assembles one deterministic CAG KB pack.
+    3. Saves the active KB pack in PostgreSQL database.
+    4. Invalidates query and agent caches if changes are detected.
     """
     logger.info(f"Moodle sync triggered by user: {current_user.username}")
+    from app.worker import sync_moodle_task
 
     task = sync_moodle_task.enqueue(
         course_id=request.course_id,
@@ -186,6 +127,8 @@ async def enqueue_dummy_task(
     Enqueue a dummy task to verify that the streaq worker is running correctly.
     """
     logger.info(f"Dummy task enqueued by user: {current_user.username}")
+    from app.worker import dummy_task
+
     task = dummy_task.enqueue(name=name)
     await task
     return {"message": f"Dummy task enqueued for {name}", "job_id": task.id}

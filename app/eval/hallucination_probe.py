@@ -278,7 +278,7 @@ async def _call_llm(messages: list[dict], timeout: float = 30.0) -> dict[str, An
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/ai-lms-agent",
-        "X-Title": "AI LMS Agent (Halu Probe)",
+        "X-Title": "CAG AI Trainer (Halu Probe)",
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(API_URL, json=body, headers=headers)

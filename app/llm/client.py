@@ -98,7 +98,7 @@ def get_llm() -> ChatOpenAI:
         max_tokens=settings.llm_max_tokens,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent",
+            "X-Title": "CAG AI TRAINER",
         },
     )
 
@@ -120,7 +120,7 @@ def get_cheap_llm() -> ChatOpenAI:
         extra_body=_eb,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent (Background Worker)",
+            "X-Title": "CAG AI TRAINER (Background Worker)",
         },
     )
 
@@ -135,7 +135,7 @@ def get_judge_llm() -> ChatOpenAI:
         extra_body=_provider_extra_body(settings.judge_llm_model),
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent (Judge)",
+            "X-Title": "CAG AI TRAINER (Judge)",
         },
     )
 
@@ -167,7 +167,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
         extra_body=_eb,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent (Pre-Processor)",
+            "X-Title": "CAG AI TRAINER (Pre-Processor)",
         },
     )
 
@@ -187,7 +187,7 @@ def get_generate_llm() -> ChatOpenAI:
         # replays non-stream — which still captures usage. Either way tokens land.
         default_headers={
             "HTTP-Referer": "https://github.com/peped-BE",
-            "X-Title": "AI LMS RAG Agent (Generate)",
+            "X-Title": "CAG AI TRAINER (Generate)",
         },
     )
 
@@ -208,7 +208,7 @@ def get_generate_llm_nostream() -> ChatOpenAI:
         streaming=False,
         default_headers={
             "HTTP-Referer": "https://github.com/peped-BE",
-            "X-Title": "AI LMS RAG Agent (Generate)",
+            "X-Title": "CAG AI TRAINER (Generate)",
         },
     )
 
@@ -220,10 +220,10 @@ def get_chat_llm() -> ChatOpenAI:
         temperature=settings.chat_llm_temperature,
         max_tokens=settings.llm_max_tokens,
         request_timeout=60,
-        streaming=False,
+        streaming=True,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent (Chat)",
+            "X-Title": "CAG AI TRAINER (Chat)",
         },
     )
 
@@ -239,6 +239,6 @@ def get_empathy_llm() -> ChatOpenAI:
         stream_usage=True,
         default_headers={
             "HTTP-Referer": "https://github.com/ai-lms-agent",
-            "X-Title": "AI LMS RAG Agent (Empathy)",
+            "X-Title": "CAG AI TRAINER (Empathy)",
         },
     )

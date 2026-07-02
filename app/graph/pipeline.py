@@ -1,14 +1,13 @@
 """
-Optimized Agentic RAG pipeline - Retrieve-then-Generate pattern.
+Optimized CAG pipeline - classify then generate over the active KB pack.
 
-Architecture change vs prior ReAct pattern:
-  BEFORE: classifier → agent(LLM decides tool) → ToolNode → agent(LLM answers)  = 3 LLM calls for KNOWLEDGE
-  AFTER:  classifier → rag_node(pure retrieval) → generate_node(LLM answers)    = 2 LLM calls for KNOWLEDGE
-
-Savings: ~700 tokens per KNOWLEDGE query (the first "decide to call tool" agent call is eliminated).
+Architecture change vs prior RAG pattern:
+  BEFORE: classifier → retrieval → generate_node
+  AFTER:  classifier → generate_node with the stable CAG KB prefix
 """
 import asyncio
 from functools import lru_cache
+import hashlib
 from pathlib import Path
 import re
 import time
@@ -354,19 +353,11 @@ def _sanitize_answer(text: str) -> str:
 
 
 class StreamLeakGuard:
-    """Stream-time leak detector. Buffers the first ~80 chars of a generated
-    reply so raw-context leaks (chunk citations like "[1] Course: X (ID:N)" or
-    bare <retrieved_context> tags) never reach the user mid-stream. The end-of-
-    stream `_sanitize_answer` already protects cache/history/eval — this class
-    is the user-facing complement so the leak isn't visible in real time.
-
-    Modes:
-      - preamble: buffer until PREAMBLE_LIMIT chars accumulated, then decide.
-      - passthrough: preamble was clean — yield raw tokens straight through.
-      - buffered: leak detected — keep accumulating, sanitize at flush().
+    """Stream-time leak detector. Buffers the generated reply only when a leak
+    signature (like "[1] Course: X" or "<retrieved_context>") is detected,
+    otherwise passes clean tokens through immediately to eliminate startup latency.
     """
 
-    PREAMBLE_LIMIT = 80
     _LEAK_PATTERNS = (
         _LEAK_CITATION_HEAD_RE,
         _LEAK_OPEN_TAG_RE,
@@ -376,27 +367,18 @@ class StreamLeakGuard:
 
     def __init__(self) -> None:
         self._buffer = ""
-        self._mode = "preamble"
+        self._mode = "passthrough"
 
     def feed(self, token: str) -> str:
         """Push a streamed token. Returns the safe text to emit (may be "")."""
-        if self._mode == "passthrough":
-            return token
         self._buffer += token
-        if self._mode == "buffered":
-            return ""
-        if len(self._buffer) < self.PREAMBLE_LIMIT:
-            return ""
         if any(p.search(self._buffer) for p in self._LEAK_PATTERNS):
             self._mode = "buffered"
-            logger.warning(
-                "StreamLeakGuard: leak signature detected in preamble — "
-                "switching to buffered/sanitize mode"
-            )
+            return ""
+        if self._mode == "buffered":
             return ""
         out = self._buffer
         self._buffer = ""
-        self._mode = "passthrough"
         return out
 
     def flush(self) -> str:
@@ -667,7 +649,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     #
     # Cost: ~one fresh embed (cached on repeat) on the long-tail of queries
     # the regex already filters out. The hot path (regex hits) is unaffected.
-    #
     # The full GateScore (best/second cosine + margin) is attached to
     # state["gate_score"] on EVERY outcome — HIT or MISS — so chat.py
     # can persist the trace to agent_logs for the drift monitor regardless
@@ -680,67 +661,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # agreement-check once Prometheus metrics land, so we can verify
     # the drift signal is meaningful before paying the embed cost).
     gate_score_out = None
-    if _settings.intent_semantic_gate_enabled and rule_intent is not None:
-        from app.graph.intent_classifier import GateScore
-
-        gate_score_out = GateScore(
-            decision="SKIP",
-            committed=None,
-            best_intent=None,
-            best_cosine=0.0,
-            second_intent=None,
-            second_cosine=0.0,
-            margin=0.0,
-        )
-    if _settings.intent_semantic_gate_enabled and rule_intent is None:
-        try:
-            from app.graph.intent_classifier import classify_semantic_with_scores
-            gate_score_out = await classify_semantic_with_scores(
-                user_msg_str,
-                query_embedding=state.get("query_embedding"),
-            )
-            if gate_score_out.committed is not None:
-                logger.info(
-                    f"Pre-processor: semantic gate → {gate_score_out.committed} "
-                    f"(regex miss, embedding gate caught it)"
-                )
-                # SECTION_DRILLDOWN refinement (Jun 2026): also apply to gate-derived
-                # TOPIC_LIST. The gate catches novel chit-chat the regex missed —
-                # but "bisnis proses ada apa aja" doesn't look like greeting/ambiguous
-                # to it, so the gate routes it as TOPIC_LIST. We still want to refine
-                # that to SECTION_DRILLDOWN if a specific section can be resolved.
-                if gate_score_out.committed == "TOPIC_LIST" and _is_section_drilldown_shape(user_msg_str):
-                    try:
-                        _sm = await _load_section_map()
-                    except Exception:
-                        _sm = {}
-                    _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
-                    if _resolved:
-                        logger.info(
-                            f"Pre-processor: gate TOPIC_LIST refined -> SECTION_DRILLDOWN "
-                            f"(section={_resolved!r}, via {_respath!r})"
-                        )
-                        state["drilldown_section"] = _resolved
-                        state["drilldown_resolution"] = _respath
-                        return {
-                            "intent": "SECTION_DRILLDOWN",
-                            "rewritten_query": user_msg_str,
-                            "retrieval_query": user_msg_str,
-                            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                            "gate_score": gate_score_out,
-                            "drilldown_section": _resolved,
-                            "drilldown_resolution": _respath,
-                        }
-                return {
-                    "intent": gate_score_out.committed,
-                    "rewritten_query": user_msg_str,
-                    "retrieval_query": user_msg_str,
-                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                    "gate_score": gate_score_out,
-                }
-        except Exception as exc:
-            logger.warning(f"semantic gate skipped (intent classification degraded): {exc}")
-            gate_score_out = None
 
     # ── SECTION_DRILLDOWN ───────────────────────────────────────────────────
     # Refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
@@ -800,7 +720,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         else:
             retrieval_query = precomputed_queries
         logger.info(f"Pre-processor: reusing pre-computed query rewrite: {retrieval_query[:60]}")
-    elif len(messages) > 1 and len(_msg_stripped) <= _REWRITE_MAX_CHARS:
+    elif False:
         # Fallback rewrite: resolve coreference (e.g. "klo prinsipnya" → "prinsip client protection")
         # using conversation history. Only runs when chat.py didn't pre-compute.
         _msg_for_rewrite = _apply_glossary(_msg_stripped)
@@ -813,46 +733,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                 logger.info(f"Query rewritten: {_msg_stripped!r} → {rewritten[:60]!r}")
             retrieval_query = rewritten
 
-    # ── Semantic TOPIC_LIST fallback (regex missed) ─────────────────────────
-    # The regex Tier-1 can't catch every typo/paraphrase of "what can I learn?"
-    # ("materi yang kamu bisa pelajari", "bisa belajar apa hari ini"). These fell
-    # through to KNOWLEDGE → retrieved random chunks → the model listed granular
-    # sub-topics instead of the real section list. The embedding centroid
-    # recognises them cleanly (>=0.70, best=TOPIC_LIST), while content questions
-    # like "produk amartha apa aja" score ~0.58/best=KNOWLEDGE and correctly
-    # DON'T match.
-    #
-    # COST GUARD (pre-gate): the semantic check needs a fresh embed (~390ms), so
-    # we must NOT run it on every KNOWLEDGE turn. A topic-list question ALWAYS
-    # mentions a learning/topic hint word — so we first do a cheap substring
-    # gate. Pure content questions ("berapa bunga modal", "apa itu client
-    # protection") have no hint word → skip the embed entirely → zero added
-    # latency. Only the rare hint-bearing phrasing the regex missed pays the
-    # embed (and _embed_one caches it). Length-bounded so long real questions
-    # that happen to contain "materi" ("jelasin materi CP dong panjang lebar...")
-    # don't trigger the embed either.
-    _low_msg = user_msg_str.lower()
-    _TL_HINTS = ("belajar", "pelajar", "dipelajari", "materi", "topik", "tema",
-                 "konten", "course", "kursus", "pelatihan", "modul", "pembelajaran")
-    _tl_pregate = len(_low_msg) <= 60 and any(h in _low_msg for h in _TL_HINTS)
-    if _tl_pregate and not state.get("coaching_mode"):
-        try:
-            from app.graph.intent_classifier import is_topic_list_semantic
-            # Fresh embed inside the check (reusing the route embedding gave
-            # inconsistent borderline scores). Cached by _embed_one, and gated
-            # above so it only runs on hint-bearing, regex-missed phrasings.
-            # We pass the pre-computed query_embedding to reuse it and save latency.
-            if await is_topic_list_semantic(user_msg_str, query_embedding=state.get("query_embedding")):
-                logger.info("Pre-processor: semantic TOPIC_LIST fallback → no retrieval")
-                return {
-                    "intent": "TOPIC_LIST",
-                    "rewritten_query": user_msg_str,
-                    "retrieval_query": user_msg_str,
-                    "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                    "gate_score": gate_score_out,
-                }
-        except Exception as exc:
-            logger.debug(f"semantic TOPIC_LIST fallback skipped: {exc}")
 
     # ── Coaching (Socratic) promotion ───────────────────────────────────────
     # When the user has the coaching toggle ON (state.coaching_mode), a real
@@ -943,7 +823,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
     state['retrieved_context']. This replaces the first ReAct 'agent' call that
     previously just decided to use a tool.
     """
-    from app.retrieval.hybrid_retriever import hybrid_search
+    raise RuntimeError("rag_node is disabled in CAG mode")
 
     # Use the guarded retrieval query if available; it preserves critical
     # anchors that a standalone rewrite may legitimately hide from the UI.
@@ -981,7 +861,7 @@ async def _rag_node(state: RAGState, config: RunnableConfig):
             else [query_to_search]
         )
         if len(sub_queries) > 1:
-            from app.retrieval.hybrid_retriever import hybrid_search_multi
+            raise RuntimeError("rag_node is disabled in CAG mode")
             # reuse the route's embedding only for the primary sub-query (it
             # was embedded from resolved_query, which == queries[0] when no
             # safety-anchor differs — other sub-queries embed fresh in-cache).
@@ -1536,11 +1416,53 @@ async def _load_section_map() -> dict[str, list[str]]:
         return section_map
 
 
-def _match_section(query: str, sections: list[str]) -> str | None:  # noqa: ARG001
-    """REMOVED — replaced by UI-driven section navigation (see /chat/sections
-    endpoint + the topic-list button in the chat UI). Kept as a no-op stub only
-    if something still imports it; nothing in-tree does."""
-    return None
+_active_kb_cache: dict[str, Any] = {"hash": "", "content": "", "expires_at": 0.0}
+
+
+def clear_cag_kb_cache() -> None:
+    _active_kb_cache.update({"hash": "", "content": "", "expires_at": 0.0})
+    _course_cache.update({"courses": [], "expires_at": 0.0})
+    _section_map_cache.update({"map": {}, "expires_at": 0.0})
+
+
+async def _load_active_cag_kb_text() -> str:
+    now = time.time()
+    if "content" in _active_kb_cache and now < _active_kb_cache.get("expires_at", 0.0):
+        return _active_kb_cache["content"]
+
+    from app.database.postgres import AsyncSessionLocal
+    from app.knowledge.store import get_active_kb_pack
+
+    try:
+        async with AsyncSessionLocal() as session:
+            active = await get_active_kb_pack(session, source=_settings.cag_kb_source)
+            if active:
+                _active_kb_cache.update({
+                    "hash": active.kb_hash,
+                    "content": active.content,
+                    "expires_at": now + 60.0,
+                })
+                return active.content
+    except Exception as exc:
+        logger.warning(f"Failed to load active cag kb text: {exc}")
+    return ""
+
+
+def _openrouter_prompt_session_id(*parts: str) -> str:
+    stable_prefix = "\n".join(part for part in parts if part)
+    if not stable_prefix:
+        return ""
+    return "ava-prefix-" + hashlib.sha256(stable_prefix.encode()).hexdigest()[:32]
+
+
+def _with_openrouter_session(llm, session_id: str | None):
+    session_id = str(session_id or "").strip()[:256]
+    if not session_id:
+        return llm
+    if not hasattr(llm, "bind"):
+        return llm
+    extra_body = dict(getattr(llm, "extra_body", None) or {})
+    return llm.bind(extra_body={**extra_body, "session_id": session_id})
 
 
 async def _generate_node(state: RAGState, config: RunnableConfig):
@@ -1548,85 +1470,39 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 
     One CONVERSATIONAL_PROMPT handles everything: greetings, identity, meta-turns
     ("kok gini", "ga nyambung"), chit-chat, and grounded KB answers. Retrieved
-    context is injected ONLY when it's actually relevant (the dense-floor gate
-    via _route_after_rag passes); for a greeting / off-scope / no-match turn we
-    inject NO context, so the model never gets irrelevant chunks forced into a
-    casual reply — it just answers conversationally or says it doesn't have that
-    info. Memory (STM summary, LTM profile, user prefs) is always injected when
-    present. Conciseness + the detail/teach escalation live in the prompt.
+    context is injected ONLY when it's actually relevant; for a greeting / off-scope
+    / no-match turn we inject NO context, so the model never gets irrelevant chunks
+    forced into a casual reply — it just answers conversationally or says it doesn't
+    have that info. Memory (STM summary, LTM profile, user prefs) is always injected
+    when present. Conciseness + the detail/teach escalation live in the prompt.
     """
-    chunks = state.get("retrieved_context") or []
     summary = state.get("conversation_summary") or ""
     profile = state.get("user_profile") or {}
     intent = state.get("intent") or "KNOWLEDGE"
 
-    # Inject context ONLY when retrieval is genuinely relevant.
-    # If we reached generate_node, the route already decided "generate" (or this is a
-    # non-KNOWLEDGE intent that bypassed the gate). Trust the routing.
-    has_kb_context = bool(chunks) and state.get("intent") in ("KNOWLEDGE", "COACHING")
+    cag_kb_text = ""
+    if intent in ("KNOWLEDGE", "COACHING"):
+        try:
+            cag_kb_text = await _load_active_cag_kb_text()
+        except Exception as exc:
+            logger.warning(f"CAG KB pack load failed: {exc}")
 
+    has_kb_context = bool(cag_kb_text)
     context_section = ""
-    if has_kb_context:
-        # Fix A — set/list enumeration ("produk apa aja", "sebutkan semua",
-        # "8 prinsip"): the answer oscillated across multi-turn (model defended
-        # an earlier wrong count, e.g. "dua doang"). Two mitigations:
-        #  (1) surface the most enumerative chunk (the summary/overview that
-        #      lists the whole set as bullets) FIRST so the complete list is
-        #      salient to a weak model, and
-        #  (2) a directive to re-derive the full set from context every turn,
-        #      ignoring any count stated in a prior turn.
-        import re as _re
-        _user_q = (state.get("rewritten_query") or state.get("retrieval_query") or "").lower()
-        _is_set_list = bool(_re.search(
-            r"\bapa\s*aja\b|\bapa\s*saja\b|\bsebut(?:kan|in|ke)\b|\bsemua\b|"
-            r"\bdaftar\b|\blist\b|\b\d+\s+(?:produk|prinsip|value|nilai|jenis|macam|tipe|fitur)\b",
-            _user_q,
-        ))
-        _ordered = chunks
-        if _is_set_list and len(chunks) > 1:
-            # Bullet-rich chunk = the summary/overview that enumerates the set.
-            def _bullet_count(c):
-                return len(_re.findall(r"(?m)^\s*[-*]\s", c.get("text", "")))
-            _ordered = sorted(chunks, key=_bullet_count, reverse=True)
-
-        # Per-chunk char cap, ATX-heading strip (so an echoed chunk can't render
-        # as an <h1>), then a token ceiling on the whole block.
-        chunk_char_cap = _settings.lms_chunk_text_max_chars
-        context_lines = []
-        for i, c in enumerate(_ordered, 1):
-            chunk_text = _normalize_dashes(_strip_md_headings_for_context(c.get("text", "")))
-            if chunk_char_cap and len(chunk_text) > chunk_char_cap:
-                chunk_text = chunk_text[:chunk_char_cap].rstrip() + "…"
-            context_lines.append(
-                f"[{i}] Course: {c.get('course_name', '?')} (ID:{c.get('course_id', '?')})\n"
-                f"{chunk_text}"
-            )
-        context_str = truncate_to_tokens(
-            "\n\n---\n\n".join(context_lines), _settings.max_context_tokens
+    if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
+        context_section = (
+            "\n\n<knowledge_base_missing>\n"
+            "No active CAG knowledge base pack is available. Ask an admin to run Moodle KB sync first."
+            "\n</knowledge_base_missing>"
         )
-        context_section = f"\n\n<retrieved_context>\n{context_str}\n</retrieved_context>"
-        # NOTE: the set/list enumeration RULE lives in <grounding> in the system
-        # prompt (stable, rarely echoed). We deliberately do NOT append a
-        # plain-prose directive to the context here — Flash Lite echoed it
-        # verbatim to the user ("CATATAN PENTING: ..."). The chunk reordering
-        # above (summary-first) is the structural nudge; the prompt carries the
-        # instruction.
 
-    # TOPIC_LIST: the user asked what materials/topics exist ("ada materi apa
-    # aja"). This is a no-retrieval intent, so inject the GROUND-TRUTH course
-    # list from Postgres — otherwise the model invents plausible-sounding topics
-    # (the bug). The prompt is told to list ONLY these.
+    # TOPIC_LIST: the user asked what materials/topics exist ("ada materi apa aja").
     topics_section = ""
     if intent == "TOPIC_LIST":
         try:
             course_names = await _load_course_names()
         except Exception:
             course_names = []
-        # DATA ONLY — the "list these verbatim / don't invent" instruction lives
-        # in CONVERSATIONAL_PROMPT's <grounding> block, NOT here. Appending a
-        # plain-prose directive right after the data made the weak generator
-        # echo it verbatim to the user (the topic-list leak). Same lesson as
-        # context_section above: keep injected blocks pure data.
         if course_names:
             topics_section = (
                 "\n\n<available_topics>\n"
@@ -1634,24 +1510,12 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
                 + "\n</available_topics>"
             )
         else:
-            # Empty list = Postgres load failed or no docs ingested. The non-empty
-            # sentinel string still flips _is_grounded → True (deterministic temp-0
-            # client) and the prompt's <grounding> rule tells the model to admit it
-            # can't load the list rather than fabricate topics.
             topics_section = (
                 "\n\n<available_topics>\n(could not load topic list right now)\n"
                 "</available_topics>"
             )
 
-    # Section drill-down. Two paths (Jun 2026):
-    # (1) SECTION_DRILLDOWN (priority): `_pre_processor` resolved the section
-    #     name from query/history and stored it in state["drilldown_section"].
-    #     Inject the canonical list of items — fully dynamic, no KB dep.
-    #     Handles "bisnis proses ada apa aja", "yang kedua", "topik B",
-    #     "di leadership materinya apa".
-    # (2) Legacy fallback: when retrieved KB chunks concentrate (>=60%) in one
-    #     section, infer that section and inject its items. Used when the
-    #     question is implicitly about a section but drilldown didn't fire.
+    # Section drill-down.
     section_section = ""
     drilldown_sec = state.get("drilldown_section")
     if drilldown_sec:
@@ -1672,24 +1536,8 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         else:
             logger.warning(
                 f"SECTION_DRILLDOWN resolved section={drilldown_sec!r} but "
-                f"section_map has no items - falling back to legacy path"
+                f"section_map has no items"
             )
-    if not section_section and has_kb_context and chunks:
-        from collections import Counter as _Counter
-        secs = [c.get("section_name", "").strip() for c in chunks if c.get("section_name", "").strip()]
-        if secs:
-            dom_sec, dom_n = _Counter(secs).most_common(1)[0]
-            if dom_n >= max(2, (len(chunks) * 3 + 4) // 5):  # >=60% of chunks
-                try:
-                    items = (await _load_section_map()).get(dom_sec, [])
-                except Exception:
-                    items = []
-                if len(items) > 1:  # a 1-item section has nothing to drill into
-                    section_section = (
-                        f"\n\n<section_materials section=\"{dom_sec}\">\n"
-                        + "\n".join(f"- {it}" for it in items)
-                        + "\n</section_materials>"
-                    )
 
     # Long-term memory (LTM profile)
     ltm_section = ""
@@ -1725,9 +1573,9 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
         if prefs.get("custom_instructions"):
             ci = prefs["custom_instructions"]
-            import re
-            ci = re.sub(r"<[^>]+>", "", ci)
-            ci = re.sub(
+            import re as _re2
+            ci = _re2.sub(r"<[^>]+>", "", ci)
+            ci = _re2.sub(
                 r"(?i)(?:ignore|forget|disregard|override)\s+(?:all\s+)?(?:previous|above|prior|system)\s+(?:instructions?|rules?|prompts?)",
                 "[filtered]",
                 ci,
@@ -1742,9 +1590,6 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             )
 
     # Live Moodle profile of the person asking (firstname + custom fields).
-    # Lets Ava greet by name and tailor answers to their dept/role/location.
-    # Rendered only when at least one field is present (greetings from a
-    # tokenless dev session carry nothing).
     user_ctx_section = ""
     uctx = state.get("user_context") or {}
     if uctx:
@@ -1772,80 +1617,51 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 
     dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
-    # Temperature split (no extra tokens — just which pre-built client we call):
-    #   - GROUNDED turn (KB <context> present, or a TOPIC_LIST with the real
-    #     course list) → temp 0.0 (get_generate_llm) so factual / enumeration
-    #     answers are deterministic and consistent turn-to-turn. Fixes the
-    #     "produk apa aja" giving a different list each time at temp 0.4.
-    #   - CONVERSATIONAL turn (greeting, identity, vent, meta, no context) →
-    #     temp 0.4 (get_chat_llm) so chit-chat stays warm and natural.
-    #   - COACHING turn → temp 0.4 (get_chat_llm): the Socratic guiding question
-    #     needs warmth/variation to feel like a trainer, not a form. Faithfulness
-    #     is still enforced by SOCRATIC_PROMPT's grounding rules + the dense-floor
-    #     gate (context injected only when relevant).
-    # All clients share the same model/provider/streaming/usage flags. Coaching
-    # uses a DIFFERENT cached system prefix (SOCRATIC_PROMPT) — that's a separate
-    # prompt-cache entry, still cacheable, just not shared with the conv prefix.
     is_coaching = intent == "COACHING"
     _is_grounded = (has_kb_context or bool(topics_section) or bool(section_section)) and not is_coaching
-    llm = get_generate_llm() if _is_grounded else get_chat_llm()
     windowed_messages = _window_generate_history(
         list(state["messages"]),
         max_fresh_turns=_settings.max_fresh_turns,
         max_ai_chars=_settings.max_history_ai_chars,
     )
-    # Static system prompt kept byte-stable (dynamic per-turn context lives in a
-    # separate HumanMessage) so the upstream's automatic prefix cache can hit on
-    # the 2nd+ call. No explicit cache_control breakpoint: the configured
-    # generators (DeepSeek native, Gemini via Vertex) BOTH cache implicitly /
-    # server-side, where cache_control is a no-op — it's an Anthropic-style lever
-    # (also honored by Alibaba on OpenRouter). If you ever pin the generator to a
-    # provider that requires explicit breakpoints, re-add it here.
-    #
-    # Per-intent prompt selection (Option C — saves ~900 tok on chit-chat turns):
-    #   - COACHING → SOCRATIC_PROMPT (full Socratic scaffolding)
-    #   - KNOWLEDGE / TOPIC_LIST → CONVERSATIONAL_PROMPT (full grounding rules)
-    #   - GREETING / AMBIGUOUS / OFF_SCOPE → CHIT_CHAT_PROMPT (minimal, no KB)
+
     if is_coaching:
         system_prompt_text = SOCRATIC_PROMPT
     elif intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE"):
         system_prompt_text = CHIT_CHAT_PROMPT
     else:
-        # KNOWLEDGE, TOPIC_LIST
+        # KNOWLEDGE, TOPIC_LIST, SECTION_DRILLDOWN
         system_prompt_text = CONVERSATIONAL_PROMPT
+
+    openrouter_session_id = _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
+    llm = _with_openrouter_session(
+        get_generate_llm() if _is_grounded else get_chat_llm(),
+        openrouter_session_id,
+    )
+
     system_msg = SystemMessage(content=system_prompt_text)
     msgs: list = [system_msg]
-    # Dynamic per-turn context (LTM/summary/topics/sections/<context>) lives in a
-    # SEPARATE HumanMessage, NOT appended to the SystemMessage. Reason: the system
-    # prompt must stay byte-stable turn-to-turn so the upstream's implicit prefix
-    # cache (Gemini via Vertex) can hit on call 2+. Appending dynamic_tail to
-    # system_msg.content invalidated the prefix every turn → full-latency generate
-    # each call. A standalone context message keeps the prefix cacheable while still
-    # feeding the model the same context. (OpenRouter/Gemini treat the first
-    # HumanMessage as the user turn — placing context before the real user turn is
-    # fine since the final windowed_messages ends with the live HumanMessage.)
+    if cag_kb_text:
+        msgs.append(SystemMessage(content=cag_kb_text))
     if dynamic_tail:
         msgs.append(HumanMessage(content=dynamic_tail))
     msgs += windowed_messages
 
     _t0 = time.monotonic()
     try:
-        response = await llm.ainvoke(msgs, config=config)
+        response = None
+        async for chunk in llm.astream(msgs, config=config):
+            response = chunk if response is None else response + chunk
     except Exception as gen_exc:
-        # Streaming retry-fallback: get_generate_llm runs streaming=True. If a
-        # pinned provider (alibaba/baidu/novita) corrupts the SSE stream
-        # mid-generation, the error raises inside astream_events at the chat.py
-        # layer — uncatchable there. ainvoke here surfaces it as a clean
-        # exception, so fall back to the non-stream client and retry once.
-        # Non-stream is atomic: either it returns a full AIMessage or it raises
-        # again (re-raised to the graph's error path). This keeps a provider
-        # SSE flake from producing a partial/empty answer.
         logger.warning(
             f"generate_node stream ainvoke failed ({type(gen_exc).__name__}), "
             f"retrying non-stream: {gen_exc}"
         )
         _t0 = time.monotonic()
-        response = await get_generate_llm_nostream().ainvoke(msgs, config=config)
+        response = await _with_openrouter_session(
+            get_generate_llm_nostream(),
+            openrouter_session_id,
+        ).ainvoke(msgs, config=config)
     await _log_cache_usage(
         response,
         "generate",
@@ -1853,9 +1669,6 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         started_at=_t0,
     )
 
-    # Defensive anti-leak: strip any <retrieved_context>/<user_history>/etc. block
-    # the model may have echoed verbatim (also prevents `# Heading` chunks from
-    # rendering as 4x font). Prompt-level OUTPUT_CONTRACT handles the 99% case.
     raw = response.content if hasattr(response, "content") else str(response)
     if isinstance(raw, str):
         cleaned = _sanitize_answer(raw)
@@ -1992,18 +1805,18 @@ def _route_after_rag(state: RAGState) -> str:
 def _build_agent_graph():
     """Build and compile the minimal conversational RAG StateGraph.
 
-    Collapsed from the old 9-node / 7-intent router to 4 nodes. Routing by the
+    Collapsed from the old RAG router to a CAG graph. Routing by the
     regex Tier-1 label set in _pre_processor (no LLM):
         START → pre_processor → MALICIOUS                    → malicious      → END
                               → GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST
                                                               → generate_node → END  (no retrieval)
-                              → KNOWLEDGE → rag_node          → generate_node → END
+                              → KNOWLEDGE/COACHING            → generate_node → END
 
     Chit-chat / no-lookup intents skip retrieval entirely and go straight to the
     conversational generate node with NO <context> — so a greeting or a vague
     "info dong" never gets an irrelevant chunk dumped on it, and the prompt asks
-    a clarifying question instead of guessing. Only a real KNOWLEDGE question
-    retrieves. generate_node is the single conversational LLM call; the canned
+    a clarifying question instead of guessing. Knowledge turns answer from the
+    full active CAG KB pack in generate_node. The canned
     handlers (greeting/ambiguity/off_scope/topic_list/low_relevance) are gone —
     their behavior lives in CONVERSATIONAL_PROMPT.
     """
@@ -2012,8 +1825,6 @@ def _build_agent_graph():
     # Nodes
     builder.add_node("pre_processor", _pre_processor)
     builder.add_node("malicious", _handle_malicious)
-    builder.add_node("rag_node", _rag_node)
-    builder.add_node("low_relevance", _handle_low_relevance)
     builder.add_node("generate_node", _generate_node)
 
     # Edges
@@ -2032,27 +1843,12 @@ def _build_agent_graph():
             # from query/history and injects its canonical items via
             # `<section_materials>` — no KB retrieval needed, straight to generate.
             "SECTION_DRILLDOWN": "generate_node",
-            # Real question → retrieve first.
-            "KNOWLEDGE": "rag_node",
-            # Coaching (Socratic) also retrieves first — the guiding question
-            # must be grounded in the KB, so it flows through rag_node too.
-            "COACHING": "rag_node",
+            # CAG answers from the full active KB pack in generate_node.
+            "KNOWLEDGE": "generate_node",
+            "COACHING": "generate_node",
         },
     )
     builder.add_edge("malicious", END)
-    # rag_node → generate_node, UNLESS a KNOWLEDGE turn fell below the dense
-    # floor — then route to the deterministic low_relevance refusal (no LLM, so
-    # the model can't invent facts when nothing valid was retrieved). COACHING
-    # below-floor still flows to generate_node (Socratic prompt handles it).
-    builder.add_conditional_edges(
-        "rag_node",
-        _route_after_retrieval,
-        {
-            "low_relevance": "low_relevance",
-            "generate_node": "generate_node",
-        },
-    )
-    builder.add_edge("low_relevance", END)
     builder.add_edge("generate_node", END)
 
     return builder.compile()

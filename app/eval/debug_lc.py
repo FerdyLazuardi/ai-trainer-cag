@@ -1,6 +1,5 @@
 """Debug script: inspect raw intent_scores from one eval case."""
 import asyncio
-import json
 from app.eval.runner import run_one_query
 
 

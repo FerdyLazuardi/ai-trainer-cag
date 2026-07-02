@@ -16,7 +16,7 @@
 #
 # KEPT SEPARATE FROM intent_seed.yaml ON PURPOSE:
 #   • intent_seed.yaml  = full UTTERANCES per intent → used by
-#     intent_classifier.py for embedding similarity (training centroids).
+#     legacy semantic classifier data.
 #   • intent_patterns.yaml = KEYWORDS / REGEX → used by intent_rules.py
 #     for cheap pre-filtering.
 #   Different shapes, different consumers, different lifecycles — merging them

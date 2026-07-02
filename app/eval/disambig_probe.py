@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from app.graph.pipeline import CONVERSATIONAL_PROMPT, _sanitize_answer, _sanitize_answer
+from app.graph.pipeline import CONVERSATIONAL_PROMPT, _sanitize_answer
 from app.eval.hallucination_probe import _call_llm  # reuse live OpenRouter caller
 
 # KB with MULTIPLE distinct sets behind the same bare term.

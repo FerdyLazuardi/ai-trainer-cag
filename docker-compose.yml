@@ -1,222 +1,96 @@
 services:
-
   api:
     build: .
-    container_name: peped-api
-    # Memory ceiling (cgroup). Idle RSS ~860MB (fastembed BM25 + embed config).
-    # H3 trim 2g→1.75g: leaves ~890MB burst headroom for ~24 in-flight pipelines
-    # (~30-40MB each). WATCH ITEM — if api OOM/swaps under burst, revert to 2g and
-    # eat the +0.25g (total 6.52g still < old 6.77g); do NOT claw it back from
-    # Qdrant/Redis. Prevents one runaway from OOM-ing the whole 8GB box.
-    mem_limit: 1750m
-    mem_reservation: 1g
+    container_name: cag-lms-api
     ports:
-      - "8001:8000"
+      - "8011:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     env_file:
       - .env
     environment:
+      APP_PORT: "8000"
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: '5432'
+      POSTGRES_PORT: "5432"
       REDIS_HOST: redis
-      REDIS_PORT: '6379'
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: '6333'
-      # Cap BLAS/onnxruntime thread pools to the 2 available vCPUs so the
-      # fastembed BM25 sparse encoder doesn't oversubscribe cores and thrash P95.
-      OMP_NUM_THREADS: '2'
-      MKL_NUM_THREADS: '2'
-      # API pool: 8 base + 12 overflow = 20 connections max. Sized to
-      # cover 24 in-flight pipelines × ~1 connection each (gather'd in
-      # _prepare_rag_context fans out but most queries return in <10ms
-      # so the steady-state checkout is well under the cap). Combined
-      # with the worker's 10, total = 30 vs Postgres max_connections=50.
-      POSTGRES_POOL_SIZE: '8'
-      POSTGRES_MAX_OVERFLOW: '12'
-      # Single source of truth for uvicorn worker count: this env var AND the
-      # --workers flag below both interpolate from the SAME ${WEB_CONCURRENCY}
-      # (host/.env, default 1). They can't diverge, so the in-process pipeline
-      # semaphore guard in app/api/concurrency.py (which reads WEB_CONCURRENCY
-      # and raises if != 1) actually gates the real worker count. Bumping this
-      # to 2 makes --workers=2 AND trips the guard loud at boot — until the
-      # Redis token-bucket lands, multi-worker stays a fail-fast, not a silent
-      # 2×12=24-concurrent-LLM OOM.
-      WEB_CONCURRENCY: '${WEB_CONCURRENCY:-1}'
+      REDIS_PORT: "6379"
+      POSTGRES_POOL_SIZE: "4"
+      POSTGRES_MAX_OVERFLOW: "4"
+      MAX_CONCURRENT_PIPELINES: "8"
+      WEB_CONCURRENCY: "${WEB_CONCURRENCY:-1}"
+      RETRIEVAL_MODE: cag
+      CAG_KB_SOURCE: moodle
     restart: unless-stopped
     volumes:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
-      - peped_hf_cache:/root/.cache/huggingface
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz',timeout=3).status==200 else 1)"]
       interval: 15s
       timeout: 5s
       retries: 3
-    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${WEB_CONCURRENCY:-1}" ]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${WEB_CONCURRENCY:-1}"]
 
   worker:
     build: .
-    container_name: peped-worker
-    # Idle RSS ~370MB; background jobs (LTM sync, eval, moodle/portfolio sync)
-    # are bursty but at streaq concurrency=2 two simultaneous heavy jobs (LLM
-    # call + Qdrant upsert + Postgres + bge-m3 BM25 encoder) can hit ~1.1GB
-    # transient — the previous 1G ceiling caused OOM-kills when 2 jobs ran
-    # concurrently. 1.5G keeps two-burst headroom without overcommitting the
-    # 8GB host. Sum of hard mem_limits: api 1750 + worker 1536 + postgres 768 +
-    # redis 1024 + qdrant 1280 = ~6.36G committed ceiling, leaving ~1.64G for the
-    # guest OS + dockerd + sshd. mem_limit is a per-container cgroup cap, so a
-    # single container that balloons is OOM-killed in isolation — but if api
-    # (burst), a 2-job worker peak (~1.1G), and a Redis BGSAVE COW fork (~840MB)
-    # all peak together the HOST can exceed physical RAM. Margin is real but
-    # thin; no swap tuning, so an overage thrashes. Re-check this sum before
-    # raising any single limit.
-    mem_limit: 1.5g
-    mem_reservation: 768m
+    container_name: cag-lms-worker
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     env_file:
       - .env
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: '5432'
+      POSTGRES_PORT: "5432"
       REDIS_HOST: redis
-      REDIS_PORT: '6379'
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: '6333'
-      # Cap BLAS/onnxruntime thread pools to the 2 available vCPUs. Harmless
-      # guard against transitive oversubscription in sync/eval/ltm jobs.
-      OMP_NUM_THREADS: '2'
-      MKL_NUM_THREADS: '2'
-      # Worker pool: 4 base + 6 overflow = 10 connections max. Cron
-      # jobs (moodle sync, LTM sync, portfolio sync, eval) run
-      # sequentially inside a single streaq worker (`concurrency=2`), so
-      # 10 is plenty. Combined with the API's 20 = 30 vs
-      # Postgres max_connections=50.
-      POSTGRES_POOL_SIZE: '4'
-      POSTGRES_MAX_OVERFLOW: '6'
+      REDIS_PORT: "6379"
+      POSTGRES_POOL_SIZE: "2"
+      POSTGRES_MAX_OVERFLOW: "2"
+      RETRIEVAL_MODE: cag
+      CAG_KB_SOURCE: moodle
     restart: unless-stopped
     volumes:
       - .:/app
       - /app/.venv
       - ./logs:/app/logs
-      - peped_hf_cache:/app/.cache/huggingface
-    command: [ "streaq", "run", "app.worker:worker" ]
+    command: ["streaq", "run", "app.worker:worker"]
 
   postgres:
     image: postgres:16
-    container_name: peped-postgres
-    # Idle ~40MB; ceiling covers shared_buffers + up to 30 pooled connections.
-    mem_limit: 768m
-    mem_reservation: 256m
-    command: >
-      postgres
-      -c max_connections=50
-      -c shared_buffers=256MB
-      -c effective_cache_size=512MB
-      -c work_mem=4MB
+    container_name: cag-lms-postgres
     environment:
-      POSTGRES_DB: lms_ai
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: "${POSTGRES_DB:-cag_lms}"
+      POSTGRES_USER: "${POSTGRES_USER:-admin}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
     ports:
-      - "5445:5432"
+      - "5455:5432"
     volumes:
-      - peped_postgres_data:/var/lib/postgresql/data
+      - cag_lms_postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U admin -d lms_ai" ]
+      test: ["CMD-SHELL", "pg_isready -U admin -d cag_lms"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:8.6.3-alpine
-    container_name: peped-redis
-    # mem_limit 1g (cgroup) vs maxmemory 600mb (in command): the gap is
-    # DELIBERATE. RDB is active (default save points 3600 1 / 300 100 / 60 10000,
-    # verified live post-migration), so BGSAVE forks a child that shares pages
-    # copy-on-write; under a write burst the fork can transiently add ~150-200MB
-    # on top of the dataset. With maxmemory 600mb the fork peak (600 + ~40
-    # baseline + ~200 COW ≈ 840MB) keeps ~180MB headroom under the 1g cgroup. At
-    # the previous 768mb it peaked ~1008MB and risked an OOM-kill during BGSAVE
-    # that would take down the streaq QUEUE + conversation history + cache
-    # together. Durability unchanged (RDB still on).
-    #
-    # FF 5.3 audit (resolved): RDB STAYS ON, maxmemory STAYS at 600mb. The
-    # non-regenerable data is the streaq job QUEUE (queued LTM-sync/eval jobs,
-    # no TTL) — NOT rag:conv_owner:*. Ownership keys are loss-tolerant: on a
-    # restart they die together with the rag:conv:* history HASH they gate (same
-    # instance), so there's no orphan-authz window. RDB is PER-INSTANCE not
-    # per-DB, so even though the queue now lives on its own logical DB
-    # (redis_queue_db=1), `save ""` would stop persisting it too and drop
-    # in-flight jobs across restarts. Hence the hoped-for "switch to save '' +
-    # restore 768mb" is REJECTED — the queue's durability requires the fork, and
-    # the fork requires the 600mb headroom. (Open security follow-up, out of
-    # scope here: rag:conv_owner:* has a 7d TTL so it is independently evictable
-    # under volatile-lru; an evicted owner + surviving history HASH allows a
-    # re-claim → cross-user read. Fix later by moving owner keys to the no-TTL
-    # queue DB or backing them with Postgres.)
-    #
-    # io-threads left at server default (1): the 2-vCPU box gains nothing from
-    # threading I/O, and extra threads would eat into the cgroup's CPU share.
-    mem_limit: 1g
-    mem_reservation: 640m
-    # volatile-lru (NOT allkeys-lru): this single Redis is shared by the query
-    # cache, conversation history, the streaq job QUEUE, rate-limit counters, and
-    # the agent_log buffer. allkeys-lru would evict ANY key under memory
-    # pressure — including the queued LTM/eval jobs and the log buffer, which
-    # carry NO TTL — silently dropping scheduled work. volatile-lru only evicts
-    # keys that have an explicit TTL (cache/history/rate-limit), so the no-TTL
-    # queue + buffer are never sacrificed to make room for cache growth.
-    # --maxmemory-samples 10: Redis 8.0+ raised the LRU sample default to 10 for
-    # better eviction fidelity; cost is negligible vs. the old default of 5.
+    container_name: cag-lms-redis
     command: ["redis-server", "--maxmemory", "600mb", "--maxmemory-policy", "volatile-lru", "--maxmemory-samples", "10"]
     ports:
-      - "6381:6379"
+      - "6391:6379"
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
 
-  qdrant:
-    image: qdrant/qdrant:v1.18.1
-    container_name: peped-qdrant
-    # Idle ~120MB at 42 KB chunks. H3 trim 1.5g→1.25g, justified by H4: base LTM
-    # dense vectors are on_disk=True and H4 moved the INT8 quantized mirror
-    # off-RAM too, so resident footprint is now dominated by the HNSW graph links
-    # (tens-to-low-hundreds MB even at ~650k vectors) + payload index. 1.25g holds
-    # growth comfortably. COUPLING: if quant always_ram flips back to True, this
-    # ceiling MUST go back up. mem_reservation protects the HNSW graph from swap.
-    mem_limit: 1280m
-    mem_reservation: 384m
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/6333 && echo -e 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    ports:
-      - "6335:6333"
-      - "6336:6334"
-    volumes:
-      - peped_qdrant_storage:/qdrant/storage
-    restart: unless-stopped
-
 volumes:
-  peped_postgres_data:
-  peped_qdrant_storage:
-  peped_hf_cache:
+  cag_lms_postgres_data:

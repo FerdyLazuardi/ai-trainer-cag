@@ -51,7 +51,7 @@ def _release_slot() -> None:
 
 
 async def acquire_pipeline_slot() -> asyncio.Semaphore:
-    """Acquire one permit for a non-streaming RAG call.
+    """Acquire one permit for a non-streaming CAG call.
 
     Returns the semaphore itself; release in a `finally` block:
 
@@ -72,14 +72,14 @@ async def acquire_pipeline_slot() -> asyncio.Semaphore:
     except asyncio.TimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="RAG pipeline is at capacity. Please retry shortly.",
+            detail="CAG pipeline is at capacity. Please retry shortly.",
             headers={"Retry-After": "5"},
         ) from exc
     return _pipeline_sem
 
 
 async def acquire_pipeline_slot_or_503() -> Callable[[], None]:
-    """Acquire a permit for a streaming RAG call (SSE).
+    """Acquire a permit for a streaming CAG call (SSE).
 
     Returns a synchronous `release` callable that the StreamingResponse
     generator MUST invoke in its `finally` block, so the permit is held
@@ -112,7 +112,7 @@ async def acquire_pipeline_slot_or_503() -> Callable[[], None]:
     except asyncio.TimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="RAG pipeline is at capacity. Please retry shortly.",
+            detail="CAG pipeline is at capacity. Please retry shortly.",
             headers={"Retry-After": "5"},
         ) from exc
 

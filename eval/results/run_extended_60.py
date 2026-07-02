@@ -134,7 +134,7 @@ async def call_llm(messages, timeout=30):
     h = {
         "Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/ai-lms-agent",
-        "X-Title": "AI LMS Agent (Extended 60Q)",
+        "X-Title": "CAG AI Trainer (Extended 60Q)",
     }
     async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.post(API_URL, json=body, headers=h)

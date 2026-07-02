@@ -7,30 +7,20 @@ requires-python = ">=3.12"
 dependencies = [
     "asyncpg>=0.30.0",
     "fastapi>=0.135.1",
-    "fastembed>=0.7.4",
     "httpx>=0.28.1",
     "langchain-core>=1.2.18",
     "langchain-openai>=1.1.11",
     "langgraph>=1.0.10",
-    "llama-index-core>=0.10.20",
-    "llama-index-vector-stores-qdrant>=0.1.4",
-    "llama-index-embeddings-openai-like>=0.1.0",
     "loguru>=0.7.3",
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.10.0",
     "pyyaml>=6.0",
-    "qdrant-client>=1.17.0",
     "redis>=7.3.0",
     "sqlalchemy>=2.0.48",
     "tiktoken>=0.12.0",
     "tzdata>=2024.2",
     "uvicorn[standard]>=0.41.0",
     "streaq>=7.0.0",
-    "beautifulsoup4>=4.12.3",
-    "markdownify>=0.13.1",
-    "pypdf>=4.3.1",
-    "cachetools>=7.0.0",
-    "python-frontmatter>=1.1.0",
 ]
 
 [dependency-groups]
@@ -69,8 +59,7 @@ files = ["app"]
 # environment, so `Settings()` with no kwargs is valid (was 4 false-positive
 # "Missing named argument" errors at settings.py call sites).
 plugins = ["pydantic.mypy"]
-# Third-party surfaces without complete stubs (streaq, qdrant_client,
-# langchain_openai, llama_index) would otherwise drown the gate in stub-gap
+# Third-party surfaces without complete stubs (streaq, langchain_openai) would otherwise drown the gate in stub-gap
 # noise unrelated to our code. Keep the signal on our own type errors.
 ignore_missing_imports = true
 follow_imports = "silent"

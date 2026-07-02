@@ -3,7 +3,6 @@
 Run: python -m app.tests.test_topic_streak  (asserts, no framework)
 """
 import asyncio
-import json
 
 from app.agents import conversation_state as cs
 

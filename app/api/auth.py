@@ -3,7 +3,6 @@ JWT Authentication logic for validating tokens issued by Moodle LMS.
 """
 import jwt
 import time
-import uuid
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials

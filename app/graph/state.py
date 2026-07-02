@@ -49,7 +49,7 @@ class RAGState(TypedDict):
     query_embedding: Optional[List[float]]
     query_embedding_text: Optional[str]
     # C4 — pool-level retrieval signals written by rag_node and read by
-    # _route_after_rag. Max raw dense cosine / raw BM25 over the FULL fetch_k
+    # Legacy retrieval telemetry kept for old logs/tests. Max raw dense cosine / raw BM25 over the FULL fetch_k
     # candidate pool (pre top-k slice), so the NOT-FOUND gate isn't fooled by a
     # high-dense chunk that fell below the fused top-k. `dense_retrieval_ok` is
     # False when retrieval degraded to sparse-only (embedding outage, C5).

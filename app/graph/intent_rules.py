@@ -6,11 +6,9 @@ and fall through to the KNOWLEDGE retrieval path (the pipeline default) —
 this module just short-circuits the unambiguous 60-70% of traffic.
 
 NOTE (current state): this module is Ava-only, and Ava's `_pre_processor`
-(app/graph/pipeline.py) NO LONGER calls an LLM to classify intent. The old
-LLM classifier described below has been removed entirely; an unmatched query
-now defaults to KNOWLEDGE, with an embedding-based TOPIC_LIST fallback
-(intent_classifier.py) for the topic-list case. Askfer has its own separate
-LLM pre-processor and does NOT use this module.
+(app/graph/pipeline.py) NO LONGER calls an LLM or embedding classifier for
+intent. An unmatched query now defaults to KNOWLEDGE. Askfer has its own
+separate LLM pre-processor and does NOT use this module.
 
 History (why this module exists): the original LLM classifier (Gemini Flash
 Lite) was bouncing on edge cases when its prompt grew to cover every intent —
@@ -18,7 +16,7 @@ each prompt iteration that fixed one case broke another. Pulling deterministic
 patterns out eliminated flakiness for things that were never genuinely
 ambiguous (math, single emoji, "kamu siapa") and saved LLM cost + latency.
 The LLM classification step was later dropped completely, leaving these rules
-(plus the semantic gate) as the only pre-retrieval classifier.
+as the only pre-generation classifier.
 
 Design:
   - Each rule is a function (text, low) -> Optional[Intent]

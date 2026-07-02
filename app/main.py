@@ -13,8 +13,7 @@ from loguru import logger
 
 from app.config.logging import setup_logging
 from app.config.settings import get_settings
-from app.api.routes import chat, ingest, askfer
-from app.worker import worker  # shared streaq Worker instance for status_by_id from API
+from app.api.routes import chat, ingest
 
 settings = get_settings()
 
@@ -106,11 +105,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     on startup, both safe to run in the API process.
     """
     setup_logging(debug=settings.app_debug)
+    from app.worker import worker  # shared streaq Worker instance for API enqueue/status helpers
 
     async with worker:
         from app.database.postgres import init_db
         from app.database.redis_client import get_redis_client
-        from app.database.qdrant_client import get_qdrant_client
         from app.utils.logger_batch import batch_logger
 
         logger.info("Starting application", env=settings.app_env)
@@ -200,58 +199,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             judge=settings.judge_llm_model,
         )
 
-        import asyncio
-        # Wait for Qdrant to be ready (docker race condition fix)
-        qdrant = get_qdrant_client()
-        qdrant_ready = False
-        for _ in range(15):
-            try:
-                await qdrant.ensure_collection()
-                qdrant_ready = True
-                break
-            except Exception as e:
-                logger.warning(f"Waiting for Qdrant... ({e})")
-                await asyncio.sleep(2)
-
-        if not qdrant_ready:
-            logger.error("Failed to connect to Qdrant after 30 seconds.")
-            raise RuntimeError("Qdrant connection failed.")
-
-        logger.info("Qdrant collection ready", collection=settings.qdrant_collection)
-
-        # Initialize Knowledge_Base collection for Moodle ingestion
-        await qdrant.ensure_kb_collection()
-        logger.info("Qdrant Knowledge_Base collection ready", collection=settings.qdrant_kb_collection)
-
-        # Initialize Long-Term Memory (LTM) collection in Qdrant
-        await qdrant.ensure_ltm_collection()
-        logger.info("Qdrant LTM collection ready (user_ltm_memories)")
-
-        # Initialize Personal_Portfolio collection (Askfer)
-        await qdrant.ensure_personal_collection()
-        logger.info("Qdrant Personal_Portfolio collection ready", collection=settings.qdrant_personal_collection)
-
-        # Pre-warm the embedding model config in the API process too.
-        # NOTE: entering `async with worker:` above runs Worker.__aenter__,
-        # which opens the coredis connection but does NOT run the worker's
-        # `_worker_lifespan` — that only fires in streaq's run_async() consume
-        # path (streaq/worker.py:597 enters `self.lifespan` separately). So the
-        # API process never pre-warmed embeddings; the first chat request paid
-        # the one-time LlamaIndex Settings.embed_model init inside
-        # _prepare_rag_context. Do it here at boot. Idempotent (module-level
-        # _initialized flag), so the lazy call at chat.py becomes a no-op.
-        from app.config.embedding_config import ensure_llamaindex_configured
-        ensure_llamaindex_configured()
-        logger.info("Embedding model config pre-warmed (API process)")
-
-        # Smoke-test semantic gate signature (OBS-1)
-        from app.graph.intent_classifier import classify_semantic_with_scores
-        try:
-            _ = await classify_semantic_with_scores("test", query_embedding=None)
-            logger.info("Semantic gate self-test: OK")
-        except TypeError as e:
-            logger.error(f"CRITICAL: Semantic gate signature mismatch — gate is broken: {e}")
-            raise
+        logger.info("CAG mode startup: vector retrieval and semantic gate pre-warm skipped")
 
         yield
 
@@ -266,8 +214,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
-        title="AI LMS RAG Agent",
-        description="Production-grade Hybrid RAG system powered by LangGraph",
+        title="CAG LMS Agent",
+        description="Cache-augmented LMS assistant powered by LangGraph and OpenRouter prompt caching",
         version="1.0.0",
         docs_url="/docs" if settings.app_debug else None,
         redoc_url="/redoc" if settings.app_debug else None,
@@ -341,7 +289,6 @@ def create_app() -> FastAPI:
     from app.api.routes import admin
     app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
     app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
-    app.include_router(askfer.router, prefix="/api/v1", tags=["Askfer"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
     # Mount static files correctly
@@ -354,7 +301,7 @@ def create_app() -> FastAPI:
     async def root():
         """Backend root response."""
         return {
-            "name": "AI LMS RAG Agent",
+            "name": "CAG LMS Agent",
             "version": "1.0.0",
             "status": "online",
             "docs": "/docs" if settings.app_debug else "private",
@@ -399,26 +346,17 @@ def create_app() -> FastAPI:
         Use /readyz for readiness. K8s/Proxmox should hit /health as the
         liveness probe (so the container is not killed for transient
         downstream hiccups) and /readyz for routing (so traffic is shed
-        when Postgres/Qdrant/Redis are unreachable).
+        when Postgres/Redis are unreachable).
         """
         return {"status": "ok", "env": settings.app_env}
 
-    @app.get("/readyz", summary="Readiness Check (verifies Postgres + Qdrant + Redis)")
+    @app.get("/readyz", summary="Readiness Check (verifies Postgres + Redis)")
     async def readyz() -> JSONResponse:
-        """Readiness probe — pings every downstream the API depends on.
-
-        Returns 200 with a per-component status dict when all three
-        backends are reachable within a 2s timeout each; returns 503
-        (with the same dict, one of whose values is "down") if any one
-        is unreachable. Load balancers should pull this instance out
-        of rotation when 503, without killing the process (that's
-        /health's job).
-        """
+        """Readiness probe for CAG dependencies."""
         import asyncio as _asyncio
         from fastapi.responses import JSONResponse
 
         from app.database import postgres as _pg
-        from app.database.qdrant_client import get_qdrant_client
         from app.database.redis_client import get_redis_client
 
         async def _check_postgres() -> str:
@@ -432,16 +370,6 @@ def create_app() -> FastAPI:
             except Exception:
                 return "down"
 
-        async def _check_qdrant() -> str:
-            try:
-                client = get_qdrant_client()
-                # QdrantManager wraps AsyncQdrantClient; .client exposes the
-                # raw async client with a .get_collections() coroutine.
-                await _asyncio.wait_for(client.client.get_collections(), timeout=2.0)
-                return "ok"
-            except Exception:
-                return "down"
-
         async def _check_redis() -> str:
             try:
                 redis = get_redis_client()
@@ -450,24 +378,22 @@ def create_app() -> FastAPI:
             except Exception:
                 return "down"
 
-        pg, qd, rd = await _asyncio.gather(
-            _check_postgres(), _check_qdrant(), _check_redis(),
-            return_exceptions=True,
+        pg, rd = await _asyncio.gather(
+            _check_postgres(), _check_redis(), return_exceptions=True
         )
-        # If a check raised instead of returning "ok"/"down", surface the
-        # error in the response so operators can see WHY it's down.
+
         def _norm(v) -> str:
             if isinstance(v, Exception):
                 logger.warning("readyz component error: {}", v)
                 return f"error: {type(v).__name__}"
             return v
-        pg, qd, rd = _norm(pg), _norm(qd), _norm(rd)
-        all_ok = all(s == "ok" for s in (pg, qd, rd))
+
+        pg, rd = _norm(pg), _norm(rd)
+        all_ok = all(s == "ok" for s in (pg, rd))
         return JSONResponse(
             status_code=200 if all_ok else 503,
-            content={"status": "ok" if all_ok else "degraded", "postgres": pg, "qdrant": qd, "redis": rd},
+            content={"status": "ok" if all_ok else "degraded", "postgres": pg, "redis": rd},
         )
-
     return app
 
 
