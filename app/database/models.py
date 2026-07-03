@@ -140,6 +140,7 @@ class AgentLog(Base):
     or_cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     or_completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     or_provider: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    or_generation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     or_cache_savings_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     or_duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieved_context: Mapped[list[dict]] = mapped_column(JSON, nullable=True)

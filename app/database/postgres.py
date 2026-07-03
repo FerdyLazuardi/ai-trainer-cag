@@ -86,6 +86,7 @@ async def init_db() -> None:
             ("gate_best_cosine", "DOUBLE PRECISION"),
             ("gate_second_cosine", "DOUBLE PRECISION"),
             ("gate_margin", "DOUBLE PRECISION"),
+            ("or_generation_id", "VARCHAR(64)"),
         ]
         for col, col_type in agent_log_columns:
             await conn.execute(

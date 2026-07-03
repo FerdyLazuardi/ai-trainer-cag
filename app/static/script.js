@@ -776,24 +776,56 @@ function addMessage(text, type) {
     return wrap;
 }
 
+let typingInterval = null;
+const loadingPhrases = [
+    'Empowering', 'Delivering', 'Adapting', 'Above-and-beyond-ing', 'Leveling-up', 
+    'Upgrading', 'Solving', 'Planning', 'Organizing', 'Learning', 'Growing', 
+    'Innovating', 'Collaborating', 'Communicating', 'Impacting', 'Prioritizing', 
+    'Executing', 'Achieving', 'Never-settling', 'Structuring'
+];
+
 function showTyping() {
     const typingDiv = document.createElement("div");
     typingDiv.id = "typing-id";
     typingDiv.className = "msg ai animate__animated animate__fadeIn";
+    
+    let randomPhrase = loadingPhrases[Math.floor(Math.random() * loadingPhrases.length)];
+    
     typingDiv.innerHTML = `
-        <div class="bubble ai">
-            <div class="typing">
+        <div class="bubble ai" style="display: flex; align-items: center; gap: 8px;">
+            <div id="typing-text-id" style="font-size: 0.85em; font-style: italic; opacity: 0.8; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform: translateY(0) scale(1);">${randomPhrase}</div>
+            <div class="typing" style="margin-top: 0; padding-top: 3px;">
                 <div class="dot"></div><div class="dot"></div><div class="dot"></div>
             </div>
         </div>
     `;
     messages.appendChild(typingDiv);
     messages.scrollTop = messages.scrollHeight;
+    
+    if (typingInterval) clearInterval(typingInterval);
+    
+    typingInterval = setInterval(() => {
+        const textEl = document.getElementById("typing-text-id");
+        if (textEl) {
+            textEl.style.opacity = '0';
+            textEl.style.transform = 'translateY(5px) scale(0.95)';
+            setTimeout(() => {
+                randomPhrase = loadingPhrases[Math.floor(Math.random() * loadingPhrases.length)];
+                textEl.innerText = randomPhrase;
+                textEl.style.opacity = '0.8';
+                textEl.style.transform = 'translateY(0) scale(1)';
+            }, 400);
+        }
+    }, 3000);
 }
 
 function removeTyping() {
     const el = document.getElementById("typing-id");
     if (el) el.remove();
+    if (typingInterval) {
+        clearInterval(typingInterval);
+        typingInterval = null;
+    }
 }
 
 // Configure marked for safe, clean rendering
@@ -853,6 +885,16 @@ function createStreamBubble() {
         bubble = wrap.querySelector(".bubble");
         if (bubble) {
             bubble.classList.add("streaming");
+            bubble.removeAttribute("style"); // Remove flexbox style used for loading
+            
+            if (typingInterval) {
+                clearInterval(typingInterval);
+                typingInterval = null;
+            }
+            
+            const typingText = bubble.querySelector("#typing-text-id");
+            if (typingText) typingText.remove();
+
             const typingDiv = bubble.querySelector(".typing");
             if (typingDiv) typingDiv.remove();
 
@@ -869,8 +911,6 @@ function createStreamBubble() {
         wrap.appendChild(bubble);
         messages.appendChild(wrap);
     }
-
-    messages.scrollTop = messages.scrollHeight;
 
     return { wrap, contentDiv, bubble };
 }
@@ -889,7 +929,6 @@ function finalizeStreamBubble(contentDiv, bubble, fullText) {
         link.setAttribute("rel", "noopener noreferrer");
     });
     contentDiv.innerHTML = tempDiv.innerHTML;
-    messages.scrollTop = messages.scrollHeight;
 }
 
 // ============================================================
@@ -1014,7 +1053,6 @@ async function send(presetText, opts) {
                     link.setAttribute("rel", "noopener noreferrer");
                 });
                 contentDiv.innerHTML = tempDiv.innerHTML;
-                messages.scrollTop = messages.scrollHeight;
             }
 
             if (_streamActive || _displayedText.length < _targetText.length) {
@@ -1218,7 +1256,6 @@ function streamMessageFallback(fullText, type) {
                 link.setAttribute("rel", "noopener noreferrer");
             });
             contentDiv.innerHTML = tempDiv.innerHTML;
-            messages.scrollTop = messages.scrollHeight;
             setTimeout(typeChar, speed);
         } else {
             finalizeStreamBubble(contentDiv, bubble, fullText);

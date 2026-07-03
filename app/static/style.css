@@ -290,7 +290,7 @@ body.chat-open #chat-toggle.pulse::before {
 /* ================= TYPING ================= */
 .typing { display: flex; gap: 4px; padding: 5px 0; }
 .dot { 
-    width: 6px; height: 6px; background: #94a3b8; border-radius: 50%; 
+    width: 3px; height: 3px; background: #94a3b8; border-radius: 50%; 
     animation: bounce 1.4s infinite ease-in-out both;
 }
 .dot:nth-child(1) { animation-delay: -0.32s; }

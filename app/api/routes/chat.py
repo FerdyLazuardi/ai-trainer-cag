@@ -926,6 +926,7 @@ async def _execute_chat_flow(
             or_completion_tokens = tu.get("completion_tokens", 0)
             or_cached_tokens = (tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
             or_provider = rm.get("model_name")
+
     except asyncio.TimeoutError as exc:
         # An upstream black-hole pinned this slot to the wall-clock ceiling.
         # Fail loud with 504 (NOT 500) so the client knows it's a timeout and
@@ -1013,6 +1014,7 @@ async def _execute_chat_flow(
             "or_cached_tokens": or_cached_tokens,
             "or_completion_tokens": or_completion_tokens,
             "or_provider": or_provider,
+            "or_generation_id": None,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
             **_quality_log_fields(
@@ -1271,7 +1273,7 @@ async def chat_stream(
 
     async def _stream_rag_body():
         nonlocal resolved_query
-        from app.graph.pipeline import StreamLeakGuard, _route_after_rag, _sanitize_answer
+        from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
         retrieved_context: list = []
         intent = "KNOWLEDGE"
@@ -1294,6 +1296,7 @@ async def chat_stream(
         stream_completion_tokens = 0
         stream_cached_tokens = 0
         stream_provider = None
+        stream_generation_id = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         leak_guard = StreamLeakGuard()
         token_count = 0
@@ -1307,6 +1310,8 @@ async def chat_stream(
         is_low_relevance_stream = False
         _logged = False
         restart_buffer = ""
+
+
 
         def _dedupe_stream_text(text: str) -> str:
             nonlocal full_answer, restart_buffer
@@ -1358,6 +1363,7 @@ async def chat_stream(
                     "or_cached_tokens": stream_cached_tokens,
                     "or_completion_tokens": stream_completion_tokens,
                     "or_provider": stream_provider,
+                    "or_generation_id": stream_generation_id,
                     "cache_hit": False,
                     "retrieved_context": retrieved_context,
                     **_quality_log_fields(
@@ -1407,25 +1413,41 @@ async def chat_stream(
             _stall_s = settings.pipeline_stream_stall_timeout_s
             import time as _time
             _last_real_event = _time.monotonic()
+            
+            anext_task = None
             while True:
-                try:
-                    event = await asyncio.wait_for(_events.__anext__(), timeout=_ping_s)
+                if anext_task is None:
+                    anext_task = asyncio.create_task(_events.__anext__())
+                
+                done, _ = await asyncio.wait([anext_task], timeout=_ping_s)
+                
+                if anext_task in done:
+                    try:
+                        event = anext_task.result()
+                    except StopAsyncIteration:
+                        break
+                    except Exception as loop_exc:
+                        # Re-raise to trigger the same outer fallback logic as before
+                        raise loop_exc
+                        
+                    anext_task = None
                     _last_real_event = _time.monotonic()
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError:
+                else:
                     # No event in 2s. If we're still within the overall stall
                     # window, emit a keepalive ping and keep waiting. Only a
                     # sustained 75s silence is a real stall.
                     if _time.monotonic() - _last_real_event < _stall_s:
                         yield ": ping\n\n"
                         continue
+                    
                     logger.error(
                         "Stream stalled — no events within stall window; freeing slot",
                         stall_s=_stall_s,
                         conversation_id=conversation_id,
                         tokens_so_far=token_count,
                     )
+                    if anext_task and not anext_task.done():
+                        anext_task.cancel()
                     yield f"event: error\ndata: {json.dumps({'error': 'Response timed out'})}\n\n"
                     await _emit_log()
                     return
@@ -1521,7 +1543,7 @@ async def chat_stream(
                                     stream_completion_tokens = out_t
                                     stream_cached_tokens = (um.get("input_token_details") or {}).get("cache_read") or 0
                                     stream_provider = getattr(last_msg, "response_metadata", {}).get("model_name")
-
+                                    stream_generation_id = getattr(last_msg, "response_metadata", {}).get("id")
                 # Canned-response nodes return an AIMessage directly without
                 # invoking an LLM, so no `on_chat_model_stream` event fires
                 # for them. Emit their content from on_chain_end instead.
@@ -1633,18 +1655,6 @@ async def chat_stream(
         # frontend turns into a clickable offer. Wrapped so a scoring hiccup can
         # never break the stream.
         suggest_coaching = bool(coaching_topic)
-        try:
-            if (not suggest_coaching) and (not request.coaching_mode) and intent == "KNOWLEDGE" and query_embedding is not None:
-                from app.graph.intent_classifier import coaching_affinity
-                _aff = await coaching_affinity(resolved_query, query_embedding=query_embedding)
-                suggest_coaching = _aff >= settings.coaching_suggest_threshold
-                logger.info(
-                    f"coaching auto-hook: affinity={_aff:.3f} "
-                    f"thr={settings.coaching_suggest_threshold} suggest={suggest_coaching} "
-                    f"q={resolved_query[:50]!r}"
-                )
-        except Exception as exc:
-            logger.debug(f"coaching auto-hook scoring skipped: {exc}")
 
         # Coaching wrap-up signal — mirror of suggest_coaching, opposite direction.
         # When we're IN coaching mode and Ava delivered a final answer rather than a
@@ -1714,6 +1724,7 @@ async def chat_stream(
                             stream_completion_tokens = _tu.get("completion_tokens", 0)
                             stream_cached_tokens = (_tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
                             stream_provider = _rm.get("model_name")
+
                         else:
                             _um = getattr(_fb_msg, "usage_metadata", None) or {}
                             _in = _um.get("input_tokens") or 0
@@ -1724,6 +1735,7 @@ async def chat_stream(
                                 stream_completion_tokens = int(_out)
                                 stream_cached_tokens = (_um.get("input_token_details") or {}).get("cache_read") or 0
                                 stream_provider = getattr(_fb_msg, "response_metadata", {}).get("model_name")
+
                         yield f"data: {json.dumps({'token': _fb_content})}\n\n"
             except Exception as fb_exc:
                 logger.warning(f"Fallback ainvoke also failed: {type(fb_exc).__name__}: {fb_exc}")
@@ -1753,19 +1765,8 @@ async def chat_stream(
             stream_max_score = max(stream_dense_scores) if stream_dense_scores else None
             stream_sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
             stream_max_sparse = max(stream_sparse_scores) if stream_sparse_scores else None
-            # AUTHORITATIVE low-relevance: reconstruct the minimal state the gate
-            # reads and call _route_after_rag, so the stream eval/cache decision
-            # can't diverge from the graph's actual route (same C4/C5 fix as the
-            # non-stream path — the old top-3 recompute drifted from the pool-level
-            # gate and skipped eval on C4-rescued turns).
-            _gate_state = {
-                "intent": intent,
-                "retrieved_context": retrieved_context,
-                "pool_max_dense": stream_pool_max_dense,
-                "pool_max_sparse": stream_pool_max_sparse,
-                "dense_retrieval_ok": stream_dense_retrieval_ok,
-            }
-            is_low_relevance_stream = _route_after_rag(cast(RAGState, _gate_state)) == "low_relevance"
+            # Under CAG mode, retrieval is disabled, so there is no low-relevance retrieval gate.
+            is_low_relevance_stream = False
             # Mirrors the non-stream cache gate. The former MENTOR-shape
             # exclusion (learning_context >= threshold) was dropped with the
             # pre-processor slim-down — how-to answers are cacheable now. The

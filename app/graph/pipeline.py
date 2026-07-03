@@ -24,7 +24,7 @@ from app.config.settings import get_settings
 from app.graph.state import RAGState
 from app.llm.client import get_chat_llm, get_generate_llm, get_generate_llm_nostream
 from app.llm.prompts import PERSONA, OUTPUT_CONTRACT, CONVERSATIONAL_PROMPT, CHIT_CHAT_PROMPT, SOCRATIC_PROMPT
-from app.utils.token_counter import truncate_to_tokens
+from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections
 
 _settings = get_settings()
 _MOODLE_BASE = _settings.moodle_api_url.rstrip("/")
@@ -138,22 +138,6 @@ _META_CONVO_RE = re.compile(
     r"|(?:terus|trus|lanjut|next)\s+(?:gimana|gmn|apa|apanya)\b",
     re.IGNORECASE,
 )
-
-# Follow-up condense-question rewrite (LLM-based; replaces the old anaphoric-
-# regex prepend). A SHORT turn after prior history ("boleh", "iya yang itu",
-# "yang kedua tadi", "dampaknya apa") carries no standalone meaning: embedding
-# it directly drifts retrieval onto the wrong topic, and the model then
-# fabricates an answer from training data (the multi-turn hallucination). We
-# condense it into a self-contained query using the last few turns — this is
-# phrasing/typo/language-agnostic (no word-list to maintain). Scoped to short
-# turns only, so the rewrite call is paid only where coreference resolution is
-# actually needed; a long self-contained question skips it. A short query that
-# already names its topic is returned unchanged by the prompt, and any
-# failure/timeout degrades to the raw message.
-_REWRITE_MAX_CHARS = 1000
-_REWRITE_TIMEOUT_S = 8.0
-_FOLLOWUP_HISTORY_TURNS = 6  # last N messages fed as context (≈3 turns)
-
 _AMARTHA_GLOSSARY = {
     "BM": "Business Manager",
     "BP": "Business Partner",
@@ -167,7 +151,6 @@ _AMARTHA_GLOSSARY = {
     "PJ": "Penanggung Jawab"
 }
 
-import re
 _GLOSSARY_PATTERN = r'\b(' + '|'.join(_AMARTHA_GLOSSARY.keys()) + r')\b'
 _GLOSSARY_RE = re.compile(_GLOSSARY_PATTERN, flags=re.IGNORECASE)
 
@@ -176,118 +159,6 @@ def _apply_glossary(text: str) -> str:
     if not text:
         return text
     return _GLOSSARY_RE.sub(lambda m: _AMARTHA_GLOSSARY[m.group(0).upper()], text)
-
-from app.llm.prompts import REWRITE_PROMPT
-
-_REWRITE_SPLIT_RE = re.compile(r"\s*(?:\r?\n|\s+\|\s+|[;?]+|,\s*)\s*")
-_REWRITE_NOISE_RE = re.compile(
-    r"\b(?:aku|saya|gw|gue|gua|kan|ini|itu|lagi|parah|harusn?|gapian|"
-    r"ngapain|ngpian|apa|apaan|gimana|bagaimana|gmn|gmna|biar|agar|angka|"
-    r"juga|tolong|dong|ya|deh|sih|kayak|kek|gitu)\b",
-    flags=re.IGNORECASE,
-)
-_POINT_LOCATION_RE = re.compile(
-    r"\bpoint\s+(?!(?:fraud|business|manager|operasional|amartha|mitra|"
-    r"pembiayaan|par|npl|dpd|surprise|visit|portofolio|portfolio|client|"
-    r"protection)\b)[\w-]+",
-    flags=re.IGNORECASE,
-)
-_CONTEXT_ONLY_RE = re.compile(
-    r"^(?:business manager|point|business manager point|point business manager)$",
-    flags=re.IGNORECASE,
-)
-def _clean_rewrite_line(text: str) -> str:
-    text = _apply_glossary(text)
-    text = _POINT_LOCATION_RE.sub("point", text)
-    text = _REWRITE_NOISE_RE.sub(" ", text)
-    text = re.sub(r"[^\w\s-]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _rewrite_context_terms(lines: list[str]) -> list[str]:
-    joined = "\n".join(lines).lower()
-    terms = []
-    if "business manager" in joined:
-        terms.append("Business Manager")
-    if "client protection" in joined:
-        terms.append("Client Protection")
-    if re.search(r"\bpoint\b", joined):
-        terms.append("point")
-    return terms
-
-
-def _append_rewrite_context(line: str, contexts: list[str]) -> str:
-    low = line.lower()
-    for ctx in contexts:
-        if ctx.lower() not in low:
-            line = f"{line} {ctx}"
-            low = line.lower()
-    return line
-
-
-def _postprocess_rewrite_query(out: str, user_msg: str) -> str:
-    cleaned: list[str] = []
-    for line in _REWRITE_SPLIT_RE.split(out):
-        q = _clean_rewrite_line(line)
-        if q:
-            cleaned.append(q)
-    if not cleaned:
-        return ""
-
-    contexts = _rewrite_context_terms(cleaned)
-    has_non_context = any(not _CONTEXT_ONLY_RE.fullmatch(q) for q in cleaned)
-    out_lines = []
-    for q in cleaned:
-        if has_non_context and _CONTEXT_ONLY_RE.fullmatch(q):
-            continue
-        q = _append_rewrite_context(q, contexts)
-        out_lines.append(q)
-    return "\n".join(dict.fromkeys(out_lines))
-
-async def _rewrite_search_query(messages: list, user_msg: str) -> str:
-    """Rewrite conversational or follow-up queries into standalone keyword-rich search queries via the
-    cheap LLM. Returns user_msg unchanged on bad output or failure."""
-    # Keep last 2 exchanges max — just enough to resolve "1" back to an option.
-    # Full 10-turn history floods the window with product lists and the rewrite
-    # LLM loses track of the user's intent.
-    history = messages[-(_FOLLOWUP_HISTORY_TURNS + 1):-1]
-    if len(history) > 4:
-        history = history[-4:]
-    lines = []
-    for m in reversed(history):
-        role = "User" if isinstance(m, HumanMessage) else "Ava"
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        lines.append(f"{role}: {content[:400]}")
-    
-    history_text = "\nConversation (newest first):\n" + "\n".join(lines) + "\n" if lines else ""
-    prompt = (
-        f"{REWRITE_PROMPT}\n{history_text}\nUser message: {user_msg}\n\nSearch queries:"
-    )
-    try:
-        from app.llm.client import get_preprocessor_llm
-        resp = await asyncio.wait_for(
-            get_preprocessor_llm().ainvoke([HumanMessage(content=prompt)]),
-            timeout=_REWRITE_TIMEOUT_S,
-        )
-        out = (resp.content if isinstance(resp.content, str) else str(resp.content)).strip()
-        # Guard: empty or rambling output (a leaked CoT / refusal) → raw msg.
-        if out and len(out) <= 300:
-            return _postprocess_rewrite_query(out, user_msg) or user_msg
-    except Exception as exc:
-        logger.debug(f"Query rewrite skipped (degrade to raw): {exc}")
-    return _postprocess_rewrite_query(user_msg, user_msg) or user_msg
-
-
-def _strip_md_headings_for_context(text: str) -> str:
-    """Strip ATX markdown headings (#, ##, ###) from chunk text.
-
-    Reason: chunks come from Markdown KB documents, so they contain "# Title"
-    lines. If the LLM echoes a chunk verbatim, the frontend renders those
-    headings as <h1>/<h2>, producing fonts 2-4x normal body. Stripping the
-    leading "#" makes the text plain — even on echo, the UI stays sane.
-    Bold/italic/lists are preserved (only headings are visually catastrophic).
-    """
-    return _MD_HEADING_RE.sub("", text)
 
 
 def _normalize_dashes(text: str) -> str:
@@ -421,55 +292,9 @@ async def _incr_parse_failure_metric() -> None:
         pass
 
 
-# Strong refs for fire-and-forget background metric tasks scheduled from sync
-# routers (otherwise the event loop may GC the task mid-flight).
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
-async def _incr_sparse_only_passthrough_metric() -> None:
-    """Fire-and-forget counter for KNOWLEDGE queries that clear the relevance
-    gate on the SPARSE (BM25 lexical) signal ALONE (H9).
 
-    Dense cosine was below its floor but a raw term match rescued the query.
-    Bucketed by UTC date (7-day retention); mirrors _incr_parse_failure_metric.
-    This is the early-warning signal for the colloquial-ID false-pass risk:
-    terse / slangy Indonesian queries that dense embeddings rank off-topic but
-    happen to share a BM25 term with the KB. When `rag:metrics:gate_sparse_only_pass`
-    climbs, pull those queries and grow the eval sample to confirm the OR-gate
-    isn't waving through hallucination-prone misses. Never raises.
-    """
-    try:
-        from datetime import datetime, timezone
-
-        from app.database.redis_client import get_redis_client
-
-        redis = get_redis_client()
-        day = datetime.now(timezone.utc).strftime("%Y%m%d")
-        key = f"rag:metrics:gate_sparse_only_pass:{day}"
-        pipe = redis.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, 7 * 24 * 3600)
-        await pipe.execute()
-    except Exception:
-        pass
-
-
-def _emit_sparse_only_passthrough() -> None:
-    """Schedule the sparse-only-pass counter from a sync router without blocking.
-
-    `_route_after_rag` is a sync LangGraph router, so we can't await. Schedule
-    the Redis incr on the running loop and hold a strong ref so it isn't GC'd
-    mid-flight. If no loop is running (a unit test calling the router directly),
-    swallow the RuntimeError — the f-string log line above is the fallback
-    signal, and a metrics write must never break routing.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(_incr_sparse_only_passthrough_metric())
-        _BACKGROUND_TASKS.add(task)
-        task.add_done_callback(_BACKGROUND_TASKS.discard)
-    except RuntimeError:
-        pass
 
 
 async def _log_cache_usage(response: Any, call_name: str, turn_id=None, started_at=None) -> None:
@@ -639,29 +464,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     # The full topic list ("topik apa aja") still routes via the regex/semantic
     # TOPIC_LIST path below.
 
-    # ── Semantic gate (Tier-0) — catch novel chit-chat the regex missed ─────
-    # Runs ONLY when the regex returned None (i.e. not already a chit-chat).
-    # When enabled (settings.intent_semantic_gate_enabled, default ON after
-    # 2026-06-17 calibration), the gate catches novel greeting/ambiguous
-    # phrasings the regex hasn't seen — and routes them to the no-retrieval
-    # bucket instead of KNOWLEDGE. Saves a Qdrant round-trip + a full
-    # CONVERSATIONAL_PROMPT pass on every catch.
-    #
-    # Cost: ~one fresh embed (cached on repeat) on the long-tail of queries
-    # the regex already filters out. The hot path (regex hits) is unaffected.
-    # The full GateScore (best/second cosine + margin) is attached to
-    # state["gate_score"] on EVERY outcome — HIT or MISS — so chat.py
-    # can persist the trace to agent_logs for the drift monitor regardless
-    # of which way the decision went. The historical SKIP path (regex
-    # already won, run gate solely for dashboard agreement) was REMOVED on
-    # 2026-06-17: pure overhead (2× embed on every regex hit) with no
-    # quality gain. The agreement dashboard now only updates from the
-    # MISS path; if regex/gate disagreement drifts, sample N% of regex
-    # wins through a BackgroundTasks call (TODO: re-add sampled async
-    # agreement-check once Prometheus metrics land, so we can verify
-    # the drift signal is meaningful before paying the embed cost).
-    gate_score_out = None
-
     # ── SECTION_DRILLDOWN ───────────────────────────────────────────────────
     # Refinement (Jun 2026): "topic apa aja" -> TOPIC_LIST,
     # "product amartha apaan" -> SECTION_DRILLDOWN. If the shape matches AND we
@@ -685,7 +487,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
                 "rewritten_query": user_msg_str,
                 "retrieval_query": user_msg_str,
                 "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-                "gate_score": gate_score_out,
+                "gate_score": None,
                 "drilldown_section": _resolved,
                 "drilldown_resolution": _respath,
             }
@@ -701,7 +503,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-            "gate_score": gate_score_out,
+            "gate_score": None,
         }
 
     # ── KNOWLEDGE: a real question → retrieve, then generate ────────────────
@@ -720,18 +522,6 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
         else:
             retrieval_query = precomputed_queries
         logger.info(f"Pre-processor: reusing pre-computed query rewrite: {retrieval_query[:60]}")
-    elif False:
-        # Fallback rewrite: resolve coreference (e.g. "klo prinsipnya" → "prinsip client protection")
-        # using conversation history. Only runs when chat.py didn't pre-compute.
-        _msg_for_rewrite = _apply_glossary(_msg_stripped)
-        rewritten = await _rewrite_search_query(messages, _msg_for_rewrite)
-        if rewritten and rewritten != _msg_stripped:
-            if len(rewritten) > max(len(_msg_stripped) * 4, 100):
-                logger.warning(f"Query rewrite suspiciously long, using original: {rewritten[:80]!r}")
-                rewritten = _msg_stripped
-            else:
-                logger.info(f"Query rewritten: {_msg_stripped!r} → {rewritten[:60]!r}")
-            retrieval_query = rewritten
 
 
     # ── Coaching (Socratic) promotion ───────────────────────────────────────
@@ -768,7 +558,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
             "needs_safety_escalation": 0.0,
             "learning_context": 0.0,
         },
-        "gate_score": gate_score_out,
+        "gate_score": None,
     }
 
 
@@ -785,136 +575,6 @@ async def _handle_malicious(state: RAGState, config: RunnableConfig):
         "kebijakan internal Amartha. Ada yang bisa kubantu seputar itu?"
     ))]}
 
-
-async def _handle_low_relevance(state: RAGState, config: RunnableConfig):
-    """Deterministic NOT-FOUND refusal for a KNOWLEDGE turn whose retrieval fell
-    below the dense floor — NO LLM call.
-
-    Why deterministic instead of letting generate_node's <no_context> prompt
-    handle it: a weak generator (DeepSeek/Gemini Flash class) reliably IGNORES
-    the "don't invent acronym expansions" rule for terms with a strong training
-    prior (e.g. "apa itu BMDP" → fabricated "Buku Monitoring..."), even with the
-    context correctly withheld. The floor stops the wrong chunks from entering;
-    this stops the model from inventing facts when nothing valid was retrieved.
-    Gentle wording so a reaction/meta turn that misroutes here ("halu banget")
-    still reads as "I didn't catch that" rather than a robotic error.
-    """
-    from langchain_core.messages import AIMessage
-    return {"messages": [AIMessage(content=(
-        "Hmm, aku belum nemu info soal itu di materi Amarthapedia yang aku punya. "
-        "Coba perjelas maksudnya atau pakai kata kunci lain ya 🙏"
-    ))]}
-
-
-def _filter_seen_chunks(chunks: list[dict], seen_chunk_ids: set[str]) -> list[dict]:
-    if not seen_chunk_ids:
-        return chunks
-    fresh = [
-        c for c in chunks
-        if not c.get("chunk_id") or str(c.get("chunk_id")) not in seen_chunk_ids
-    ]
-    return fresh or chunks[:1]
-
-
-async def _rag_node(state: RAGState, config: RunnableConfig):
-    """
-    Pure retrieval node — calls hybrid_search (dense + sparse BM25 fusion)
-    without any LLM call. Stores formatted context chunks into
-    state['retrieved_context']. This replaces the first ReAct 'agent' call that
-    previously just decided to use a tool.
-    """
-    raise RuntimeError("rag_node is disabled in CAG mode")
-
-    # Use the guarded retrieval query if available; it preserves critical
-    # anchors that a standalone rewrite may legitimately hide from the UI.
-    raw_query_to_search = (
-        state.get("retrieval_query")
-        or state.get("rewritten_query")
-        or state["messages"][-1].content
-    )
-    query_to_search = raw_query_to_search if isinstance(raw_query_to_search, str) else str(raw_query_to_search)
-
-    # H5 — reuse the embedding the chat route already computed, but ONLY if it
-    # was computed from the exact text we're about to search. The route embeds
-    # `resolved_query` (for cache/LTM); after rewrite/safety-anchoring the
-    # retrieval query often differs, in which case reusing would search the
-    # wrong vector — so we fall back to embedding inside hybrid_search.
-    precomputed = state.get("query_embedding")
-    precomputed_text = state.get("query_embedding_text")
-    reuse_embedding = (
-        precomputed
-        if precomputed and precomputed_text == query_to_search
-        else None
-    )
-
-    try:
-        # Multi-query retrieval: when the pre-processor produced a compound
-        # rewrite (e.g. "bayar mitra | skill negosiasi | fraud" — 3 sub-topics),
-        # search each sub-query in parallel and merge. The old path joined them
-        # into one string and searched queries[0] only, so a 3-topic question
-        # retrieved chunks for ONE topic. _pre_processor passes the list via
-        # state["rewritten_queries"]; retrieval_query carries queries[0].
-        raw_sub_queries = state.get("rewritten_queries")
-        sub_queries = (
-            [q for q in raw_sub_queries if isinstance(q, str)]
-            if isinstance(raw_sub_queries, list)
-            else [query_to_search]
-        )
-        if len(sub_queries) > 1:
-            raise RuntimeError("rag_node is disabled in CAG mode")
-            # reuse the route's embedding only for the primary sub-query (it
-            # was embedded from resolved_query, which == queries[0] when no
-            # safety-anchor differs — other sub-queries embed fresh in-cache).
-            multi_embs = [reuse_embedding] + [None] * (len(sub_queries) - 1)
-            result = await hybrid_search_multi(
-                sub_queries,
-                top_k=_settings.final_top_k,
-                final_k_multiplier=_settings.compound_final_top_k_multiplier,
-                query_embeddings=multi_embs,
-            )
-            _mq_tag = f" (multi: {len(sub_queries)} sub-queries)"
-        else:
-            result = await hybrid_search(
-                query=query_to_search,  # type: ignore[arg-type]  # langchain message.content is str at runtime
-                top_k=_settings.final_top_k,
-                query_embedding=reuse_embedding,
-            )
-            _mq_tag = ""
-        docs = result.chunks
-
-        chunks = []
-        for d in docs:
-            m = d.metadata or {}
-            chunks.append({
-                "chunk_id": d.chunk_id,
-                "text": d.text,
-                "course_id": m.get("course_id", ""),
-                "course_name": m.get("course_name", d.title),
-                "section_name": m.get("section_name", ""),
-                "score": round(d.score, 4) if d.score is not None else 0.0,
-                "hybrid_score": round(d.hybrid_score, 4) if d.hybrid_score is not None else 0.0,
-                "dense_score": round(d.dense_score, 4) if d.dense_score is not None else 0.0,
-                "sparse_score": round(d.sparse_score, 4) if d.sparse_score is not None else 0.0,
-                "source": d.source or m.get("source", "Unknown"),
-                "document_id": d.document_id or m.get("document_id", "Unknown"),
-            })
-        chunks = _filter_seen_chunks(chunks, set(state.get("seen_chunk_ids") or []))
-
-        logger.info(f"RAG node retrieved {len(chunks)} chunks{_mq_tag} for query: {query_to_search[:60]}")
-        # C4: surface pool-level signals (max over full fetch_k pool, pre-slice)
-        # for the NOT-FOUND gate; C5: dense_retrieval_ok=False when degraded to
-        # sparse-only so the gate doesn't read the missing dense signal as a miss.
-        return {
-            "retrieved_context": chunks,
-            "pool_max_dense": result.pool_max_dense,
-            "pool_max_sparse": result.pool_max_sparse,
-            "dense_retrieval_ok": result.dense_available,
-        }
-
-    except Exception as e:
-        logger.error(f"RAG node retrieval failed: {e}")
-        # Raise instead of swallowing to allow FastAPI's error handler to return 500
-        raise RuntimeError(f"Database error during context retrieval: {e}") from e
 
 
 def _window_generate_history(messages: list, max_fresh_turns: int, max_ai_chars: int) -> list:
@@ -970,20 +630,7 @@ def _get_course_cache_lock() -> asyncio.Lock:
 
 
 async def _load_course_names() -> list[str]:
-    """Distinct TOPIC labels from the documents table, TTL-cached (10min).
-
-    The ground-truth list of topics Ava actually has, injected into the generate
-    prompt on a TOPIC_LIST turn so "ada materi apa aja" is answered from real
-    data instead of fabricated. Single-flight via asyncio.Lock so concurrent
-    requests don't stampede Postgres on cache expiry.
-
-    Topic label = the Moodle SECTION name when present, else the per-file
-    `course_name` (backward-compat for docs ingested before section_name
-    existed). COALESCE(NULLIF(section_name,''), course_name) means several files
-    in one Moodle section (e.g. modal.md + celengan.md under "Product Amartha")
-    collapse to ONE topic entry instead of spamming one row per file — the
-    manual Moodle section structure becomes the topic taxonomy.
-    """
+    """Distinct TOPIC labels from the active CAG KB pack, TTL-cached (10min)."""
     import time as _time
 
     now = _time.time()
@@ -996,29 +643,11 @@ async def _load_course_names() -> list[str]:
         if now < _course_cache["expires_at"] and _course_cache["courses"]:
             return _course_cache["courses"]
 
-        from sqlalchemy import select, distinct
-        from sqlalchemy.sql import text as sql_text
-        from app.database.postgres import AsyncSessionLocal
-
         try:
-            async with AsyncSessionLocal() as session:
-                # Prefer the Moodle section name; fall back to course_name when a
-                # doc has no section_name (pre-section_name ingests). The outer
-                # filter drops rows where BOTH are empty.
-                topic_expr = (
-                    "COALESCE(NULLIF(metadata->>'section_name', ''), "
-                    "metadata->>'course_name')"
-                )
-                stmt = (
-                    select(distinct(sql_text(topic_expr)).label("topic"))
-                    .select_from(sql_text("documents"))
-                    .where(sql_text(f"{topic_expr} IS NOT NULL"))
-                    .where(sql_text(f"{topic_expr} <> ''"))
-                )
-                rows = (await session.execute(stmt)).all()
-                courses = sorted({r.topic for r in rows if r.topic})
+            cag_kb_text = await _load_active_cag_kb_text()
+            courses = extract_kb_topics(cag_kb_text) if cag_kb_text else []
         except Exception as exc:
-            logger.warning(f"Topic-name load failed (Postgres): {exc}")
+            logger.warning(f"Topic-name load failed: {exc}")
             return []
 
         _course_cache["courses"] = courses
@@ -1366,14 +995,7 @@ def _is_section_drilldown_shape(query: str) -> bool:
 
 
 async def _load_section_map() -> dict[str, list[str]]:
-    """Map each Moodle SECTION → its item (course_name) list, TTL-cached (10min).
-
-    Ground truth for "apa aja di <section>" / "isi <section>" questions: a section
-    like "Business Process" lists its files (Validasi UK, Pelayanan, ...). Pulled
-    straight from Postgres so the answer is deterministic, never an LLM guess.
-    Only includes docs that actually have a section_name (the per-section grouping
-    only makes sense for section-tagged docs).
-    """
+    """Map each Moodle SECTION → its item list, TTL-cached (10min)."""
     import time as _time
 
     now = _time.time()
@@ -1386,29 +1008,11 @@ async def _load_section_map() -> dict[str, list[str]]:
         if now < _section_map_cache["expires_at"] and _section_map_cache["map"]:
             return _section_map_cache["map"]
 
-        from sqlalchemy.sql import text as sql_text
-        from app.database.postgres import AsyncSessionLocal
-
-        section_map: dict[str, list[str]] = {}
         try:
-            async with AsyncSessionLocal() as session:
-                stmt = sql_text(
-                    "SELECT DISTINCT metadata->>'section_name' AS section, "
-                    "metadata->>'course_name' AS item "
-                    "FROM documents "
-                    "WHERE metadata->>'section_name' IS NOT NULL "
-                    "AND metadata->>'section_name' <> '' "
-                    "AND metadata->>'course_name' IS NOT NULL "
-                    "AND metadata->>'course_name' <> '' "
-                    "ORDER BY 1, 2"
-                )
-                rows = (await session.execute(stmt)).all()
-                for r in rows:
-                    section_map.setdefault(r.section, [])
-                    if r.item not in section_map[r.section]:
-                        section_map[r.section].append(r.item)
+            cag_kb_text = await _load_active_cag_kb_text()
+            section_map = extract_kb_sections(cag_kb_text) if cag_kb_text else {}
         except Exception as exc:
-            logger.warning(f"Section-map load failed (Postgres): {exc}")
+            logger.warning(f"Section-map load failed: {exc}")
             return {}
 
         _section_map_cache["map"] = section_map
@@ -1416,18 +1020,17 @@ async def _load_section_map() -> dict[str, list[str]]:
         return section_map
 
 
-_active_kb_cache: dict[str, Any] = {"hash": "", "content": "", "expires_at": 0.0}
+_active_kb_cache: dict[str, Any] = {"hash": "", "content": ""}
 
 
 def clear_cag_kb_cache() -> None:
-    _active_kb_cache.update({"hash": "", "content": "", "expires_at": 0.0})
+    _active_kb_cache.update({"hash": "", "content": ""})
     _course_cache.update({"courses": [], "expires_at": 0.0})
     _section_map_cache.update({"map": {}, "expires_at": 0.0})
 
 
 async def _load_active_cag_kb_text() -> str:
-    now = time.time()
-    if "content" in _active_kb_cache and now < _active_kb_cache.get("expires_at", 0.0):
+    if "content" in _active_kb_cache and _active_kb_cache["content"]:
         return _active_kb_cache["content"]
 
     from app.database.postgres import AsyncSessionLocal
@@ -1440,7 +1043,6 @@ async def _load_active_cag_kb_text() -> str:
                 _active_kb_cache.update({
                     "hash": active.kb_hash,
                     "content": active.content,
-                    "expires_at": now + 60.0,
                 })
                 return active.content
     except Exception as exc:
@@ -1687,117 +1289,6 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 def _route_by_intent(state: RAGState) -> str:
     return state.get("intent") or "KNOWLEDGE"
 
-
-def _route_after_retrieval(state: RAGState) -> str:
-    """After rag_node: a KNOWLEDGE turn whose retrieval fell below the dense
-    floor is refused deterministically (no LLM) so the model can't invent facts
-    when nothing valid was retrieved (e.g. fabricating an acronym expansion for
-    an un-ingested term). COACHING is NOT refused — it keeps flowing to
-    generate_node so the Socratic prompt can still open a guiding question."""
-    if state.get("intent") in ("KNOWLEDGE", "COACHING") and _route_after_rag(state) == "low_relevance":
-        return "low_relevance"
-    return "generate_node"
-
-
-def _route_after_rag(state: RAGState) -> str:
-    """Decide whether to call the LLM or short-circuit when retrieval is weak.
-
-    Applies to both KNOWLEDGE and COACHING — a Socratic guiding question must
-    be grounded in the KB just like a factual answer, so COACHING gets NO
-    special bypass: if retrieval is below the floor, context is withheld and the
-    prompt's no-context / grounding rules take over ("Aku belum nemu ini di
-    materiku") rather than inventing a question around nothing.
-
-    The gate is a MANDATORY DENSE FLOOR (not an OR). bge-m3 dense cosine cleanly
-    separates scope on this KB — off-scope tops out ~0.36, in-scope floors ~0.50
-    — so dense alone is the discriminator:
-      - `dense_score` — raw dense cosine [0, 1], an ABSOLUTE semantic signal.
-        Calibrated: off-scope ceiling ≈ 0.36, in-scope floor ≈ 0.50; floor set
-        at 0.40 (safe band [0.40, 0.45], leaning in-scope-protective).
-    Sparse (raw BM25) is NOT consulted in normal operation: on a small KB it does
-    NOT separate scope — off-scope function words ("gimana", "di", "siapa")
-    accumulate BM25 (off-scope sparse 8.56 outscores in-scope "Poket" 6.23), so an
-    OR-rescue on sparse re-admits off-scope. The fused `score`/`hybrid_score` is
-    min-max normalized per-query (top hit ≈ 1.0 on every query), so it can't gate
-    a global miss — the raw dense signal can. Sparse is read ONLY in the C5
-    degraded window below (embedding outage), as a fail-open backstop.
-
-    C4 — the gate reads POOL-LEVEL maxes (`pool_max_dense`/`pool_max_sparse`,
-    set by rag_node over the full fetch_k pool BEFORE the top-k slice), not the
-    per-chunk maxes of the returned top-k. A chunk with the highest raw dense
-    cosine can rank below the final top-k by FUSED score (fusion blends in
-    normalized sparse) and get sliced off — gating on the post-slice chunks
-    would then read an artificially low max and emit a FALSE NOT-FOUND. Falls
-    back to the per-chunk computation if pool stats are absent (defensive).
-
-    C5 — when retrieval degraded to sparse-only (embedding outage,
-    `dense_retrieval_ok` is False), the dense signal is MISSING, not low. We
-    must not let an absent dense score force a NOT-FOUND; the gate runs on
-    sparse alone in that window.
-    """
-    chunks = state.get("retrieved_context") or []
-    if not chunks:
-        return "low_relevance"
-
-    # C4: prefer pool-level maxes computed over the full fetch_k pool. Fall back
-    # to per-chunk maxes (legacy behaviour) only when pool stats are unavailable.
-    pool_max_dense = state.get("pool_max_dense")
-    pool_max_sparse = state.get("pool_max_sparse")
-    if pool_max_dense is None and pool_max_sparse is None:
-        dense_scores = [v for c in chunks if isinstance((v := c.get("dense_score")), (int, float))]
-        sparse_scores = [v for c in chunks if isinstance((v := c.get("sparse_score")), (int, float))]
-        if not dense_scores and not sparse_scores:
-            return "low_relevance"
-        max_dense = max(dense_scores) if dense_scores else 0.0
-        max_sparse = max(sparse_scores) if sparse_scores else 0.0
-    else:
-        max_dense = float(pool_max_dense or 0.0)
-        max_sparse = float(pool_max_sparse or 0.0)
-
-    # C5: dense degraded to sparse-only — judge on sparse alone, don't let the
-    # missing dense signal (0.0) manufacture a NOT-FOUND.
-    dense_retrieval_ok = state.get("dense_retrieval_ok")
-    if dense_retrieval_ok is False:
-        if max_sparse >= _settings.kb_min_sparse_score:
-            return "generate"
-        logger.info(
-            f"Sparse-only retrieval below sparse gate — skipping generate_node "
-            f"(sparse={max_sparse:.4f} < {_settings.kb_min_sparse_score}, dense unavailable)"
-        )
-        return "low_relevance"
-
-    # Normal operation: DENSE is the mandatory floor. Sparse is NOT consulted —
-    # raw BM25 does not separate scope on a small KB (off-scope function-word
-    # matches outscore real entities), so an OR-rescue on sparse re-admits
-    # off-scope. The clean dense gap (off-scope ≤~0.36, in-scope ≥~0.50) is the
-    # gate.
-    if max_dense < _settings.kb_min_dense_score:
-        # SPARSE RESCUE: If BM25 lexical match is extremely high (e.g. > 15.0),
-        # it means there is strong keyword overlap even if dense embedding missed it.
-        if max_sparse >= 15.0:
-            logger.info(
-                f"Sparse rescue (dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-                f"but sparse={max_sparse:.4f} >= 15.0) — admitting as KNOWLEDGE"
-            )
-            return "generate"
-
-        # NEAR-MISS monitor: dense just below the floor. Could be a terse
-        # entity/acronym wrongly rejected — instrument so ops can pull these and
-        # decide whether a corroboration tier is needed. Does NOT change routing.
-        if max_dense >= _settings.kb_min_dense_score - 0.05:
-            logger.info(
-                f"NEAR-MISS reject (dense just below floor) — "
-                f"dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-                f"sparse={max_sparse:.4f}"
-            )
-            _emit_sparse_only_passthrough()
-        logger.info(
-            f"Dense below floor — NOT-FOUND "
-            f"(pool dense={max_dense:.4f} < {_settings.kb_min_dense_score}, "
-            f"pool sparse={max_sparse:.4f} ignored)"
-        )
-        return "low_relevance"
-    return "generate"
 
 
 # ─── Graph Assembly ───────────────────────────────────────────────────────────

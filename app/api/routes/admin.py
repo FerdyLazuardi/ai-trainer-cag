@@ -18,6 +18,32 @@ router = APIRouter()
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+def calculate_cost(or_provider: str, prompt: int, cached: int, completion: int) -> float:
+    # Normalize model name
+    m = (or_provider or "").lower()
+    
+    # Defaults (DeepSeek V3/V4 flash pricing as baseline fallback: $0.14 / $0.28 per M)
+    prompt_rate = 0.14 / 1_000_000
+    cached_rate = 0.014 / 1_000_000
+    completion_rate = 0.28 / 1_000_000
+    
+    if "gemini" in m:
+        # Gemini 2.5 Flash pricing: $0.075 / $0.30 per M
+        prompt_rate = 0.075 / 1_000_000
+        cached_rate = 0.01875 / 1_000_000
+        completion_rate = 0.30 / 1_000_000
+    elif "deepseek-chat" in m or "deepseek-v3" in m or "deepseek-v4" in m:
+        prompt_rate = 0.14 / 1_000_000
+        cached_rate = 0.014 / 1_000_000
+        completion_rate = 0.28 / 1_000_000
+
+    # Non-cached prompt tokens are charged at prompt_rate
+    non_cached_prompt = max(0, prompt - cached)
+    
+    cost = (non_cached_prompt * prompt_rate) + (cached * cached_rate) + (completion * completion_rate)
+    return round(cost, 8)
+
+
 def verify_api_key(api_key: str = Security(api_key_header)):
     settings = get_settings()
     # Constant-time compare to avoid a timing side-channel that could let an
@@ -151,6 +177,7 @@ async def get_dashboard_logs(
     or_prompt = int(or_stats[0] or 0) if or_stats else 0
     or_cached = int(or_stats[1] or 0) if or_stats else 0
     or_completion = int(or_stats[2] or 0) if or_stats else 0
+    total_cost = calculate_cost(settings.llm_model, or_prompt, or_cached, or_completion)
     hit_rate = (or_cached / or_prompt * 100.0) if or_prompt > 0 else 0.0
 
     perf = perf_q.fetchone()
@@ -199,6 +226,12 @@ async def get_dashboard_logs(
             "or_completion_tokens": int(row[17]) if row[17] is not None else 0,
             "or_provider": str(row[18]) if row[18] else "",
             "rewritten_query": str(row[19]) if len(row) > 19 and row[19] else None,
+            "cost": calculate_cost(
+                str(row[18]) if row[18] else "",
+                int(row[15]) if row[15] is not None else 0,
+                int(row[16]) if row[16] is not None else 0,
+                int(row[17]) if row[17] is not None else 0,
+            ),
         }
         for row in log_rows
     ]
@@ -228,6 +261,7 @@ async def get_dashboard_logs(
             "or_prompt_tokens": or_prompt,
             "or_cached_tokens": or_cached,
             "or_completion_tokens": or_completion,
+            "total_cost": total_cost,
             "p95_latency_7d": p95_7d,
             "p99_latency_7d": p99_7d,
             "faithfulness_avg_7d": faith_avg_7d,
@@ -240,3 +274,12 @@ async def get_dashboard_logs(
         "next_cursor": next_cursor,
         "users": users,
     }
+
+
+@router.get("/kb", summary="Get active KB text")
+async def get_active_kb(
+    _=Depends(verify_api_key),
+) -> Dict[str, str]:
+    from app.graph.pipeline import _load_active_cag_kb_text
+    content = await _load_active_cag_kb_text()
+    return {"content": content}

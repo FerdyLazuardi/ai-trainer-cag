@@ -47,7 +47,7 @@ def setup_logging(debug: bool = False) -> None:
             pass
         structured_log_path = primary_log_path
     except (PermissionError, OSError):
-        fallback_log_dir = Path(os.environ.get("XDG_CACHE_HOME", "/tmp")) / "ai-lms-agent-logs"
+        fallback_log_dir = Path(os.environ.get("XDG_CACHE_HOME", "/tmp")) / "cag-lms-agent-logs"
         fallback_log_dir.mkdir(parents=True, exist_ok=True)
         structured_log_path = fallback_log_dir / "app.json"
         logger.warning(

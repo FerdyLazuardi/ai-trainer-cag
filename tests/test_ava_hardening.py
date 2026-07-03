@@ -130,32 +130,7 @@ def test_sanitize_answer_strips_course_context_dump():
     assert cleaned == "**Visi Amartha:** Kemakmuran Bersama."
 
 
-def test_filter_seen_chunks_drops_repeats_but_keeps_fresh_context():
-    from app.graph.pipeline import _filter_seen_chunks
 
-    chunks = [
-        {"chunk_id": "old-1", "text": "old"},
-        {"chunk_id": "new-1", "text": "new"},
-        {"text": "no id"},
-    ]
-
-    assert _filter_seen_chunks(chunks, {"old-1"}) == [
-        {"chunk_id": "new-1", "text": "new"},
-        {"text": "no id"},
-    ]
-
-
-def test_filter_seen_chunks_keeps_top_chunk_when_everything_repeated():
-    from app.graph.pipeline import _filter_seen_chunks
-
-    chunks = [
-        {"chunk_id": "old-1", "text": "best repeat"},
-        {"chunk_id": "old-2", "text": "second repeat"},
-    ]
-
-    assert _filter_seen_chunks(chunks, {"old-1", "old-2"}) == [
-        {"chunk_id": "old-1", "text": "best repeat"},
-    ]
 
 
 @pytest.mark.asyncio
@@ -240,7 +215,6 @@ async def test_prepare_rag_context_cag_skips_rewrite_and_embedding(monkeypatch):
     monkeypatch.setattr(chat, "_schedule_summary_refresh", fake_refresh)
     monkeypatch.setattr(chat, "get_cheap_llm", lambda: object())
     monkeypatch.setattr(chat, "is_real_user", lambda **kwargs: False)
-    monkeypatch.setattr(pipeline, "_rewrite_search_query", fake_rewrite)
     monkeypatch.setattr(pipeline, "_apply_glossary", lambda query: query)
 
     context = await chat._prepare_rag_context(

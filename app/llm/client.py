@@ -12,7 +12,7 @@ from app.config.settings import get_settings
 settings = get_settings()
 
 
-_LLM_USER_AGENT = "ai-lms-agent/1.0"
+_LLM_USER_AGENT = "cag-lms-agent/1.0"
 
 
 async def _strip_openai_ua(request: httpx.Request) -> None:
@@ -97,7 +97,7 @@ def get_llm() -> ChatOpenAI:
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER",
         },
     )
@@ -119,7 +119,7 @@ def get_cheap_llm() -> ChatOpenAI:
         request_timeout=30,
         extra_body=_eb,
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Background Worker)",
         },
     )
@@ -134,7 +134,7 @@ def get_judge_llm() -> ChatOpenAI:
         model_kwargs={"response_format": {"type": "json_object"}},
         extra_body=_provider_extra_body(settings.judge_llm_model),
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Judge)",
         },
     )
@@ -166,7 +166,7 @@ def get_preprocessor_llm() -> ChatOpenAI:
         request_timeout=30,
         extra_body=_eb,
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Pre-Processor)",
         },
     )
@@ -186,7 +186,7 @@ def get_generate_llm() -> ChatOpenAI:
         # aborts and generate_node's safety-net ainvoke (get_generate_llm_nostream)
         # replays non-stream — which still captures usage. Either way tokens land.
         default_headers={
-            "HTTP-Referer": "https://github.com/peped-BE",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Generate)",
         },
     )
@@ -207,7 +207,7 @@ def get_generate_llm_nostream() -> ChatOpenAI:
         request_timeout=60,
         streaming=False,
         default_headers={
-            "HTTP-Referer": "https://github.com/peped-BE",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Generate)",
         },
     )
@@ -222,7 +222,7 @@ def get_chat_llm() -> ChatOpenAI:
         request_timeout=60,
         streaming=True,
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Chat)",
         },
     )
@@ -238,7 +238,7 @@ def get_empathy_llm() -> ChatOpenAI:
         streaming=True,
         stream_usage=True,
         default_headers={
-            "HTTP-Referer": "https://github.com/ai-lms-agent",
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Empathy)",
         },
     )

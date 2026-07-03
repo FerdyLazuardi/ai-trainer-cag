@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 # Page config must be the first Streamlit command
 st.set_page_config(
-    page_title="Agent Observability",
+    page_title="CAG Agent Observability",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -18,7 +18,7 @@ st.set_page_config(
 # Load environment variables from the root .env file (if running locally)
 # Later when deployed to Streamlit Cloud, these will go into Streamlit Secrets.
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-load_dotenv(env_path)
+load_dotenv(env_path, override=True)
 
 try:
     API_URL = st.secrets["API_URL"]
@@ -29,6 +29,27 @@ try:
     ADMIN_API_KEY = st.secrets["ADMIN_API_KEY"]
 except Exception:
     ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "dev_secret_key")
+
+# Strip quotes from environment variables
+if API_URL:
+    API_URL = API_URL.strip('"').strip("'")
+if ADMIN_API_KEY:
+    ADMIN_API_KEY = ADMIN_API_KEY.strip('"').strip("'")
+
+@st.cache_data(ttl=3600)
+def fetch_usd_to_idr_rate():
+    try:
+        response = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        rate = data.get("rates", {}).get("IDR")
+        if rate:
+            return float(rate)
+    except Exception as e:
+        st.sidebar.warning(f"Gagal mengambil kurs realtime: {e}. Fallback: Rp 16.000")
+    return 16000.0
+
+USD_TO_IDR = fetch_usd_to_idr_rate()
 
 @st.cache_data(ttl=15)
 def fetch_dashboard_data(limit=500):
@@ -41,19 +62,21 @@ def fetch_dashboard_data(limit=500):
         st.error(f"Failed to fetch data from API: {e}")
         return None
 
+
+
 @st.dialog("Chat Details", width="large")
 def show_chat_details(row):
     with st.chat_message("user"):
         st.write(row['query'])
         if pd.notna(row.get('rewritten_query')) and row.get('rewritten_query') and row.get('rewritten_query') != row['query']:
             st.caption(f"**AI Query Rewrite (for DB search):** {row['rewritten_query']}")
-        else:
-            st.caption("**AI Query Rewrite:** *(No rewrite needed / Exact match)*")
         
     with st.chat_message("assistant"):
         st.write(row['answer'])
-        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Chunks: {row.get('retrieved', 0)} | Intent: {row['intent']} | Time: {row['created_at']}")
-        st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')} | Empathy: {row.get('empathy', 'N/A')} | Reasoning: {row.get('reasoning', 'N/A')} | Lookup: {row.get('lookup', 'N/A')}")
+        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Cost: {row.get('cost', 'Rp 0')} | Intent: {row['intent']} | Time: {row['created_at']}")
+        st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')}")
+        
+
         
         # Show retrieved context if available
         retrieved_context = row.get('retrieved_context', [])
@@ -72,8 +95,6 @@ def show_chat_details(row):
         if pd.notna(row.get('faithfulness')) and row.get('faithfulness') is not None:
             if float(row['faithfulness']) < 0.8:
                 issues.append("Faithfulness Rendah (Potensi Halusinasi)")
-        if row.get('intent') == 'KNOWLEDGE' and row.get('retrieved', 0) == 0:
-            issues.append("KNOWLEDGE tapi tidak ada chunk ditarik")
         
         if issues:
             st.error(f"Problematic Chat: {', '.join(issues)}")
@@ -84,7 +105,7 @@ def show_chat_details(row):
 
 col_title, col_refresh = st.columns([5, 1])
 with col_title:
-    st.title("Agent Observability Dashboard")
+    st.title("CAG Agent Observability Dashboard")
 with col_refresh:
     st.write("")  # vertical alignment hack
     if st.button("🔄 Refresh", help="Hapus cache & muat ulang data", use_container_width=True):
@@ -105,30 +126,23 @@ logs = data.get("logs", [])
 users = data.get("users", [])
 
 # Setup tabs
-tab_overview, tab_explorer, tab_ltm, tab_gate = st.tabs([
+tab_overview, tab_explorer, tab_ltm = st.tabs([
     "Overview & Recent Logs",
     "Session Explorer",
     "User LTM Profiles",
-    "Intent Gate Monitor",
 ])
 
 with tab_overview:
     # KPI Row
-    col1, col2, col3, col_tokens = st.columns(4)
+    # KPI Row 1
+    col1, col2, col3, col_faith = st.columns(4)
     col1.metric("Total Queries", f"{kpis.get('total_queries', 0):,}")
     col2.metric("Avg Latency", f"{kpis.get('avg_latency', 0.0)/1000:.2f} s")
     col3.metric("OR Cache Hit Rate", f"{kpis.get('hit_rate', 0.0):.1f}%")
-    col_tokens.metric("OR Cached/Total Tokens", f"{kpis.get('or_cached_tokens', 0):,} / {(kpis.get('or_prompt_tokens', 0) + kpis.get('or_completion_tokens', 0)):,}")
-
-    # Rolling-7d KPIs — p95/p99 expose the latency tail that Avg hides, and
-    # faithfulness is the sampled judge quality score. "—" when no data.
-    col4, col5, col6 = st.columns(3)
-    col4.metric("P95 Latency (7d)", f"{kpis.get('p95_latency_7d', 0.0)/1000:.2f} s")
-    col5.metric("P99 Latency (7d)", f"{kpis.get('p99_latency_7d', 0.0)/1000:.2f} s")
     _faith = kpis.get('faithfulness_avg_7d')
     _faith_n = kpis.get('faithfulness_n_7d', 0)
     _faith_fail = kpis.get('faithfulness_fail_7d', 0)
-    col6.metric(
+    col_faith.metric(
         "Faithfulness (7d)",
         f"{_faith:.3f}" if _faith is not None else "—",
         delta=f"-{_faith_fail} unfaithful" if _faith_fail else None,
@@ -136,6 +150,13 @@ with tab_overview:
         help=f"Avg LLM-judge faithfulness over {_faith_n} evaluated turns (sampled). "
              f"{_faith_fail} scored below the {0.75} pass threshold.",
     )
+
+    # KPI Row 2 (Aligned to center columns of the 4-column layout)
+    _, col_tokens, col_cost, _ = st.columns(4)
+    col_tokens.metric("OR Cached/Total Tokens", f"{kpis.get('or_cached_tokens', 0):,} / {(kpis.get('or_prompt_tokens', 0) + kpis.get('or_completion_tokens', 0)):,}")
+    
+    total_cost_idr = kpis.get('total_cost', 0.0) * USD_TO_IDR
+    col_cost.metric("Total Cost", f"Rp {total_cost_idr:,.0f}")
 
     st.divider()
 
@@ -179,10 +200,11 @@ with tab_overview:
             )
 
         # Defensive programming: ensure new columns exist in case the backend API is outdated
-        for col in ['faithfulness', 'empathy', 'reasoning', 'lookup', 'tokens', 'retrieved', 'or_cached_tokens', 'rewritten_query']:
+        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'rewritten_query', 'or_generation_id', 'cost']:
             if col not in df_logs.columns:
                 df_logs[col] = None
                 
+        df_logs['cost'] = df_logs['cost'].apply(lambda x: f"Rp {x * USD_TO_IDR:,.0f}" if pd.notna(x) else "Rp 0")
         # Calculate latency in seconds
         df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         
@@ -195,7 +217,7 @@ with tab_overview:
         
         # Use dataframe selection
         event = st.dataframe(
-            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'retrieved', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'empathy', 'reasoning', 'lookup', 'query_short', 'answer_short']],
+            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -216,6 +238,13 @@ with tab_explorer:
         st.info("Belum ada data log.")
     else:
         df_logs = pd.DataFrame(logs)
+        # Defensive programming: ensure new columns exist
+        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'rewritten_query', 'or_generation_id', 'cost']:
+            if col not in df_logs.columns:
+                df_logs[col] = None
+
+        df_logs['cost'] = df_logs['cost'].apply(lambda x: f"Rp {x * USD_TO_IDR:,.0f}" if pd.notna(x) else "Rp 0")
+
         if 'created_at' in df_logs.columns:
             # DB stores UTC (DateTime(timezone=True)); show in WIB/GMT+7.
             df_logs['created_at'] = (
@@ -266,7 +295,7 @@ with tab_explorer:
                 
                 # Use dataframe selection
                 event_turn = st.dataframe(
-                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'retrieved', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
+                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
@@ -295,145 +324,4 @@ with tab_ltm:
             hide_index=True
         )
 
-# ─── Intent Gate Monitor tab ────────────────────────────────────────────────
-# Reads JSON snapshots written by scripts/auto_calibrate_intent_gate.py
-# (cron 03:00 WIB daily). Shows the latest snapshot, the per-class
-# recommended thresholds, and the drift trend across all snapshots.
-# If no snapshots exist yet, shows a friendly "first run pending" state
-# with a button to trigger one immediately.
 
-CALIB_DIR = Path(__file__).parent.parent / "eval" / "results"
-
-
-@st.cache_data(ttl=60)
-def _load_calibration_snapshots():
-    """Load every intent_gate_calibration_*.json in eval/results/. Returns
-    an empty list when none exist (the typical pre-traffic state)."""
-    if not CALIB_DIR.exists():
-        return []
-    files = sorted(CALIB_DIR.glob("intent_gate_calibration_*.json"))
-    out = []
-    for f in files:
-        try:
-            out.append((f.name, json.loads(f.read_text(encoding="utf-8"))))
-        except Exception as e:
-            st.warning(f"Skipping unreadable snapshot {f.name}: {e}")
-    return out
-
-
-with tab_gate:
-    st.subheader("Intent Gate — Live Calibration")
-    st.markdown(
-        "Threshold & margin untuk **semantic intent gate** (Tier-0 embedding). "
-        "Diset otomatis tiap hari 03:00 WIB dari `agent_logs.gate_*` oleh "
-        "`scripts/auto_calibrate_intent_gate.py`. Drift > 0.05 dari setting "
-        "aktif = butuh review manual."
-    )
-
-    snapshots = _load_calibration_snapshots()
-
-    if not snapshots:
-        st.info(
-            "Belum ada snapshot. Jalankan: `python -m scripts.auto_calibrate_intent_gate` "
-            "(atau tunggu cron harian)."
-        )
-        if "calib_output" in st.session_state:
-            st.text(st.session_state.calib_output)
-            st.success("Selesai!")
-            del st.session_state.calib_output
-
-        if st.button("Jalankan kalibrasi sekarang"):
-            with st.spinner("Mengambil data agent_logs..."):
-                try:
-                    import subprocess
-                    import sys
-                    result = subprocess.run(
-                        [sys.executable, "-m", "app.eval.auto_calibrate_intent_gate"],
-                        capture_output=True, text=True, timeout=240,
-                        cwd=str(Path(__file__).parent.parent),
-                    )
-                    
-                    output = result.stdout
-                    if result.stderr:
-                        output += "\n[STDERR]\n" + result.stderr
-                    
-                    st.session_state.calib_output = output
-                    _load_calibration_snapshots.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Gagal menjalankan kalibrasi: {e}")
-    else:
-        latest_name, latest = snapshots[-1]
-        cur = latest.get("current_settings", {})
-        drift = latest.get("drift_alert", False)
-
-        # KPI strip
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Rows analyzed", f"{latest.get('rows_analyzed', 0):,}")
-        c2.metric("Current threshold", f"{cur.get('threshold', '?')}")
-        c3.metric("Current margin", f"{cur.get('margin', '?')}")
-        c4.metric("Drift alert", "🚨 YES" if drift else "OK")
-
-        st.caption(f"Snapshot: `{latest_name}` · generated {latest.get('generated_at', '?')}")
-
-        # Decision distribution
-        dec = latest.get("decision_distribution", {})
-        if dec:
-            st.markdown("##### Decision distribution")
-            df_dec = pd.DataFrame(
-                [{"decision": k, "count": v} for k, v in dec.items()]
-            )
-            st.bar_chart(df_dec, x="decision", y="count", height=200)
-
-        # Per-class recommendations
-        per_class = latest.get("per_class", {})
-        if per_class:
-            st.markdown("##### Per-class recommendations")
-            rows = []
-            for intent in sorted(per_class):
-                info = per_class[intent]
-                rows.append({
-                    "intent": intent,
-                    "n_samples": info.get("n_samples", 0),
-                    "n_caught": info.get("n_caught", 0),
-                    "lowest_caught_cosine": info.get("lowest_caught_cosine", "-"),
-                    "recommended_threshold": info.get("recommended_threshold", "-"),
-                    "TPR": info.get("TPR_at_recommended", "-"),
-                    "FP": info.get("FP_at_recommended", "-"),
-                    "note": info.get("note", ""),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        # Drift trend across all snapshots
-        if len(snapshots) >= 2:
-            st.markdown("##### Threshold drift over time")
-            trend_rows = []
-            for name, snap in snapshots:
-                ts = snap.get("generated_at", "")
-                cs = snap.get("current_settings", {})
-                cur_thr = cs.get("threshold")
-                for intent, info in snap.get("per_class", {}).items():
-                    rec = info.get("recommended_threshold")
-                    if rec is None or cur_thr is None:
-                        continue
-                    trend_rows.append({
-                        "generated_at": ts,
-                        "intent": intent,
-                        "current": cur_thr,
-                        "recommended": rec,
-                        "delta": round(rec - cur_thr, 3),
-                    })
-            if trend_rows:
-                df_trend = pd.DataFrame(trend_rows)
-                # Plot recommended per intent over time, current as horizontal ref.
-                fig = px.line(
-                    df_trend, x="generated_at", y="recommended",
-                    color="intent", markers=True,
-                    title="Recommended threshold per intent over time",
-                )
-                if cur_thr is not None:
-                    fig.add_hline(
-                        y=cur_thr, line_dash="dash", line_color="gray",
-                        annotation_text=f"current={cur_thr}",
-                    )
-                st.plotly_chart(fig, use_container_width=True)

@@ -1,4 +1,4 @@
-﻿from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 import pytest
 
 
@@ -70,9 +70,6 @@ async def test_cag_graph_does_not_call_retrieval_for_knowledge(monkeypatch):
 
     from app.graph import pipeline
 
-    async def fail_rag_node(*args, **kwargs):
-        raise AssertionError("CAG knowledge turns must not call retrieval")
-
     async def fake_load_kb():
         return "<knowledge_base>KB</knowledge_base>"
 
@@ -84,7 +81,6 @@ async def test_cag_graph_does_not_call_retrieval_for_knowledge(monkeypatch):
             yield AIMessageChunk(content="OK")
 
     pipeline.get_rag_graph.cache_clear()
-    monkeypatch.setattr(pipeline, "_rag_node", fail_rag_node)
     monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
     monkeypatch.setattr(pipeline, "get_generate_llm", lambda: FakeStreamingLLM())
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
