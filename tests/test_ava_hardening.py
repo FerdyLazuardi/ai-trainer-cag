@@ -457,3 +457,122 @@ async def test_stream_error_path_logs_and_does_not_write_cache(monkeypatch):
     assert logs[0]["answer"] == ""
     assert cache_writes == []
     assert history_writes == []
+
+
+def test_sanitize_answer_strips_offscope():
+    from app.graph.pipeline import _sanitize_answer
+    text = "Maaf, itu di luar kapasitas saya. [OFFSCOPE]"
+    cleaned = _sanitize_answer(text)
+    assert "[OFFSCOPE]" not in cleaned
+    assert "di luar kapasitas saya" in cleaned
+
+
+@pytest.mark.asyncio
+async def test_user_violation_and_ban_logic(monkeypatch):
+    import app.api.routes.chat as chat
+
+    # Mock Redis client
+    mock_redis_data = {}
+    class DummyRedis:
+        async def get(self, key):
+            return mock_redis_data.get(key)
+        async def incr(self, key):
+            val = mock_redis_data.get(key, 0) + 1
+            mock_redis_data[key] = val
+            return val
+        async def expire(self, key, ttl, **kwargs):
+            pass
+        async def setex(self, key, ttl, val):
+            mock_redis_data[key] = val
+        async def ttl(self, key):
+            # Return positive seconds if key exists (simulating a banned user), else -2
+            return 7200 if key in mock_redis_data else -2
+
+    def mock_get_redis_client():
+        return DummyRedis()
+
+    monkeypatch.setattr(chat, "get_redis_client", mock_get_redis_client)
+
+    # Test _get_ban_ttl (not banned yet)
+    assert await chat._get_ban_ttl("user-1") == 0
+
+    # Test _handle_off_scope_violation increments
+    new_count, just_banned = await chat._handle_off_scope_violation("user-1")
+    assert new_count == 1
+    assert not just_banned
+    assert await chat._get_ban_ttl("user-1") == 0
+
+    # 2nd violation
+    new_count, just_banned = await chat._handle_off_scope_violation("user-1")
+    assert new_count == 2
+    assert not just_banned
+    assert await chat._get_ban_ttl("user-1") == 0
+
+    # 3rd violation (Warning threshold)
+    new_count, just_banned = await chat._handle_off_scope_violation("user-1")
+    assert new_count == 3
+    assert not just_banned
+    assert await chat._get_ban_ttl("user-1") == 0
+
+    # 4th violation (Ban threshold) — now user IS banned
+    new_count, just_banned = await chat._handle_off_scope_violation("user-1")
+    assert new_count == 4
+    assert just_banned
+    assert await chat._get_ban_ttl("user-1") > 0
+
+
+@pytest.mark.asyncio
+async def test_chat_short_circuits_if_banned(monkeypatch):
+    import app.api.routes.chat as chat
+
+    # Mock Redis so user is banned (ttl returns 7200 seconds)
+    class DummyRedisBanned:
+        async def ttl(self, key):
+            if "banned" in key:
+                return 7200
+            return -2
+        async def get(self, key):
+            return None
+
+    monkeypatch.setattr(chat, "get_redis_client", lambda: DummyRedisBanned())
+
+    # Call _run_chat
+    req = chat.ChatRequest(query="resep rendang", conversation_id="conv-1")
+    bg_tasks = chat.BackgroundTasks()
+    user = chat.User(user_id="user-banned", role="moodle_user", username="Test")
+
+    # We patch ownership verification so it passes
+    async def fake_verify(*args):
+        pass
+    monkeypatch.setattr(chat, "_verify_conversation_ownership", fake_verify)
+
+    res = await chat._run_chat(req, bg_tasks, user)
+    assert "Ai Trainer dinonaktifkan sementara" in res.answer
+    assert res.ban_remaining_seconds == 7200
+    assert res.cached is False
+    assert res.latency_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_chat_ban_status_exposes_current_ttl(monkeypatch):
+    import app.api.routes.chat as chat
+
+    class DummyRedisBanned:
+        async def ttl(self, key):
+            assert key == "ava:user:user-banned:banned"
+            return 321
+
+    monkeypatch.setattr(chat, "get_redis_client", lambda: DummyRedisBanned())
+
+    user = chat.User(user_id="user-banned", role="moodle_user", username="Test")
+    assert await chat.chat_ban_status(user) == {"ban_remaining_seconds": 321}
+
+
+def test_sanitize_answer_strips_course_num():
+    from app.graph.pipeline import _sanitize_answer
+    text = "Bisa cek materi di Course 3: Tentang Amartha ya atau di Course 1 Tentang Credit Risk."
+    cleaned = _sanitize_answer(text)
+    assert "Course 3" not in cleaned
+    assert "Course 1" not in cleaned
+    assert "Tentang Amartha" in cleaned
+    assert "Tentang Credit Risk" in cleaned

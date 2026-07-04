@@ -804,6 +804,50 @@ async def chat(
     return await _run_chat(request, background_tasks, current_user)
 
 
+@router.get("/chat/ban-status", summary="Get current chat ban status")
+async def chat_ban_status(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    return {"ban_remaining_seconds": await _get_ban_ttl(current_user.user_id)}
+
+
+async def _get_ban_ttl(user_id: str) -> int:
+    """Return remaining ban seconds for user. 0 means not banned."""
+    try:
+        redis_client = get_redis_client()
+        ttl = await redis_client.ttl(f"ava:user:{user_id}:banned")
+        # ttl == -2: key doesn't exist (not banned)
+        # ttl == -1: key exists but no expiry (treat as not banned, shouldn't happen)
+        return max(ttl, 0) if ttl > 0 else 0
+    except Exception as exc:
+        logger.warning(f"Failed to check user ban TTL: {exc}")
+        return 0
+
+
+async def _handle_off_scope_violation(user_id: str) -> tuple[int, bool]:
+    """Increment violation count for the user. Returns (new_count, just_banned)."""
+    try:
+        redis_client = get_redis_client()
+        from app.config.settings import get_settings
+        settings = get_settings()
+        key = f"ava:user:{user_id}:off_scope_violations"
+        new_count = await redis_client.incr(key)
+        await redis_client.expire(key, settings.off_scope_violation_window_seconds)
+
+        just_banned = False
+        if new_count >= settings.max_off_scope_violations:
+            await redis_client.setex(
+                f"ava:user:{user_id}:banned",
+                settings.off_scope_ban_duration_seconds,
+                "1"
+            )
+            just_banned = True
+        return new_count, just_banned
+    except Exception as exc:
+        logger.warning(f"Failed to handle off-scope violation: {exc}")
+        return 0, False
+
+
 async def _run_chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
@@ -812,6 +856,19 @@ async def _run_chat(
     start_time = time.perf_counter()
     conversation_id = request.conversation_id or str(uuid.uuid4())
     await _verify_conversation_ownership(conversation_id, current_user)
+
+    ban_ttl = await _get_ban_ttl(current_user.user_id)
+    if ban_ttl > 0:
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        return ChatResponse(
+            answer="Maaf, Ai Trainer dinonaktifkan sementara karena terlalu banyak menanyakan hal di luar topik.",
+            sources=[],
+            conversation_id=conversation_id,
+            resolved_query=None,
+            cached=False,
+            latency_ms=round(latency_ms, 2),
+            ban_remaining_seconds=ban_ttl,
+        )
 
     resolved_query = await resolve_numeric_query(request.query, conversation_id)
     from app.graph.pipeline import _apply_glossary
@@ -893,6 +950,7 @@ async def _execute_chat_flow(
     settings = get_settings()
 
     initial_state = context["initial_state"]
+    was_personalized = context.get("was_personalized", False)
     rag_graph = get_rag_graph()
 
     result = None
@@ -913,6 +971,16 @@ async def _execute_chat_flow(
         from app.graph.pipeline import _sanitize_answer
         answer = final_message.content if hasattr(final_message, "content") else str(final_message)
         answer = _sanitize_answer(answer)
+
+        off_scope_detected = result.get("off_scope_detected", False)
+        off_scope_ban_ttl: int = 0
+        if off_scope_detected:
+            new_count, just_banned = await _handle_off_scope_violation(current_user.user_id)
+            if new_count == settings.warning_off_scope_violations:
+                warning_text = "\n\n**Peringatan**: Harap tanyakan hal seputar materi Amartha. Jika Anda terus bertanya di luar topik sekali lagi, Ai Trainer akan dinonaktifkan sementara."
+                answer += warning_text
+            elif new_count >= settings.max_off_scope_violations:
+                off_scope_ban_ttl = await _get_ban_ttl(current_user.user_id)
         or_prompt_tokens = 0
         or_cached_tokens = 0
         or_completion_tokens = 0
@@ -1061,6 +1129,7 @@ async def _execute_chat_flow(
         resolved_query=resolved_query if resolved_query != request.query else None,
         cached=False,
         latency_ms=round(latency_ms, 2),
+        ban_remaining_seconds=off_scope_ban_ttl if off_scope_ban_ttl > 0 else None,
     )
 
 
@@ -1203,6 +1272,15 @@ async def chat_stream(
         conversation_id = request.conversation_id or str(uuid.uuid4())
         await _verify_conversation_ownership(conversation_id, current_user)
 
+        stream_ban_ttl = await _get_ban_ttl(current_user.user_id)
+        if stream_ban_ttl > 0:
+            sem_release()
+            _stream_ban_ttl = stream_ban_ttl
+            async def banned_generator():
+                yield f"event: banned\ndata: {json.dumps({'ban_remaining_seconds': _stream_ban_ttl, 'conversation_id': conversation_id})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': False, 'latency_ms': 0.0})}\n\n"
+            return StreamingResponse(banned_generator(), media_type="text/event-stream")
+
         resolved_query = await resolve_numeric_query(request.query, conversation_id)
         from app.graph.pipeline import _apply_glossary
         resolved_query = _apply_glossary(resolved_query)
@@ -1298,6 +1376,7 @@ async def chat_stream(
         stream_provider = None
         stream_generation_id = None
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
+        stream_off_scope_detected = False
         leak_guard = StreamLeakGuard()
         token_count = 0
         # ponytail: hoisted defaults so the finally-block log emitter can run on
@@ -1492,6 +1571,8 @@ async def chat_stream(
                 if kind == "on_chain_end" and event.get("name") == "generate_node":
                     output = event.get("data", {}).get("output", {})
                     if isinstance(output, dict):
+                        if output.get("off_scope_detected"):
+                            stream_off_scope_detected = True
                         msgs_out = output.get("messages") or []
                         if msgs_out:
                             last_msg = msgs_out[-1]
@@ -1699,6 +1780,8 @@ async def chat_stream(
                     rag_graph.ainvoke(initial_state, config={"run_name": "ava-chat-stream-fb"}),
                     timeout=settings.pipeline_total_timeout_s,
                 )
+                if _fb_result.get("off_scope_detected"):
+                    stream_off_scope_detected = True
                 _fb_msgs = _fb_result.get("messages") or []
                 if _fb_msgs:
                     _fb_msg = _fb_msgs[-1]
@@ -1748,6 +1831,16 @@ async def chat_stream(
             await _emit_log()
             return
 
+        stream_new_ban_ttl: int = 0
+        if stream_off_scope_detected:
+            new_count, just_banned = await _handle_off_scope_violation(current_user.user_id)
+            if new_count == settings.warning_off_scope_violations:
+                warning_text = "\n\n**Peringatan**: Harap tanyakan hal seputar materi Amartha. Jika Anda terus bertanya di luar topik sekali lagi, Ai Trainer akan dinonaktifkan sementara."
+                yield f"data: {json.dumps({'token': warning_text})}\n\n"
+                full_answer += warning_text
+            elif new_count >= settings.max_off_scope_violations:
+                stream_new_ban_ttl = await _get_ban_ttl(current_user.user_id)
+
         try:
             await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=full_answer)
         except Exception as hist_err:
@@ -1757,7 +1850,10 @@ async def chat_stream(
         except Exception as seen_err:
             logger.debug(f"seen chunk tracking skipped: {seen_err}")
 
-        yield f"event: done\ndata: {json.dumps({'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done})}\n\n"
+        done_payload: dict = {'sources': sources, 'conversation_id': conversation_id, 'cached': False, 'latency_ms': round(latency_ms, 2), 'suggest_coaching': suggest_coaching, 'coaching_topic': coaching_topic, 'coaching_done': coaching_done}
+        if stream_new_ban_ttl > 0:
+            done_payload['ban_remaining_seconds'] = stream_new_ban_ttl
+        yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
 
         try:
             effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)

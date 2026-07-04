@@ -515,6 +515,12 @@ class Settings(BaseSettings):
     # hardening is a defense-in-depth measure, not a security boundary).
     streaq_signing_secret: str = Field(default="", alias="STREAQ_SIGNING_SECRET")
 
+    # ─── Off-Scope Violation & Banning ───────────────────────────────────────
+    max_off_scope_violations: int = 4
+    warning_off_scope_violations: int = 3
+    off_scope_violation_window_seconds: int = 86400
+    off_scope_ban_duration_seconds: int = 7200
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

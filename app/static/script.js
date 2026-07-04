@@ -90,6 +90,136 @@ let introduced = false;
 let isStreaming = false; // Prevent double-sends during streaming
 let currentAbortController = null;
 
+// ── Ban countdown state ──────────────────────────────────────────────────────
+let _banCountdownInterval = null;     // setInterval handle for running countdown
+let _banBubbleEl = null;              // the DOM element showing the countdown
+let _banActive = false;
+
+function banStorageKey() {
+    const userKey = (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0)
+        ? MOODLE_USER_ID
+        : getSessionId();
+    return `ava_ban_until_${userKey}`;
+}
+
+function clearStoredBanCountdown() {
+    try {
+        localStorage.removeItem(banStorageKey());
+    } catch (_) {}
+}
+
+function storeBanCountdown(remainingSeconds) {
+    try {
+        localStorage.setItem(banStorageKey(), String(Date.now() + remainingSeconds * 1000));
+    } catch (_) {}
+}
+
+function restoreStoredBanCountdown() {
+    let banUntil = 0;
+    try {
+        banUntil = Number(localStorage.getItem(banStorageKey()) || 0);
+    } catch (_) {}
+    const remainingSeconds = Math.ceil((banUntil - Date.now()) / 1000);
+    if (remainingSeconds > 0) {
+        renderBanCountdown(remainingSeconds);
+        return true;
+    }
+    clearStoredBanCountdown();
+    return false;
+}
+
+async function refreshBanStatus() {
+    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+    const headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true"
+    };
+    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+    }
+
+    try {
+        const res = await fetch(`${baseUrl}/api/v1/chat/ban-status`, { headers });
+        if (!res.ok) throw new Error("ban-status failed");
+        const data = await res.json();
+        const remainingSeconds = Math.max(0, Math.floor(data?.ban_remaining_seconds || 0));
+        if (remainingSeconds > 0) {
+            renderBanCountdown(remainingSeconds);
+            return true;
+        }
+        clearStoredBanCountdown();
+        if (_banBubbleEl && _banBubbleEl.isConnected) _banBubbleEl.remove();
+        _banBubbleEl = null;
+        _banActive = false;
+        setSendButtonState(false);
+        return false;
+    } catch (err) {
+        console.warn("Failed to refresh ban status:", err);
+        return _banActive;
+    }
+}
+
+/**
+ * Start (or refresh) a ban countdown bubble.
+ * @param {number} remainingSeconds - seconds left on the ban
+ */
+function renderBanCountdown(remainingSeconds) {
+    // If there's already a countdown running, just update the remaining time
+    // so multiple "you're banned" replies don't stack up.
+    if (_banCountdownInterval) {
+        clearInterval(_banCountdownInterval);
+        _banCountdownInterval = null;
+    }
+
+    let secs = Math.max(0, Math.floor(remainingSeconds));
+    _banActive = secs > 0;
+    if (_banActive) storeBanCountdown(secs);
+    setSendButtonState(isStreaming);
+
+    const formatTime = (s) => {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        return [h, m, sec].map(v => String(v).padStart(2, '0')).join(':');
+    };
+
+    const messagesEl = document.getElementById('chat-messages');
+    const lastAiMsg = messagesEl ? [...messagesEl.querySelectorAll('.msg.ai')].pop() : null;
+
+    // Reuse existing status if it's still in the DOM, else create a new one
+    if (!_banBubbleEl || !_banBubbleEl.isConnected) {
+        _banBubbleEl = document.createElement('div');
+        _banBubbleEl.className = 'ban-countdown-msg';
+        _banBubbleEl.innerHTML = `
+            <span class="ban-countdown-text"></span>`;
+    }
+    if (messagesEl) {
+        lastAiMsg
+            ? lastAiMsg.insertAdjacentElement('afterend', _banBubbleEl)
+            : messagesEl.appendChild(_banBubbleEl);
+    }
+
+    const textEl = _banBubbleEl.querySelector('.ban-countdown-text');
+    const update = () => {
+        if (secs <= 0) {
+            clearInterval(_banCountdownInterval);
+            _banCountdownInterval = null;
+            if (textEl) textEl.textContent = 'Ai Trainer sudah aktif kembali. Silakan bertanya lagi.';
+            _banBubbleEl = null;
+            _banActive = false;
+            clearStoredBanCountdown();
+            setSendButtonState(false);
+            return;
+        }
+        if (textEl) textEl.textContent = `Ai Trainer dinonaktifkan. Aktif kembali dalam ${formatTime(secs)}.`;
+        secs--;
+    };
+
+    update(); // render immediately without waiting 1s
+    _banCountdownInterval = setInterval(update, 1000);
+    if (messages) messages.scrollTop = messages.scrollHeight;
+}
+
 // ── Kebab menu config: extensible for future features (roleplay, etc.) ──
 // Each item:
 //   id      unique key
@@ -134,6 +264,7 @@ function setSendButtonState(streaming) {
     const btns = document.querySelectorAll(".send-btn");
     btns.forEach(btn => {
         const icon = btn.querySelector("i");
+        btn.disabled = _banActive && !streaming;
         if (icon) {
             if (streaming) {
                 icon.className = "fas fa-stop"; // Stop icon
@@ -144,9 +275,14 @@ function setSendButtonState(streaming) {
             }
         }
     });
+    if (textarea) {
+        textarea.disabled = _banActive;
+        textarea.placeholder = _banActive ? "AI Trainer dinonaktifkan sementara" : "Ketik pesan...";
+    }
 }
 
 function handleSendClick() {
+    if (_banActive && !isStreaming) return;
     if (isStreaming) {
         // Cancel the ongoing request
         if (currentAbortController) {
@@ -621,6 +757,7 @@ function removeWelcome() {
 }
 
 function showIntro() {
+    if (_banActive) return;
     // Hindari duplikat welcome
     if (document.getElementById("ava-welcome")) return;
     // Welcome = empty-state ONLY. Kalau sudah ada bubble chat (mis. user klik
@@ -646,8 +783,7 @@ function showIntro() {
 }
 
 async function loadHistory() {
-
-    setTimeout(showIntro, 100);
+    restoreStoredBanCountdown();
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {
@@ -671,18 +807,18 @@ async function loadHistory() {
         const history = await res.json();
 
         if (history && history.length > 0) {
-            // Tunggu sedikit agar intro muncul duluan sebelum history
-            setTimeout(() => {
-                history.forEach(msg => {
-                    const role = msg.role === 'user' ? 'user' : 'ai';
-                    const content = msg.content || msg.text || "";
-                    addMessage(content, role);
-                });
-            }, 300);
+            history.forEach(msg => {
+                const role = msg.role === 'user' ? 'user' : 'ai';
+                const content = msg.content || msg.text || "";
+                addMessage(content, role);
+            });
         }
     } catch (err) {
         console.error("Failed to load history:", err);
     }
+
+    const banned = await refreshBanStatus();
+    if (!banned) setTimeout(showIntro, 100);
 }
 
 function clearChat() {
@@ -739,7 +875,8 @@ async function doClearChat() {
         messages.innerHTML = '';
         introduced = false;
         window._lastReflectiveQ = null;
-        showIntro();
+        const banned = await refreshBanStatus();
+        if (!banned) showIntro();
     } catch (e) {
         console.error("Error clearing chat history:", e);
     }
@@ -863,6 +1000,9 @@ function resetChat() {
     window.location.reload();
 }
 
+restoreStoredBanCountdown();
+refreshBanStatus();
+
 // ============================================================
 // STREAMING BUBBLE HELPERS
 // ============================================================
@@ -931,6 +1071,34 @@ function finalizeStreamBubble(contentDiv, bubble, fullText) {
     contentDiv.innerHTML = tempDiv.innerHTML;
 }
 
+/**
+ * Align fallback text to continue smoothly if overlapping, otherwise reset
+ */
+function alignFallbackText(streamed, displayed, reply) {
+    const received = streamed || displayed || "";
+    if (!reply) {
+        return { target: received, displayed: received };
+    }
+    if (!received) {
+        return { target: reply, displayed: "" };
+    }
+    if (reply.startsWith(received)) {
+        return { target: reply, displayed: received };
+    }
+
+    const minOverlap = 15;
+    const maxSearchLen = Math.min(received.length, 120);
+    for (let len = maxSearchLen; len >= minOverlap; len--) {
+        const tail = received.substring(received.length - len);
+        const idx = reply.lastIndexOf(tail);
+        if (idx !== -1) {
+            return { target: received + reply.substring(idx + len), displayed: received };
+        }
+    }
+
+    return { target: received, displayed: received };
+}
+
 // ============================================================
 // SEND MESSAGE — True SSE Streaming
 // ============================================================
@@ -941,7 +1109,7 @@ async function send(presetText, opts) {
     // is already shown above, so re-asking shouldn't duplicate it).
     opts = opts || {};
     const text = (presetText != null ? presetText : textarea.value).trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || _banActive) return;
 
     removeCoachOffer();
     if (!opts.skipBubble) {
@@ -1122,11 +1290,28 @@ async function send(presetText, opts) {
                         }
 
                         if (currentEventType === "done") {
-                            startStreamBubble();
                             if (parsed.suggest_coaching !== undefined) _suggestCoaching = parsed.suggest_coaching;
                             if (parsed.coaching_topic !== undefined) _coachingTopic = parsed.coaching_topic;
                             if (parsed.coaching_done !== undefined) _coachingDone = parsed.coaching_done;
+                            if (parsed.ban_remaining_seconds) {
+                                removeTyping();
+                                renderBanCountdown(parsed.ban_remaining_seconds);
+                                _streamActive = false;
+                                currentEventType = "";
+                                continue;
+                            }
+                            startStreamBubble();
                             _streamActive = false;
+                            currentEventType = "";
+                            continue;
+                        }
+
+                        if (currentEventType === "banned") {
+                            // Server sent a dedicated banned event before done
+                            removeTyping();
+                            if (parsed.ban_remaining_seconds) {
+                                renderBanCountdown(parsed.ban_remaining_seconds);
+                            }
                             currentEventType = "";
                             continue;
                         }
@@ -1142,10 +1327,21 @@ async function send(presetText, opts) {
                         if (parsed.token !== undefined) {
                             startStreamBubble();
                             _targetText += parsed.token;
+                            if (window.SIMULATE_DISCONNECT && _targetText.length > 100) {
+                                window.SIMULATE_DISCONNECT = false;
+                                window.SIMULATED_ERROR_TO_THROW = new Error("SIMULATED_NETWORK_DROP");
+                            }
                         }
 
                     } catch (parseErr) {
                         console.warn("SSE parse error:", parseErr, jsonStr);
+                    }
+
+                    if (window.SIMULATED_ERROR_TO_THROW) {
+                        const err = window.SIMULATED_ERROR_TO_THROW;
+                        window.SIMULATED_ERROR_TO_THROW = null;
+                        console.warn("[SIMULATION] Intentionally throwing simulated network drop to outer scope!");
+                        throw err;
                     }
 
                     currentEventType = "";
@@ -1164,6 +1360,7 @@ async function send(presetText, opts) {
 
 
     } catch (err) {
+        _streamActive = false; // Ensure stream is flagged as inactive
         if (err.name === 'AbortError') {
             console.log("Request cancelled by user.");
             removeTyping();
@@ -1204,15 +1401,24 @@ async function send(presetText, opts) {
             const data = await fallbackRes.json();
             removeTyping(); // hapus dots SETELAH response tiba
 
+            // If fallback says user is banned, show countdown and stop
+            if (data?.ban_remaining_seconds) {
+                renderBanCountdown(data.ban_remaining_seconds);
+                maybeOfferCoaching(text);
+                return;
+            }
+
             const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
             if (_streamStarted && contentDiv && bubble) {
                 removeTyping();
-                _targetText = reply;
+
+                const alignment = alignFallbackText(_targetText, _displayedText, reply);
+                _targetText = alignment.target;
+                _displayedText = alignment.displayed;
+
                 bubble.classList.add("streaming");
-                if (_finalized) {
-                    _finalized = false;
-                    smoothStreamWorker();
-                }
+                _finalized = false;
+                smoothStreamWorker();
             } else {
                 streamMessageFallback(reply, "ai");
             }

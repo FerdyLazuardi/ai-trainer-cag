@@ -217,6 +217,16 @@ body.chat-open #chat-toggle.pulse::before {
 .msg.user { justify-content: flex-end; }
 .msg.ai { justify-content: flex-start; }
 
+.ban-countdown-msg {
+    width: 100%;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #64748b;
+    padding: 0 12px;
+    margin-top: -6px;
+}
+
 .bubble {
     max-width: 92%;
     padding: 12px 16px;
@@ -326,6 +336,17 @@ body.chat-open #chat-toggle.pulse::before {
 
 #prompt:focus { border-color: var(--primary-color); }
 
+#prompt:disabled {
+    background: #f8fafc;
+    color: #64748b;
+    cursor: not-allowed;
+}
+
+#prompt:disabled::placeholder {
+    font-size: 12px;
+    color: #64748b;
+}
+
 .send-btn {
     background: var(--primary-color);
     color: white;
@@ -342,6 +363,12 @@ body.chat-open #chat-toggle.pulse::before {
 
 .send-btn.cancel-mode {
     background: #94a3b8;
+}
+
+.send-btn:disabled {
+    background: #cbd5e1;
+    cursor: not-allowed;
+    transform: none;
 }
 
 /* ── Coaching chip (small pill, right-aligned BELOW input area) ──────────── */

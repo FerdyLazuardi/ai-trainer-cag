@@ -85,4 +85,5 @@ class RAGState(TypedDict):
     # _pre_processor; defaults to [raw_message] for non-KNOWLEDGE intents.
     rewritten_queries: Optional[List[str]]
     seen_chunk_ids: Optional[List[str]]
+    off_scope_detected: Optional[bool]
 

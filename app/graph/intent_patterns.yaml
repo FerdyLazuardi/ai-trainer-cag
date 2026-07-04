@@ -24,6 +24,35 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 off_scope_keywords:
+- python
+- java
+- javascript
+- html
+- css
+- coding
+- programming
+- syntax
+- codingan
+- programmer
+- debug
+- debug-nya
+- rata_rata
+- kalkulus
+- algoritma
+- database
+- sql
+- excel
+- word
+- powerpoint
+- photoshop
+- figma
+- git
+- github
+- stack overflow
+- chatgpt
+- openai
+- gemini
+- claude
 - cuaca
 - weather
 - hujan deras

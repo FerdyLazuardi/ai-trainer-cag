@@ -48,6 +48,7 @@ class ChatResponse(BaseModel):
     resolved_query: str | None = None
     cached: bool = False
     latency_ms: float | None = None
+    ban_remaining_seconds: int | None = None
 
 
 # ─── Ingestion ────────────────────────────────────────────────────────────────

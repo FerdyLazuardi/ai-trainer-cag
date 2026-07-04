@@ -49,6 +49,12 @@ _LEAK_OPEN_TAG_RE = re.compile(
     r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|disambiguate|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>",
     re.IGNORECASE,
 )
+_OFFSCOPE_RE = re.compile(r"\[OFFSCOPE\]", re.IGNORECASE)
+_OFFSCOPE_PARTIAL_RE = re.compile(
+    r"\[(?:O(?:F(?:F(?:S(?:C(?:O(?:P(?:E\]?)?)?)?)?)?)?)?)?$",
+    re.IGNORECASE
+)
+_COURSE_NUM_RE = re.compile(r"\bCourse\s+\d+(?:\s*:\s*|\s+)?", re.IGNORECASE)
 # Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
 # Distinctive pattern; never appears in legitimate prose.
 _LEAK_CITATION_HEAD_RE = re.compile(
@@ -192,6 +198,8 @@ def _sanitize_answer(text: str) -> str:
     # LLM recites when it has no good answer — e.g. "Default: SHORT — 2-4
     # sentences..." from the <length> block, leaked without its wrapper).
     cleaned = _DIRECTIVE_LINE_RE.sub("", cleaned)
+    cleaned = _OFFSCOPE_RE.sub("", cleaned)
+    cleaned = _COURSE_NUM_RE.sub("", cleaned)
     # Collapse 3+ consecutive blank lines that the stripping may leave behind
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
@@ -218,6 +226,8 @@ def _sanitize_answer(text: str) -> str:
 
     cleaned = _normalize_dashes(cleaned.lstrip())
     if text.strip() and not cleaned.strip():
+        if _OFFSCOPE_RE.search(text):
+            return cleaned
         return "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
     return cleaned
 
@@ -233,6 +243,7 @@ class StreamLeakGuard:
         _LEAK_OPEN_TAG_RE,
         _INLINE_CITE_RE,
         _DIRECTIVE_LINE_RE,
+        _OFFSCOPE_PARTIAL_RE,
     )
 
     def __init__(self) -> None:
@@ -1210,8 +1221,8 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         if ctx_lines:
             user_ctx_section = (
                 "\n\n<user_context>\nKamu sedang berbicara dengan user berikut. "
-                "Sapa dengan nama depannya bila relevan dan sesuaikan jawaban "
-                "dengan konteksnya:\n"
+                "Sesuaikan jawaban dengan konteksnya, tetapi JANGAN memanggil atau "
+                "menyapa nama depannya secara berulang-ulang di setiap awal kalimat atau transisi:\n"
                 + "\n".join(ctx_lines)
                 + "\n</user_context>"
             )
@@ -1271,7 +1282,11 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
     )
 
     raw = response.content if hasattr(response, "content") else str(response)
+    intent = state.get("intent") or "KNOWLEDGE"
+    off_scope_detected = False
     if isinstance(raw, str):
+        if intent == "OFF_SCOPE" or _OFFSCOPE_RE.search(raw):
+            off_scope_detected = True
         cleaned = _sanitize_answer(raw)
         if cleaned != raw:
             logger.warning(
@@ -1280,7 +1295,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
             )
             response.content = cleaned
 
-    return {"messages": [response]}
+    return {"messages": [response], "off_scope_detected": off_scope_detected}
 
 
 # ─── Routing ─────────────────────────────────────────────────────────────────
