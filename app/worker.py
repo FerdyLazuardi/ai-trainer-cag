@@ -111,7 +111,7 @@ async def prune_agent_logs_cron_task() -> dict[str, Any]:
             text("DELETE FROM agent_logs WHERE created_at < NOW() - make_interval(days => :days)"),
             {"days": days},
         )
-        deleted = result.rowcount or 0
+        deleted = int(getattr(result, "rowcount", 0) or 0)
         await session.commit()
     return {"status": "pruned", "deleted_rows": deleted, "retention_days": days}
 

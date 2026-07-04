@@ -80,17 +80,17 @@ async def test_cag_graph_does_not_call_retrieval_for_knowledge(monkeypatch):
         async def astream(self, messages, config=None):
             yield AIMessageChunk(content="OK")
 
-    pipeline.get_rag_graph.cache_clear()
+    pipeline.get_cag_graph.cache_clear()
     monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
     monkeypatch.setattr(pipeline, "get_generate_llm", lambda: FakeStreamingLLM())
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
 
     try:
-        result = await pipeline.get_rag_graph().ainvoke(
+        result = await pipeline.get_cag_graph().ainvoke(
             {"messages": [HumanMessage(content="Apa itu Client Protection?")]}
         )
     finally:
-        pipeline.get_rag_graph.cache_clear()
+        pipeline.get_cag_graph.cache_clear()
 
     assert result["messages"][-1].content == "OK"
 
@@ -183,6 +183,40 @@ async def test_generate_node_accumulates_stream_chunks(monkeypatch):
     assert result["messages"][-1].content == "Halo"
 
 
+@pytest.mark.asyncio
+async def test_generate_node_falls_back_when_stream_returns_no_chunks(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    from app.graph import pipeline
+
+    class EmptyStreamingLLM:
+        async def astream(self, messages, config=None):
+            if False:
+                yield None
+
+    class FallbackLLM:
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(content="fallback answer")
+
+    async def fake_load_kb():
+        return "<knowledge_base>KB</knowledge_base>"
+
+    async def fake_log_cache_usage(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
+    monkeypatch.setattr(pipeline, "get_generate_llm", lambda: EmptyStreamingLLM())
+    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: FallbackLLM())
+    monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
+
+    result = await pipeline._generate_node(
+        {"messages": [HumanMessage(content="Apa itu modal?")], "intent": "KNOWLEDGE"},
+        {},
+    )
+
+    assert result["messages"][-1].content == "fallback answer"
+
+
 def test_chat_llm_is_streaming():
     from app.llm.client import get_chat_llm
 
@@ -191,6 +225,13 @@ def test_chat_llm_is_streaming():
         assert get_chat_llm().streaming is True
     finally:
         get_chat_llm.cache_clear()
+
+
+def test_conversational_prompt_allows_offtopic_examples_for_in_scope_concepts():
+    from app.llm.prompts import CONVERSATIONAL_PROMPT
+
+    assert "off-topic example" in CONVERSATIONAL_PROMPT
+    assert "actual requested subject is off-topic" in CONVERSATIONAL_PROMPT
 
 
 def test_stream_leak_guard_streams_clean_text_immediately():

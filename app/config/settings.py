@@ -484,7 +484,7 @@ class Settings(BaseSettings):
     # Small enough to fast-fail a sustained burst, large enough to absorb a
     # sub-second spike without rejecting.
     pipeline_acquire_timeout_s: float = 5.0
-    # End-to-end ceiling on a NON-STREAM /chat graph run (rag_graph.ainvoke).
+    # End-to-end ceiling on a NON-STREAM /chat graph run (cag_graph.ainvoke).
     # Without this, a turn makes 2-3 sequential LLM calls and each cheap call
     # is bounded only by request_timeout=30 × stop_after_attempt(3) + backoff
     # ≈ 93s, so a single upstream black-hole could pin a pipeline slot for

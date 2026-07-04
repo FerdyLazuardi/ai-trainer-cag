@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from loguru import logger
 
 from app.eval.judge import judge_faithfulness
-from app.graph.pipeline import get_rag_graph
+from app.graph.pipeline import get_cag_graph
 
 
 DEEPSEEK_V4_FLASH_PRICING = {
@@ -19,7 +19,7 @@ DEEPSEEK_V4_FLASH_PRICING = {
 
 
 async def evaluate_cag_query(query: str, expected_intent: str, min_faithfulness: float) -> dict[str, Any]:
-    rag_graph = get_rag_graph()
+    cag_graph = get_cag_graph()
     initial_state = {
         "messages": [HumanMessage(content=query)],
         "conversation_id": "cag-eval",
@@ -29,7 +29,7 @@ async def evaluate_cag_query(query: str, expected_intent: str, min_faithfulness:
     }
 
     start = time.perf_counter()
-    result = await rag_graph.ainvoke(initial_state)
+    result = await cag_graph.ainvoke(initial_state)
     latency = time.perf_counter() - start
 
     final_msg = result["messages"][-1]

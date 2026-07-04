@@ -56,7 +56,7 @@ def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
                     f'section="{html.escape(str(doc["section_name"]), quote=True)}" '
                     f'file="{html.escape(str(doc["filename"]), quote=True)}">'
                 ),
-                doc["content"],
+                str(doc["content"]),
                 "</doc>",
             ]
         )

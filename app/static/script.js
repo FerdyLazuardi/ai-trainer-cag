@@ -105,20 +105,20 @@ function banStorageKey() {
 function clearStoredBanCountdown() {
     try {
         localStorage.removeItem(banStorageKey());
-    } catch (_) {}
+    } catch (_) { }
 }
 
 function storeBanCountdown(remainingSeconds) {
     try {
         localStorage.setItem(banStorageKey(), String(Date.now() + remainingSeconds * 1000));
-    } catch (_) {}
+    } catch (_) { }
 }
 
 function restoreStoredBanCountdown() {
     let banUntil = 0;
     try {
         banUntil = Number(localStorage.getItem(banStorageKey()) || 0);
-    } catch (_) {}
+    } catch (_) { }
     const remainingSeconds = Math.ceil((banUntil - Date.now()) / 1000);
     if (remainingSeconds > 0) {
         renderBanCountdown(remainingSeconds);
@@ -316,7 +316,7 @@ if (toggleBtn) {
 function setCoaching(on, showMsg) {
     window.COACHING_MODE = !!on;
     document.body.classList.toggle("coaching-active", !!on);
-    
+
     // Sync the CTA button
     const ctaBtn = document.getElementById("coach-cta-btn");
     if (ctaBtn) {
@@ -893,17 +893,8 @@ function addMessage(text, type) {
     const bubble = document.createElement("div");
     bubble.className = `bubble ${type}`;
 
-    const formattedText = marked.parse(text);
-
-    const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = formattedText;
-    tempDiv.querySelectorAll("a").forEach(link => {
-        link.setAttribute("target", "_blank");
-        link.setAttribute("rel", "noopener noreferrer");
-    });
-
     bubble.innerHTML = `
-        <div class="content">${tempDiv.innerHTML}</div>
+        <div class="content">${renderMarkdownSafe(text)}</div>
     `;
 
     wrap.appendChild(bubble);
@@ -915,9 +906,9 @@ function addMessage(text, type) {
 
 let typingInterval = null;
 const loadingPhrases = [
-    'Empowering', 'Delivering', 'Adapting', 'Above-and-beyond-ing', 'Leveling-up', 
-    'Upgrading', 'Solving', 'Planning', 'Organizing', 'Learning', 'Growing', 
-    'Innovating', 'Collaborating', 'Communicating', 'Impacting', 'Prioritizing', 
+    'Empowering', 'Delivering', 'Adapting', 'Above-and-beyond-ing', 'Leveling-up',
+    'Upgrading', 'Solving', 'Planning', 'Organizing', 'Learning', 'Growing',
+    'Innovating', 'Collaborating', 'Communicating', 'Impacting', 'Prioritizing',
     'Executing', 'Achieving', 'Never-settling', 'Structuring'
 ];
 
@@ -925,9 +916,9 @@ function showTyping() {
     const typingDiv = document.createElement("div");
     typingDiv.id = "typing-id";
     typingDiv.className = "msg ai animate__animated animate__fadeIn";
-    
+
     let randomPhrase = loadingPhrases[Math.floor(Math.random() * loadingPhrases.length)];
-    
+
     typingDiv.innerHTML = `
         <div class="bubble ai" style="display: flex; align-items: center; gap: 8px;">
             <div id="typing-text-id" style="font-size: 0.85em; font-style: italic; opacity: 0.8; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform: translateY(0) scale(1);">${randomPhrase}</div>
@@ -938,9 +929,9 @@ function showTyping() {
     `;
     messages.appendChild(typingDiv);
     messages.scrollTop = messages.scrollHeight;
-    
+
     if (typingInterval) clearInterval(typingInterval);
-    
+
     typingInterval = setInterval(() => {
         const textEl = document.getElementById("typing-text-id");
         if (textEl) {
@@ -967,6 +958,39 @@ function removeTyping() {
 
 // Configure marked for safe, clean rendering
 marked.setOptions({ breaks: true, gfm: true });
+
+function sanitizeRenderedMarkdown(html) {
+    const template = document.createElement("template");
+    template.innerHTML = html || "";
+    template.content
+        .querySelectorAll("script, iframe, object, embed, link, meta, style")
+        .forEach(node => node.remove());
+    template.content.querySelectorAll("*").forEach(el => {
+        [...el.attributes].forEach(attr => {
+            const name = attr.name.toLowerCase();
+            const value = (attr.value || "").trim().replace(/\s+/g, "").toLowerCase();
+            const isUrlAttr = name === "href" || name === "src" || name === "xlink:href";
+            if (
+                name.startsWith("on") ||
+                name === "srcdoc" ||
+                (isUrlAttr && /^(javascript|data):/.test(value))
+            ) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+    return template.innerHTML;
+}
+
+function renderMarkdownSafe(text) {
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = sanitizeRenderedMarkdown(marked.parse(text || ""));
+    tempDiv.querySelectorAll("a").forEach(link => {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+    });
+    return tempDiv.innerHTML;
+}
 
 // ============================================================
 // SESSION ID — pakai Moodle User ID kalau tersedia
@@ -1026,12 +1050,12 @@ function createStreamBubble() {
         if (bubble) {
             bubble.classList.add("streaming");
             bubble.removeAttribute("style"); // Remove flexbox style used for loading
-            
+
             if (typingInterval) {
                 clearInterval(typingInterval);
                 typingInterval = null;
             }
-            
+
             const typingText = bubble.querySelector("#typing-text-id");
             if (typingText) typingText.remove();
 
@@ -1062,41 +1086,37 @@ function finalizeStreamBubble(contentDiv, bubble, fullText) {
     bubble.classList.remove("streaming");
 
     // Final accurate render
-    const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = marked.parse(fullText);
-    tempDiv.querySelectorAll("a").forEach(link => {
-        link.setAttribute("target", "_blank");
-        link.setAttribute("rel", "noopener noreferrer");
-    });
-    contentDiv.innerHTML = tempDiv.innerHTML;
+    contentDiv.innerHTML = renderMarkdownSafe(fullText);
 }
 
-/**
- * Align fallback text to continue smoothly if overlapping, otherwise reset
- */
-function alignFallbackText(streamed, displayed, reply) {
-    const received = streamed || displayed || "";
-    if (!reply) {
-        return { target: received, displayed: received };
-    }
-    if (!received) {
-        return { target: reply, displayed: "" };
-    }
-    if (reply.startsWith(received)) {
-        return { target: reply, displayed: received };
+function showStreamRetryStatus(wrap, onRetry) {
+    if (!wrap) return;
+    let status = wrap.querySelector(".stream-status");
+    if (!status) {
+        status = document.createElement("div");
+        status.className = "stream-status visible";
+        wrap.appendChild(status);
     }
 
-    const minOverlap = 15;
-    const maxSearchLen = Math.min(received.length, 120);
-    for (let len = maxSearchLen; len >= minOverlap; len--) {
-        const tail = received.substring(received.length - len);
-        const idx = reply.lastIndexOf(tail);
-        if (idx !== -1) {
-            return { target: received + reply.substring(idx + len), displayed: received };
+    status.textContent = "";
+    const label = document.createElement("span");
+    label.textContent = "Connection Failed.";
+
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "stream-retry-btn";
+    retryBtn.textContent = "Retry";
+    retryBtn.addEventListener("click", () => {
+        if (isStreaming) return;
+        status.remove();
+        if (wrap) {
+            wrap.remove();
         }
-    }
+        onRetry();
+    });
 
-    return { target: received, displayed: received };
+    status.append(label, retryBtn);
+    messages.scrollTop = messages.scrollHeight;
 }
 
 // ============================================================
@@ -1143,9 +1163,20 @@ async function send(presetText, opts) {
     let _displayedText = "";
     let _streamActive = true;
     let _finalized = false;
+    let _streamFailed = false;
     let _suggestCoaching = null;
     let _coachingTopic = null;
     let _coachingDone = false;
+
+    function startStreamBubble() {
+        if (!_streamStarted) {
+            const bubbleObj = createStreamBubble();
+            streamWrap = bubbleObj.wrap;
+            contentDiv = bubbleObj.contentDiv;
+            bubble = bubbleObj.bubble;
+            _streamStarted = true;
+        }
+    }
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
         ? API_BASE_URL
@@ -1195,19 +1226,10 @@ async function send(presetText, opts) {
         _displayedText = "";
         _streamActive = true;
         _finalized = false;
+        _streamFailed = false;
         _suggestCoaching = null;  // backend auto-hook signal (set in done event)
         _coachingTopic = null;     // topic name when the offer was streak-triggered
         _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
-
-        function startStreamBubble() {
-            if (!_streamStarted) {
-                const bubbleObj = createStreamBubble();
-                streamWrap = bubbleObj.wrap;
-                contentDiv = bubbleObj.contentDiv;
-                bubble = bubbleObj.bubble;
-                _streamStarted = true;
-            }
-        }
 
         function smoothStreamWorker() {
             if (!_streamStarted) {
@@ -1224,21 +1246,16 @@ async function send(presetText, opts) {
                 // Add inline cursor BEFORE parsing markdown so it stays inside paragraph blocks <p>
                 const renderText = _displayedText + '<span class="streaming-cursor-inline">▍</span>';
 
-                const tempDiv = document.createElement("div");
-                tempDiv.innerHTML = marked.parse(renderText);
-                tempDiv.querySelectorAll("a").forEach(link => {
-                    link.setAttribute("target", "_blank");
-                    link.setAttribute("rel", "noopener noreferrer");
-                });
-                contentDiv.innerHTML = tempDiv.innerHTML;
+                contentDiv.innerHTML = renderMarkdownSafe(renderText);
             }
 
             if (_streamActive || _displayedText.length < _targetText.length) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                const finalText = _targetText || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
+                const finalText = _targetText || (_streamFailed ? "" : "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏");
                 finalizeStreamBubble(contentDiv, bubble, finalText);
+                if (_streamFailed) return;
                 // Auto-hook: after the answer lands, offer coaching. Backend
                 // signal (_suggestCoaching) is authoritative when present
                 // (semantic affinity OR topic-streak); regex _looksReflective is
@@ -1318,8 +1335,9 @@ async function send(presetText, opts) {
 
                         if (currentEventType === "error") {
                             startStreamBubble();
-                            _targetText = "⚠️ Waduh, ada masalah saat memproses pertanyaan kamu. Coba lagi ya!";
+                            _streamFailed = true;
                             _streamActive = false;
+                            showStreamRetryStatus(streamWrap, () => send(text, { skipBubble: true }));
                             currentEventType = "";
                             continue;
                         }
@@ -1374,70 +1392,16 @@ async function send(presetText, opts) {
             return;
         }
 
-        // ── Fallback: try non-streaming endpoint ──
-        // Jangan removeTyping() dulu — biarkan dots tetap tampil selama fallback request
-        // Kalau streaming sudah mulai (streamWrap ada), typing sudah digantikan bubble — tetap lanjut
-        if (!streamWrap) {
-            // Pastikan typing dots tetap ada / tampilkan ulang untuk fallback
-            if (!document.getElementById("typing-id")) showTyping();
+        removeTyping();
+        if (!_streamStarted) {
+            startStreamBubble();
         }
-
-        try {
-            console.log("Falling back to non-streaming /chat endpoint...");
-            const fallbackRes = await fetch(`${baseUrl}/api/v1/chat`, {
-                method: "POST",
-                headers: headers,
-                body: body,
-                signal: currentAbortController ? currentAbortController.signal : undefined
-            });
-
-            if (!fallbackRes.ok) {
-                if (fallbackRes.status === 429) {
-                    throw new Error("RATE_LIMIT");
-                }
-                throw new Error(`Fallback returned ${fallbackRes.status}`);
-            }
-
-            const data = await fallbackRes.json();
-            removeTyping(); // hapus dots SETELAH response tiba
-
-            // If fallback says user is banned, show countdown and stop
-            if (data?.ban_remaining_seconds) {
-                renderBanCountdown(data.ban_remaining_seconds);
-                maybeOfferCoaching(text);
-                return;
-            }
-
-            const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
-            if (_streamStarted && contentDiv && bubble) {
-                removeTyping();
-
-                const alignment = alignFallbackText(_targetText, _displayedText, reply);
-                _targetText = alignment.target;
-                _displayedText = alignment.displayed;
-
-                bubble.classList.add("streaming");
-                _finalized = false;
-                smoothStreamWorker();
-            } else {
-                streamMessageFallback(reply, "ai");
-            }
-            maybeOfferCoaching(text);
-
-        } catch (fallbackErr) {
-            if (fallbackErr.name === 'AbortError') {
-                console.log("Fallback request cancelled by user.");
-                removeTyping();
-                return;
-            }
-            console.error("Fallback also failed:", fallbackErr);
-            removeTyping();
-            if (fallbackErr.message === "RATE_LIMIT") {
-                addMessage("⏳ Sabar dulu ya! Kamu udah ngelebihin batas 20 chat per menit. Tunggu sebentar lagi baru tanya lagi. 😊", "ai");
-            } else {
-                addMessage("⚠️ Waduh, koneksi ke server lagi bermasalah nih. Coba lagi ya!", "ai");
-            }
+        _streamFailed = true;
+        _streamActive = false;
+        if (bubble && contentDiv && !_targetText) {
+            finalizeStreamBubble(contentDiv, bubble, "");
         }
+        showStreamRetryStatus(streamWrap, () => send(text, { skipBubble: true }));
     } finally {
         isStreaming = false;
         setSendButtonState(false);
@@ -1475,13 +1439,7 @@ function streamMessageFallback(fullText, type) {
             i += chunkSize;
 
             const renderText = currentText + '<span class="streaming-cursor-inline">▍</span>';
-            const tempDiv = document.createElement("div");
-            tempDiv.innerHTML = marked.parse(renderText);
-            tempDiv.querySelectorAll("a").forEach(link => {
-                link.setAttribute("target", "_blank");
-                link.setAttribute("rel", "noopener noreferrer");
-            });
-            contentDiv.innerHTML = tempDiv.innerHTML;
+            contentDiv.innerHTML = renderMarkdownSafe(renderText);
             setTimeout(typeChar, speed);
         } else {
             finalizeStreamBubble(contentDiv, bubble, fullText);

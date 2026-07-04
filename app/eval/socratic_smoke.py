@@ -47,12 +47,14 @@ import time
 from typing import Any
 
 # Force UTF-8 stdout on Windows (cp1252 can't encode ≤ → etc.)
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
 import httpx
 
 from app.config.settings import get_settings
 from app.graph.pipeline import SOCRATIC_PROMPT
+
+_reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure_stdout):
+    _reconfigure_stdout(encoding="utf-8", errors="replace")
 
 settings = get_settings()
 

@@ -1,7 +1,7 @@
 """Mentor-mode eval driver.
 
 Loads `tests/eval/mentor_mode_cases.json` and runs the offline eval runner
-against the live RAG graph. Prints per-case results + a category aggregate
+against the live CAG graph. Prints per-case results + a category aggregate
 suitable for human review.
 
 Run:  python -m app.eval.run_mentor_eval

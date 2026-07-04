@@ -33,6 +33,8 @@ from pathlib import Path
 import re
 from typing import Literal, Optional
 
+import yaml as _yaml
+
 Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"]
 
 
@@ -40,7 +42,6 @@ Intent = Literal["GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST", "MALICIOUS"
 # All keyword/regex/tuple/set constants below are populated from
 # intent_patterns.yaml. To add or remove patterns, edit the YAML file
 # — DO NOT add them to this .py file. Single source of truth principle.
-import yaml as _yaml
 _PATTERNS_PATH = Path(__file__).parent / "intent_patterns.yaml"
 _PATTERNS = _yaml.safe_load(_PATTERNS_PATH.read_text(encoding="utf-8"))
 _OFF_SCOPE_KEYWORDS = tuple(_PATTERNS["off_scope_keywords"])

@@ -2,17 +2,15 @@
 POST /ingest endpoint — [DISABLED] accepts raw text and triggers the ingestion pipeline.
 POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync to CAG KB pack.
 """
-from datetime import timedelta
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.api.schemas import IngestRequest, IngestEnqueuedResponse, IngestStatusResponse
+from app.api.schemas import IngestEnqueuedResponse, IngestRequest, IngestStatusResponse
 from app.config.settings import get_settings
 import httpx
 from app.api.auth import get_current_user, User
+from app.api.routes.admin import verify_api_key
 
 router = APIRouter()
 settings = get_settings()
@@ -86,6 +84,7 @@ class MoodleSyncResponse(BaseModel):
 async def moodle_sync(
     request: MoodleSyncRequest,
     current_user: User = Depends(get_current_user),
+    _admin_key: str = Depends(verify_api_key),
 ) -> MoodleSyncResponse:
     """
     Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base) via streaq worker.
@@ -122,6 +121,7 @@ async def moodle_sync(
 async def enqueue_dummy_task(
     name: str = "Tester",
     current_user: User = Depends(get_current_user),
+    _admin_key: str = Depends(verify_api_key),
 ):
     """
     Enqueue a dummy task to verify that the streaq worker is running correctly.
@@ -138,6 +138,7 @@ async def enqueue_dummy_task(
 async def get_moodle_sections(
     course_id: int = 3,
     current_user: User = Depends(get_current_user),
+    _admin_key: str = Depends(verify_api_key),
 ):
     """
     Fetch sections from a Moodle course.

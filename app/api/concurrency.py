@@ -100,7 +100,7 @@ async def acquire_pipeline_slot_or_503() -> Callable[[], None]:
     its first call and is a no-op thereafter. This matters because the stream
     route releases the permit from BOTH a pre-stream `except` (when an await
     between acquire and the StreamingResponse return raises — 403 ownership,
-    embedding/PG blip in _prepare_rag_context) AND the generator's `finally`.
+    embedding/PG blip in _prepare_cag_context) AND the generator's `finally`.
     Without per-acquire idempotency one of those paths would over-release the
     plain semaphore and silently inflate capacity past max_concurrent_pipelines.
     """

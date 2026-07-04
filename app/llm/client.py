@@ -5,8 +5,6 @@ from functools import lru_cache
 
 import httpx
 from langchain_openai import ChatOpenAI
-from loguru import logger
-
 from app.config.settings import get_settings
 
 settings = get_settings()

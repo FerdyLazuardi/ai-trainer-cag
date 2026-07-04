@@ -215,7 +215,11 @@ body.chat-open #chat-toggle.pulse::before {
 
 .msg { display: flex; width: 100%; }
 .msg.user { justify-content: flex-end; }
-.msg.ai { justify-content: flex-start; }
+.msg.ai {
+    justify-content: flex-start;
+    flex-direction: column;
+    align-items: flex-start;
+}
 
 .ban-countdown-msg {
     width: 100%;
@@ -508,17 +512,58 @@ body.chat-open #chat-toggle.pulse::before {
 
 /* ================= STREAMING STATUS INDICATOR ================= */
 .stream-status {
-    font-size: 10px;
-    color: #94a3b8;
-    padding: 2px 8px;
-    text-align: center;
+    font-size: 11px;
+    color: #e11d48; /* soft red warning color */
+    margin-top: 6px;
+    margin-left: 12px; /* slightly indented to align with message content */
     opacity: 0;
     transition: opacity 0.3s ease;
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
 }
 
 .stream-status.visible {
     opacity: 1;
 }
+
+.stream-status span::before {
+    content: "\f06a"; /* fa-exclamation-circle */
+    font-family: "Font Awesome 5 Free";
+    font-weight: 900;
+    margin-right: 6px;
+    display: inline-block;
+}
+
+.stream-retry-btn {
+    border: 1px solid #fda4af;
+    background: #ffe4e6;
+    color: #e11d48;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.stream-retry-btn:hover {
+    background: #fecdd3;
+    border-color: #f43f5e;
+}
+
+.stream-retry-btn::before {
+    content: "\f2f9"; /* fa-redo-alt */
+    font-family: "Font Awesome 5 Free";
+    font-weight: 900;
+    margin-right: 4px;
+    display: inline-block;
+}
+
 
 /* ================= WELCOME SCREEN ================= */
 #ava-welcome {

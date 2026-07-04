@@ -21,9 +21,9 @@ from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
 from app.config.settings import get_settings
-from app.graph.state import RAGState
+from app.graph.state import CAGState
 from app.llm.client import get_chat_llm, get_generate_llm, get_generate_llm_nostream
-from app.llm.prompts import PERSONA, OUTPUT_CONTRACT, CONVERSATIONAL_PROMPT, CHIT_CHAT_PROMPT, SOCRATIC_PROMPT
+from app.llm.prompts import CHIT_CHAT_PROMPT, CONVERSATIONAL_PROMPT, SOCRATIC_PROMPT
 from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections
 
 _settings = get_settings()
@@ -410,7 +410,7 @@ def _infer_provider(model: str) -> str:
     return "openrouter"
 
 
-async def _pre_processor(state: RAGState, config: RunnableConfig):
+async def _pre_processor(state: CAGState, config: RunnableConfig):
     """Lightweight pre-step — NO LLM call. Decides retrieval vs no-retrieval.
 
     Ava is one conversational LLM call (see _generate_node + CONVERSATIONAL_PROMPT).
@@ -572,7 +572,7 @@ async def _pre_processor(state: RAGState, config: RunnableConfig):
     }
 
 
-async def _handle_malicious(state: RAGState, config: RunnableConfig):
+async def _handle_malicious(state: CAGState, config: RunnableConfig):
     """Canned refusal for jailbreak/prompt-injection (deterministic guard).
 
     The only canned handler kept after the conversational collapse. _is_injection
@@ -1077,7 +1077,7 @@ def _with_openrouter_session(llm, session_id: str | None):
     return llm.bind(extra_body={**extra_body, "session_id": session_id})
 
 
-async def _generate_node(state: RAGState, config: RunnableConfig):
+async def _generate_node(state: CAGState, config: RunnableConfig):
     """Single conversational LLM call — the only answer-generating node.
 
     One CONVERSATIONAL_PROMPT handles everything: greetings, identity, meta-turns
@@ -1264,6 +1264,8 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
         response = None
         async for chunk in llm.astream(msgs, config=config):
             response = chunk if response is None else response + chunk
+        if response is None:
+            raise RuntimeError("empty streaming response")
     except Exception as gen_exc:
         logger.warning(
             f"generate_node stream ainvoke failed ({type(gen_exc).__name__}), "
@@ -1300,7 +1302,7 @@ async def _generate_node(state: RAGState, config: RunnableConfig):
 
 # ─── Routing ─────────────────────────────────────────────────────────────────
 
-def _route_by_intent(state: RAGState) -> str:
+def _route_by_intent(state: CAGState) -> str:
     return state.get("intent") or "KNOWLEDGE"
 
 
@@ -1308,9 +1310,9 @@ def _route_by_intent(state: RAGState) -> str:
 # ─── Graph Assembly ───────────────────────────────────────────────────────────
 
 def _build_agent_graph():
-    """Build and compile the minimal conversational RAG StateGraph.
+    """Build and compile the minimal conversational CAG StateGraph.
 
-    Collapsed from the old RAG router to a CAG graph. Routing by the
+    Collapsed from the old retrieval router to a CAG graph. Routing by the
     regex Tier-1 label set in _pre_processor (no LLM):
         START → pre_processor → MALICIOUS                    → malicious      → END
                               → GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST
@@ -1325,7 +1327,7 @@ def _build_agent_graph():
     handlers (greeting/ambiguity/off_scope/topic_list/low_relevance) are gone —
     their behavior lives in CONVERSATIONAL_PROMPT.
     """
-    builder = StateGraph(RAGState)
+    builder = StateGraph(CAGState)
 
     # Nodes
     builder.add_node("pre_processor", _pre_processor)
@@ -1360,6 +1362,9 @@ def _build_agent_graph():
 
 
 @lru_cache(maxsize=1)
-def get_rag_graph():
-    """Return the singleton compiled RAG graph."""
+def get_cag_graph():
+    """Return the singleton compiled CAG graph."""
     return _build_agent_graph()
+
+
+get_rag_graph = get_cag_graph

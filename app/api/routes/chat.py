@@ -4,7 +4,7 @@ import random
 import re
 import time
 import uuid
-from typing import Optional, cast
+from typing import Optional
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
@@ -20,7 +20,6 @@ from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
 from app.database.models import UserProfile
-from app.graph.state import RAGState
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
 from app.utils.logger_batch import batch_logger
@@ -45,9 +44,13 @@ _META_CONVO_RE = re.compile(
 )
 
 
+def get_cag_graph():
+    from app.graph.pipeline import get_cag_graph as _get_cag_graph
+    return _get_cag_graph()
+
+
 def get_rag_graph():
-    from app.graph.pipeline import get_rag_graph as _get_rag_graph
-    return _get_rag_graph()
+    return get_cag_graph()
 
 
 def get_cheap_llm():
@@ -91,13 +94,15 @@ def compute_was_personalized(
         or bool(_ltm.get("course_names"))
         or bool(_ltm.get("unanswered_questions"))
     )
-    has_prefs = bool(user_pref_dict) and any(
+    prefs = user_pref_dict or {}
+    has_prefs = bool(prefs) and any(
         bool((v or "").strip()) if isinstance(v, str) else bool(v)
-        for v in (user_pref_dict or {}).values()
+        for v in prefs.values()
     )
     has_history = bool(recent_history) or bool((summary or "").strip())
-    has_user_ctx = bool(user_context) and any(
-        bool(str(v).strip()) for v in user_context.values() if v
+    ctx = user_context or {}
+    has_user_ctx = bool(ctx) and any(
+        bool(str(v).strip()) for v in ctx.values() if v
     )
     return has_ltm or has_prefs or has_history or has_user_ctx
 
@@ -262,7 +267,7 @@ async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
 DEV_BYPASS_USER_ID = "dev_user_123"
 
 
-# Intents whose answers don't go through the RAG generator — no faithfulness
+# Intents whose answers don't go through the CAG generator — no faithfulness
 # signal worth measuring. GREETING/AMBIGUOUS are canned, MALICIOUS is a refusal,
 # TOPIC_LIST reads from Postgres metadata, COACHING often returns a Socratic
 # guiding question (not a standard answer to grade for faithfulness),
@@ -369,11 +374,11 @@ def _quality_log_fields(
         v = scores.get(key)
         return float(v) if isinstance(v, (int, float)) else None
 
-    def _gf(key, cast=float):
+    def _gf(key, caster=float):
         if not gate_score:
             return None
         v = gate_score.get(key)
-        return cast(v) if v is not None else None
+        return caster(v) if v is not None else None
 
     return {
         "intent": intent,
@@ -499,7 +504,7 @@ async def _verify_conversation_ownership(conversation_id: str, current_user: Use
             conversation_id=conversation_id,
             new_owner=current_user.user_id,
         )
-async def _prepare_rag_context(
+async def _prepare_cag_context(
     request: ChatRequest,
     current_user: User,
     conversation_id: str,
@@ -507,10 +512,8 @@ async def _prepare_rag_context(
 ) -> dict:
     """Shared context preparation for both /chat and /chat/stream.
 
-    Computes the query embedding ONCE for the LTM lookup (and reuses it in the
-    graph's rag_node when the retrieval query is unchanged), avoiding redundant
-    embedding API calls. The query cache is Redis exact-match only and does NOT
-    use the embedding.
+    Builds the graph input and checks exact-match cache before the CAG model
+    runs. The query cache is Redis exact-match only and does NOT use embeddings.
     """
     from app.graph.intent_rules import classify as _tier1_classify
     import time as _time
@@ -729,11 +732,7 @@ async def _prepare_rag_context(
         "user_profile": ltm_profile,
         "user_preferences": user_pref_dict,
         "user_context": user_context,
-        # H5 — hand the already-computed query embedding to rag_node. It is the
-        # embedding of resolved_query (original), consumed by LTM + semantic
-        # gate. rag_node reuses it ONLY if the retrieval query == resolved_query
-        # (no rewrite); otherwise it re-embeds the rewritten retrieval_query.
-        # None when embedding failed (C5 degrade).
+        # Legacy embedding fields are intentionally empty in CAG mode.
         "query_embedding": query_embedding,
         "query_embedding_text": _retrieval_query if query_embedding is not None else None,
         # Pre-computed rewrite (parallel with embed above) so _pre_processor
@@ -768,6 +767,9 @@ async def _prepare_rag_context(
         "skip_cache": skip_cache,
     }
 
+
+_prepare_rag_context = _prepare_cag_context
+
 def _extract_sources(retrieved_context: list) -> list:
     sources = []
     if retrieved_context:
@@ -795,7 +797,7 @@ def _auto_detect_course_id(retrieved_context: list, request_course_id: Optional[
     return effective_course_id
 
 
-@router.post("/chat", response_model=ChatResponse, summary="Ask a question using the RAG pipeline")
+@router.post("/chat", response_model=ChatResponse, summary="Ask a question using the CAG pipeline")
 async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
@@ -874,7 +876,7 @@ async def _run_chat(
     from app.graph.pipeline import _apply_glossary
     resolved_query = _apply_glossary(resolved_query)
     # Cache key MUST hash the SAME string the READ path hashes. READ (chat.py
-    # _prepare_rag_context) passes `resolved_query` to get_cached_response, and
+    # _prepare_cag_context) passes `resolved_query` to get_cached_response, and
     # _query_hash normalizes via .strip().lower(). resolved_query is glossary +
     # numeric-resolved — deterministic, NO LLM — so it's safe to key on. Hashing
     # raw request.query here wrote to a key the read never produced → 0 hits
@@ -882,10 +884,8 @@ async def _run_chat(
     _raw_query_for_cache = resolved_query
     logger.info("Chat request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-    context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+    context = await _prepare_cag_context(request, current_user, conversation_id, resolved_query)
     cached = context.get("cached")
-    query_embedding = context.get("query_embedding")
-    was_personalized = context.get("was_personalized", False)
 
     if cached:
         latency_ms = (time.perf_counter() - start_time) * 1000
@@ -951,7 +951,7 @@ async def _execute_chat_flow(
 
     initial_state = context["initial_state"]
     was_personalized = context.get("was_personalized", False)
-    rag_graph = get_rag_graph()
+    cag_graph = get_cag_graph()
 
     result = None
     answer = None
@@ -959,7 +959,7 @@ async def _execute_chat_flow(
 
     try:
         result = await asyncio.wait_for(
-            rag_graph.ainvoke(
+            cag_graph.ainvoke(
                 initial_state,
                 config={"run_name": "ava-chat"},
             ),
@@ -1021,7 +1021,6 @@ async def _execute_chat_flow(
     
     actual_chunks = 0
     max_chunk_score = None
-    max_chunk_sparse = None
     retrieved_context = result.get("retrieved_context") or []
     
     if retrieved_context:
@@ -1030,11 +1029,7 @@ async def _execute_chat_flow(
         dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
         if dense_scores:
             max_chunk_score = max(dense_scores)
-        sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
-        if sparse_scores:
-            max_chunk_sparse = max(sparse_scores)
 
-    effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
     sources = _extract_sources(retrieved_context)
 
     is_low_relevance = False
@@ -1248,7 +1243,7 @@ async def sync_memory(
     return {"status": "ignored", "reason": "handled_by_afk_worker_in_background"}
 
 
-@router.post("/chat/stream", summary="Stream a RAG response via Server-Sent Events")
+@router.post("/chat/stream", summary="Stream a CAG response via Server-Sent Events")
 async def chat_stream(
     request: ChatRequest,
     req: Request,
@@ -1256,14 +1251,14 @@ async def chat_stream(
 ):
     # Pipeline semaphore — held for the ENTIRE SSE stream, not just the
     # function body. The release callable is captured by both inner
-    # generators (cache-hit and rag-stream) and invoked in their `finally`
+    # generators (cache-hit and CAG stream) and invoked in their `finally`
     # so the permit returns when the stream ends or the client disconnects.
     # Raises HTTP 503 with Retry-After: 5 on saturation.
     sem_release = await acquire_pipeline_slot_or_503()
     # Everything between the permit acquire and the StreamingResponse return
     # runs BEFORE either generator's `finally` exists, so a raise here (403
     # ownership mismatch, or an embedding/Postgres/summary-LLM blip inside
-    # _prepare_rag_context) would otherwise leak the permit permanently —
+    # _prepare_cag_context) would otherwise leak the permit permanently —
     # after 12 such raises the whole /chat/stream surface 503s until restart.
     # Release on any pre-stream failure; sem_release is idempotent so the
     # generator's own `finally` stays correct on the success path.
@@ -1285,16 +1280,15 @@ async def chat_stream(
         from app.graph.pipeline import _apply_glossary
         resolved_query = _apply_glossary(resolved_query)
         # Cache key MUST hash the SAME string the READ path hashes (mirror non-
-        # stream chat() at line 877). Used by set_cached_response in _stream_rag_body.
+        # stream chat() at line 877). Used by set_cached_response in _stream_cag_body.
         _raw_query_for_cache = resolved_query
         logger.info("Stream request received", query=request.query[:80], resolved_query=resolved_query[:80] if resolved_query != request.query else None, conversation_id=conversation_id)
 
-        context = await _prepare_rag_context(request, current_user, conversation_id, resolved_query)
+        context = await _prepare_cag_context(request, current_user, conversation_id, resolved_query)
     except BaseException:
         sem_release()
         raise
     cached = context.get("cached")
-    query_embedding = context.get("query_embedding")
     was_personalized = context.get("was_personalized", False)
 
     if cached:
@@ -1347,21 +1341,17 @@ async def chat_stream(
     # cache (checked above) still short-circuits byte-identical re-asks.
 
     initial_state = context["initial_state"]
-    rag_graph = get_rag_graph()
+    cag_graph = get_cag_graph()
 
-    async def _stream_rag_body():
+    async def _stream_cag_body():
         nonlocal resolved_query
         from app.graph.pipeline import StreamLeakGuard, _sanitize_answer
         full_answer = ""
         retrieved_context: list = []
         intent = "KNOWLEDGE"
         stream_intent_scores: dict = {}
-        # C4/C5 pool-level gate signals captured from rag_node's on_chain_end
-        # output; consumed by _route_after_rag at finalization so the stream
-        # eval/cache decision matches the graph's actual route.
-        stream_pool_max_dense = None
-        stream_pool_max_sparse = None
-        stream_dense_retrieval_ok = None
+        # Semantic-gate trace captured from pre_processor's on_chain_end output
+        # so stream eval/cache decisions mirror the non-stream path.
         # Semantic-gate trace (Jun 2026) — captured from pre_processor's
         # on_chain_end output. Mirrors the non-stream path's `result.gate_score`.
         stream_gate_score = None
@@ -1421,7 +1411,8 @@ async def chat_stream(
             Cache/history/eval stay on the success path only (they gate on a
             complete answer); this is logging-only so a partial/disconnected
             turn is still observable in the dashboard — answer may be empty,
-            retrieved_context is whatever rag_node emitted before the break.
+            retrieved_context stays empty in CAG mode unless a future node emits
+            explicit source context before the break.
             """
             nonlocal _logged
             if _logged:
@@ -1480,7 +1471,7 @@ async def chat_stream(
             # did. wait_for bounds a SILENT graph to one stall window; a
             # slow-but-streaming answer never trips it because every token is an
             # event that resets the clock.
-            _events = rag_graph.astream_events(initial_state, config=config, version="v2")
+            _events = cag_graph.astream_events(initial_state, config=config, version="v2")
             # Non-stream generate is atomic — astream_events emits NOTHING for the
             # 2-9s the LLM call blocks. That idle gap lets ngrok/free proxies cut
             # the SSE connection (and Starlette's own 60s no-yield timeout abort
@@ -1532,18 +1523,6 @@ async def chat_stream(
                     return
 
                 kind = event.get("event", "")
-
-                if kind == "on_chain_end" and event.get("name") == "rag_node":
-                    output = event.get("data", {}).get("output", {})
-                    if isinstance(output, dict) and "retrieved_context" in output:
-                        retrieved_context = output["retrieved_context"] or []
-                        # C4/C5: capture the pool-level gate signals rag_node
-                        # computed so the eval/cache decision below can reuse the
-                        # AUTHORITATIVE gate (_route_after_rag) instead of a
-                        # divergent top-3 recompute.
-                        stream_pool_max_dense = output.get("pool_max_dense")
-                        stream_pool_max_sparse = output.get("pool_max_sparse")
-                        stream_dense_retrieval_ok = output.get("dense_retrieval_ok")
 
                 if kind == "on_chain_end" and event.get("name") == "pre_processor":
                     output = event.get("data", {}).get("output", {})
@@ -1777,7 +1756,7 @@ async def chat_stream(
             )
             try:
                 _fb_result = await asyncio.wait_for(
-                    rag_graph.ainvoke(initial_state, config={"run_name": "ava-chat-stream-fb"}),
+                    cag_graph.ainvoke(initial_state, config={"run_name": "ava-chat-stream-fb"}),
                     timeout=settings.pipeline_total_timeout_s,
                 )
                 if _fb_result.get("off_scope_detected"):
@@ -1856,11 +1835,8 @@ async def chat_stream(
         yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
 
         try:
-            effective_course_id = _auto_detect_course_id(retrieved_context, request.course_id)
             stream_dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
             stream_max_score = max(stream_dense_scores) if stream_dense_scores else None
-            stream_sparse_scores = [c.get("sparse_score") for c in retrieved_context if isinstance(c.get("sparse_score"), (int, float))]
-            stream_max_sparse = max(stream_sparse_scores) if stream_sparse_scores else None
             # Under CAG mode, retrieval is disabled, so there is no low-relevance retrieval gate.
             is_low_relevance_stream = False
             # Mirrors the non-stream cache gate. The former MENTOR-shape
@@ -1916,7 +1892,7 @@ async def chat_stream(
             # idempotent (_logged guard) so the success-path call is a no-op here.
             await _emit_log()
 
-    async def _stream_rag():
+    async def _stream_cag():
         # Outer wrapper guarantees the pipeline permit is released on EVERY
         # exit path of the inner generator: normal completion, early `return`
         # (client disconnect mid-stream, pipeline error, stall timeout), an
@@ -1925,11 +1901,11 @@ async def chat_stream(
         # sequential (not nested) try blocks, so its own early returns exit
         # before any single finally — only this outer finally sees them all.
         # sem_release is idempotent, so a pre-stream release (ownership 403 /
-        # _prepare_rag_context blip) followed by this one is safe.
+            # _prepare_cag_context blip) followed by this one is safe.
         try:
-            async for _chunk in _stream_rag_body():
+            async for _chunk in _stream_cag_body():
                 yield _chunk
         finally:
             sem_release()
 
-    return StreamingResponse(_stream_rag(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(_stream_cag(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

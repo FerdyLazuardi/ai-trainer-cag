@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_user_context_makes_answer_cache_user_scoped():
     from app.api.routes.chat import compute_was_personalized
 
@@ -20,10 +23,6 @@ def test_empty_user_context_stays_globally_cacheable():
         summary="",
         user_context={"name": None, "dept": "", "location": None},
     ) is False
-
-
-import pytest
-
 
 @pytest.mark.asyncio
 async def test_non_stream_cache_hit_does_not_acquire_pipeline_slot(monkeypatch):

@@ -1,4 +1,4 @@
-"""Offline eval runner — executes the RAG graph against a single query (or a
+"""Offline eval runner — executes the CAG graph against a single query (or a
 multi-turn conversation) and returns answer + retrieved_context + intent +
 scores, ready for the judge.
 
@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 
 from app.eval.judge import FaithfulnessResult, judge_faithfulness
-from app.graph.pipeline import get_rag_graph
+from app.graph.pipeline import get_cag_graph
 
 
 async def run_one_query(
@@ -58,7 +58,7 @@ async def run_one_query(
     if not turns:
         raise ValueError("turns must not be empty")
 
-    rag_graph = get_rag_graph()
+    cag_graph = get_cag_graph()
 
     messages: list[Any] = []
     final_result: dict[str, Any] | None = None
@@ -75,7 +75,7 @@ async def run_one_query(
         }
 
         start = time.perf_counter()
-        result = await rag_graph.ainvoke(
+        result = await cag_graph.ainvoke(
             initial_state,
             config={"run_name": f"ava-eval-offline-turn{i + 1}"},
         )

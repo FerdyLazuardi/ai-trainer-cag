@@ -1,6 +1,3 @@
-import json
-import shutil
-import subprocess
 from pathlib import Path
 
 
@@ -18,39 +15,22 @@ def _extract_js_function(source: str, name: str) -> str:
     raise AssertionError(f"Could not extract {name}")
 
 
-def test_stream_fallback_continues_from_last_received_token():
-    if shutil.which("node") is None:
-        return
-
+def test_stream_error_keeps_partial_and_shows_retry_status():
     script = Path("app/static/script.js").read_text(encoding="utf-8")
-    fn = _extract_js_function(script, "alignFallbackText")
-    streamed = "Ava sudah menjelaskan bagian ini sampai token terakhir"
-    displayed = "Ava sudah menjelaskan bagian ini"
-    reply = streamed + " lalu lanjut tanpa mengulang dari awal."
+    error_start = script.index('if (currentEventType === "error")')
+    error_block = script[error_start : script.index("if (parsed.token !== undefined)", error_start)]
 
-    js = f"""
-{fn}
-const result = alignFallbackText({json.dumps(streamed)}, {json.dumps(displayed)}, {json.dumps(reply)});
-console.log(JSON.stringify(result));
-"""
-    result = subprocess.run(
-        ["node", "-e", js],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert json.loads(result.stdout) == {
-        "target": reply,
-        "displayed": streamed,
-    }
+    assert "showStreamRetryStatus(streamWrap" in error_block
+    assert "Connection Failed." in script
+    assert 'retryBtn.textContent = "Retry";' in script
+    assert "_targetText =" not in error_block
 
 
-def test_stream_fallback_restarts_renderer_after_alignment():
+def test_stream_error_does_not_regenerate_non_stream_answer():
     script = Path("app/static/script.js").read_text(encoding="utf-8")
-    start = script.index("const alignment = alignFallbackText")
-    block = script[start : script.index("} else {", start)]
+    catch_start = script.index("} catch (err) {")
+    catch_block = script[catch_start : script.index("} finally {", catch_start)]
 
-    assert "if (_finalized)" not in block
-    assert "_finalized = false;" in block
-    assert "smoothStreamWorker();" in block
+    assert "alignFallbackText" not in script
+    assert "Falling back to non-streaming /chat endpoint" not in catch_block
+    assert "${baseUrl}/api/v1/chat`" not in catch_block

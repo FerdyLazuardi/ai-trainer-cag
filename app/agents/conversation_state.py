@@ -46,12 +46,13 @@ import time
 from typing import Any
 
 from loguru import logger
-Redis = Any
-# is annotation-only here — no Redis() instantiation / isinstance — so the
-# alias is behavior-neutral.
 from redis.exceptions import WatchError
 
 from app.config.settings import get_settings
+
+Redis = Any
+# is annotation-only here - no Redis() instantiation / isinstance - so the
+# alias is behavior-neutral.
 
 settings = get_settings()
 
@@ -483,16 +484,20 @@ async def bump_topic_streak(
     try:
         raw = await redis.hget(key, "streak")
         st = json.loads(raw) if raw else {}
-        cur_t, cur_n = st.get("t"), int(st.get("n", 0))
+        cur_t_raw = st.get("t")
+        cur_t = cur_t_raw if isinstance(cur_t_raw, str) else ""
+        cur_n = int(st.get("n", 0))
 
         if cur_t == topic:
             new_t, new_n = topic, cur_n + 1
         else:
             decayed = max(0, cur_n - 1)
-            new_t, new_n = (cur_t, decayed) if decayed > 0 else (topic, 1)
+            new_t, new_n = (cur_t, decayed) if decayed > 0 and cur_t else (topic, 1)
 
         reached = new_n >= threshold
-        write_val = {"t": None, "n": 0} if reached else {"t": new_t, "n": new_n}
+        write_val: dict[str, str | int | None] = (
+            {"t": None, "n": 0} if reached else {"t": new_t, "n": new_n}
+        )
         async with redis.pipeline(transaction=True) as pipe:
             pipe.hsetex(key, mapping={"streak": json.dumps(write_val)}, ex=_key_ttl())
             pipe.expire(key, _key_ttl())

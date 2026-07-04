@@ -112,9 +112,9 @@ async def _run_item(record: dict[str, Any], *, sem: asyncio.Semaphore) -> dict[s
     alongside the human gold label for later correlation.
 
     TWO MODES:
-    - GENERATED (default): run the query through the LIVE RAG graph, judge the
+    - GENERATED (default): run the query through the LIVE CAG graph, judge the
       generator's answer against the retrieved context. Measures the real
-      end-to-end system but a well-behaved RAG on in-domain queries produces
+      end-to-end system but a well-behaved CAG on in-domain queries produces
       almost no negatives (it answers faithfully or refuses) — single-class,
       can't calibrate a discriminator.
     - PROVIDED-ANSWER (record carries a pre-written `answer`): skip the
@@ -285,17 +285,17 @@ def _quadratic_weighted_kappa(judge_bins: list[float], gold_bins: list[float]) -
     idx = {g: i for i, g in enumerate(_GRADES3)}
     k = len(_GRADES3)
     # Observed confusion matrix O[gold][judge].
-    O = [[0.0] * k for _ in range(k)]
+    observed = [[0.0] * k for _ in range(k)]
     for jb, gb in zip(judge_bins, gold_bins):
-        O[idx[gb]][idx[jb]] += 1.0
+        observed[idx[gb]][idx[jb]] += 1.0
     # Marginals → expected matrix E under independence.
-    gold_marg = [sum(O[r]) for r in range(k)]
-    judge_marg = [sum(O[r][c] for r in range(k)) for c in range(k)]
+    gold_marg = [sum(observed[r]) for r in range(k)]
+    judge_marg = [sum(observed[r][c] for r in range(k)) for c in range(k)]
     if all(m == 0 for m in gold_marg) or all(m == 0 for m in judge_marg):
         return None
     # Quadratic weights w[i][j] = ((i-j)/(k-1))^2.
     W = [[((i - j) / (k - 1)) ** 2 for j in range(k)] for i in range(k)]
-    num = sum(W[i][j] * O[i][j] for i in range(k) for j in range(k))
+    num = sum(W[i][j] * observed[i][j] for i in range(k) for j in range(k))
     den = sum(W[i][j] * (gold_marg[i] * judge_marg[j] / n) for i in range(k) for j in range(k))
     if den == 0:
         return None

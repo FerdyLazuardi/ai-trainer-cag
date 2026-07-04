@@ -190,7 +190,7 @@ async def test_seen_chunk_ids_merge_dedupe_and_cap(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prepare_rag_context_cag_skips_rewrite_and_embedding(monkeypatch):
+async def test_prepare_cag_context_skips_rewrite_and_embedding(monkeypatch):
     from app.api.routes import chat
     from app.graph import pipeline
 
@@ -217,7 +217,7 @@ async def test_prepare_rag_context_cag_skips_rewrite_and_embedding(monkeypatch):
     monkeypatch.setattr(chat, "is_real_user", lambda **kwargs: False)
     monkeypatch.setattr(pipeline, "_apply_glossary", lambda query: query)
 
-    context = await chat._prepare_rag_context(
+    context = await chat._prepare_cag_context(
         chat.ChatRequest(query="Apa itu Client Protection?"),
         chat.User(user_id="user-a", role="moodle_user", username="User A"),
         "conv-a",
@@ -253,8 +253,8 @@ def _patch_stream_basics(monkeypatch, graph):
     monkeypatch.setattr(chat, "acquire_pipeline_slot_or_503", fake_acquire)
     monkeypatch.setattr(chat, "_verify_conversation_ownership", noop_async)
     monkeypatch.setattr(chat, "resolve_numeric_query", fake_resolve_numeric_query)
-    monkeypatch.setattr(chat, "_prepare_rag_context", fake_prepare)
-    monkeypatch.setattr(chat, "get_rag_graph", lambda: graph)
+    monkeypatch.setattr(chat, "_prepare_cag_context", fake_prepare)
+    monkeypatch.setattr(chat, "get_cag_graph", lambda: graph)
     monkeypatch.setattr(chat, "_schedule_afk_ltm_sync", noop_async)
     monkeypatch.setattr(chat, "_track_session_courses", noop_async)
     monkeypatch.setattr(chat, "add_seen_chunk_ids", noop_async)

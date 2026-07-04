@@ -24,8 +24,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Force UTF-8 stdout on Windows
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
 import httpx
 import tiktoken
 
@@ -36,6 +34,10 @@ from app.graph.pipeline import (
     SOCRATIC_PROMPT,
 )
 from app.graph.intent_rules import classify as rule_classify
+
+_reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure_stdout):
+    _reconfigure_stdout(encoding="utf-8", errors="replace")
 
 settings = get_settings()
 _ENC = tiktoken.get_encoding("cl100k_base")

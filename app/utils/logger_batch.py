@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict
 
@@ -34,11 +35,35 @@ async def _do_insert(log_data: Dict[str, Any]):
         logger.error(f"Failed to insert log directly to DB: {e}")
 
 class BatchLogger:
+    def __init__(self):
+        self._queue: asyncio.Queue[Dict[str, Any]] | None = None
+        self._worker: asyncio.Task | None = None
+
     async def start(self):
-        pass
+        if self._queue is not None:
+            return
+        self._queue = asyncio.Queue(maxsize=1000)
+        self._worker = asyncio.create_task(self._run())
 
     async def stop(self):
-        pass
+        if self._queue is None:
+            return
+        await self._queue.join()
+        if self._worker is not None:
+            self._worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._worker
+        self._queue = None
+        self._worker = None
+
+    async def _run(self):
+        assert self._queue is not None
+        while True:
+            row = await self._queue.get()
+            try:
+                await _do_insert(row)
+            finally:
+                self._queue.task_done()
 
     async def add_log(self, log_entry: Dict[str, Any]):
         if "created_at" not in log_entry:
@@ -51,7 +76,10 @@ class BatchLogger:
                 redacted["created_at"] = datetime.fromisoformat(redacted["created_at"])
             except ValueError:
                 pass
-                
-        asyncio.create_task(_do_insert(redacted))
+
+        if self._queue is None:
+            await _do_insert(redacted)
+            return
+        await self._queue.put(redacted)
 
 batch_logger = BatchLogger()
