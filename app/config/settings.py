@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # ─── PostgreSQL ─────────────────────────────────────────────────────────
     postgres_host: str = "localhost"
-    postgres_port: int = 5445
+    postgres_port: int = 5455
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
     # No default. 'admin'/'postgres' defaults that ship in tutorials let a
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
 
     # ─── Redis ──────────────────────────────────────────────────────────────
     redis_host: str = "localhost"
-    redis_port: int = 6381
+    redis_port: int = 6391
     redis_db: int = 0
     redis_password: str = ""
     redis_max_connections: int = 100

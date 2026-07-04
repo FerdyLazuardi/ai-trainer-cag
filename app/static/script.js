@@ -968,6 +968,16 @@ async function send(presetText, opts) {
     currentAbortController = new AbortController();
     setSendButtonState(true);
     let streamWrap = null;
+    let contentDiv = null;
+    let bubble = null;
+    let _streamStarted = false;
+    let _targetText = "";
+    let _displayedText = "";
+    let _streamActive = true;
+    let _finalized = false;
+    let _suggestCoaching = null;
+    let _coachingTopic = null;
+    let _coachingDone = false;
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL)
         ? API_BASE_URL
@@ -1010,16 +1020,16 @@ async function send(presetText, opts) {
         const decoder = new TextDecoder();
         let buffer = "";
 
-        let contentDiv = null;
-        let bubble = null;
-        let _streamStarted = false;
-        let _targetText = "";
-        let _displayedText = "";
-        let _streamActive = true;
-        let _finalized = false;
-        let _suggestCoaching = null;  // backend auto-hook signal (set in done event)
-        let _coachingTopic = null;     // topic name when the offer was streak-triggered
-        let _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
+        contentDiv = null;
+        bubble = null;
+        _streamStarted = false;
+        _targetText = "";
+        _displayedText = "";
+        _streamActive = true;
+        _finalized = false;
+        _suggestCoaching = null;  // backend auto-hook signal (set in done event)
+        _coachingTopic = null;     // topic name when the offer was streak-triggered
+        _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
 
         function startStreamBubble() {
             if (!_streamStarted) {
@@ -1195,7 +1205,17 @@ async function send(presetText, opts) {
             removeTyping(); // hapus dots SETELAH response tiba
 
             const reply = data?.answer || "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏";
-            streamMessageFallback(reply, "ai");
+            if (_streamStarted && contentDiv && bubble) {
+                removeTyping();
+                _targetText = reply;
+                bubble.classList.add("streaming");
+                if (_finalized) {
+                    _finalized = false;
+                    smoothStreamWorker();
+                }
+            } else {
+                streamMessageFallback(reply, "ai");
+            }
             maybeOfferCoaching(text);
 
         } catch (fallbackErr) {

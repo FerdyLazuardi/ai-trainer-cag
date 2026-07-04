@@ -143,7 +143,6 @@ _AMARTHA_GLOSSARY = {
     "BP": "Business Partner",
     "PAR": "Portfolio at Risk",
     "OS": "Outstanding",
-    "TR": "Tanggung Renteng",
     "BTC": "Back to Current",
     "DPD": "Days Past Due",
     "NPL": "Non-Performing Loan",
