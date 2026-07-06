@@ -55,7 +55,12 @@ def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
             order = ["xiaomi"] if m.startswith("xiaomi/") else ["deepseek"]
 
         body["provider"] = {"order": order, "allow_fallbacks": True}
-        if m.startswith("deepseek/"):
+        # MiMo-V2.5 and DeepSeek are reasoning models with Deep Thinking ON by
+        # default. Without this, reasoning tokens eat the max_tokens budget
+        # (reasoning + visible output share the same cap), truncating visible
+        # responses at ~700 tokens on a 2048 budget. Disable reasoning so 100%
+        # of max_tokens goes to the visible answer.
+        if m.startswith("deepseek/") or m.startswith("xiaomi/"):
             body["reasoning"] = {"effort": "none", "exclude": True}
     return body
 

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -51,6 +52,14 @@ def fetch_usd_to_idr_rate():
 
 USD_TO_IDR = fetch_usd_to_idr_rate()
 
+
+def display_model(value):
+    model = str(value or "").strip()
+    if not model:
+        return "-"
+    model = model.split("/")[-1]
+    return re.sub(r"-20\d{6}.*$", "", model) or "-"
+
 @st.cache_data(ttl=15)
 def fetch_dashboard_data(limit=500):
     headers = {"X-API-Key": ADMIN_API_KEY}
@@ -73,7 +82,7 @@ def show_chat_details(row):
         
     with st.chat_message("assistant"):
         st.write(row['answer'])
-        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Cost: {row.get('cost', 'Rp 0')} | Intent: {row['intent']} | Time: {row['created_at']}")
+        st.caption(f"Latency: {row.get('latency_s', 0)}s | Tokens: {row.get('tokens', 0)} | Model: {row.get('model', display_model(row.get('or_provider')))} | Cost: {row.get('cost', 'Rp 0')} | Intent: {row['intent']} | Time: {row['created_at']}")
         st.caption(f"Faithfulness: {row.get('faithfulness', 'N/A')}")
         
 
@@ -200,11 +209,12 @@ with tab_overview:
             )
 
         # Defensive programming: ensure new columns exist in case the backend API is outdated
-        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'rewritten_query', 'or_generation_id', 'cost']:
+        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'or_provider', 'rewritten_query', 'or_generation_id', 'cost']:
             if col not in df_logs.columns:
                 df_logs[col] = None
                 
         df_logs['cost'] = df_logs['cost'].apply(lambda x: f"Rp {x * USD_TO_IDR:,.0f}" if pd.notna(x) else "Rp 0")
+        df_logs['model'] = df_logs['or_provider'].apply(display_model)
         # Calculate latency in seconds
         df_logs['latency_s'] = df_logs['latency_ms'].apply(lambda x: round(x / 1000.0, 2))
         
@@ -217,7 +227,7 @@ with tab_overview:
         
         # Use dataframe selection
         event = st.dataframe(
-            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
+            df_logs[['created_at', 'session_id', 'intent', 'latency_s', 'tokens', 'model', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -239,11 +249,12 @@ with tab_explorer:
     else:
         df_logs = pd.DataFrame(logs)
         # Defensive programming: ensure new columns exist
-        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'rewritten_query', 'or_generation_id', 'cost']:
+        for col in ['faithfulness', 'tokens', 'or_cached_tokens', 'or_provider', 'rewritten_query', 'or_generation_id', 'cost']:
             if col not in df_logs.columns:
                 df_logs[col] = None
 
         df_logs['cost'] = df_logs['cost'].apply(lambda x: f"Rp {x * USD_TO_IDR:,.0f}" if pd.notna(x) else "Rp 0")
+        df_logs['model'] = df_logs['or_provider'].apply(display_model)
 
         if 'created_at' in df_logs.columns:
             # DB stores UTC (DateTime(timezone=True)); show in WIB/GMT+7.
@@ -295,7 +306,7 @@ with tab_explorer:
                 
                 # Use dataframe selection
                 event_turn = st.dataframe(
-                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
+                    session_logs[['created_at', 'intent', 'latency_s', 'tokens', 'model', 'cost', 'is_cache_hit', 'tokens_saved', 'faithfulness', 'query_short', 'answer_short']],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",

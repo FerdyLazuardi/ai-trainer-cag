@@ -26,6 +26,11 @@ from app.utils.logger_batch import batch_logger
 from app.api.auth import get_current_user, User
 from app.api.user_utils import is_real_user
 from app.database.redis_client import get_redis_client
+from app.llm.cag_client import (
+    OpenRouterUsage,
+    extract_openrouter_usage,
+    fetch_openrouter_generation_usage,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -56,6 +61,26 @@ def get_rag_graph():
 def get_cheap_llm():
     from app.llm.client import get_cheap_llm as _get_cheap_llm
     return _get_cheap_llm()
+
+
+async def _complete_openrouter_usage(usage: OpenRouterUsage) -> OpenRouterUsage:
+    if usage.cost or not usage.generation_id:
+        return usage
+    try:
+        stats = await fetch_openrouter_generation_usage(usage.generation_id)
+    except Exception:
+        return usage
+    if not stats.cost:
+        return usage
+    return OpenRouterUsage(
+        prompt_tokens=stats.prompt_tokens or usage.prompt_tokens,
+        cached_tokens=stats.cached_tokens or usage.cached_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        completion_tokens=stats.completion_tokens or usage.completion_tokens,
+        provider=stats.provider or usage.provider,
+        cost=stats.cost,
+        generation_id=stats.generation_id or usage.generation_id,
+    )
 
 
 # ── Cache privacy helpers (C1) ────────────────────────────────────────────────
@@ -985,15 +1010,20 @@ async def _execute_chat_flow(
         or_cached_tokens = 0
         or_completion_tokens = 0
         or_provider = None
+        or_cost = 0.0
+        or_generation_id = None
         llm_tokens_used = 0
         if hasattr(final_message, "response_metadata"):
             rm = final_message.response_metadata or {}
             tu = rm.get("token_usage", {})
-            llm_tokens_used = tu.get("total_tokens", 0)
-            or_prompt_tokens = tu.get("prompt_tokens", 0)
-            or_completion_tokens = tu.get("completion_tokens", 0)
-            or_cached_tokens = (tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-            or_provider = rm.get("model_name")
+            usage = await _complete_openrouter_usage(extract_openrouter_usage(final_message))
+            llm_tokens_used = tu.get("total_tokens", usage.prompt_tokens + usage.completion_tokens)
+            or_prompt_tokens = usage.prompt_tokens
+            or_completion_tokens = usage.completion_tokens
+            or_cached_tokens = usage.cached_tokens
+            or_provider = usage.provider
+            or_cost = usage.cost
+            or_generation_id = usage.generation_id
 
     except asyncio.TimeoutError as exc:
         # An upstream black-hole pinned this slot to the wall-clock ceiling.
@@ -1077,7 +1107,8 @@ async def _execute_chat_flow(
             "or_cached_tokens": or_cached_tokens,
             "or_completion_tokens": or_completion_tokens,
             "or_provider": or_provider,
-            "or_generation_id": None,
+            "or_generation_id": or_generation_id,
+            "or_cost": or_cost,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
             **_quality_log_fields(
@@ -1341,6 +1372,310 @@ async def chat_stream(
     # cache (checked above) still short-circuits byte-identical re-asks.
 
     initial_state = context["initial_state"]
+
+    async def _stream_cag_raw():
+        nonlocal resolved_query
+        from app.graph.pipeline import (
+            StreamLeakGuard,
+            _handle_malicious,
+            _pre_processor,
+            _sanitize_answer,
+            stream_openrouter_generate,
+        )
+
+        full_answer = ""
+        retrieved_context: list = []
+        intent = "KNOWLEDGE"
+        stream_intent_scores: dict = {}
+        stream_gate_score = None
+        stream_total_tokens: int | None = None
+        stream_prompt_tokens = 0
+        stream_completion_tokens = 0
+        stream_cached_tokens = 0
+        stream_provider = None
+        stream_generation_id = None
+        stream_cost = 0.0
+        turn_id = str(uuid.uuid4())
+        stream_off_scope_detected = False
+        leak_guard = StreamLeakGuard()
+        token_count = 0
+        stream_max_score = None
+        is_low_relevance_stream = False
+        _logged = False
+        restart_buffer = ""
+
+        def _dedupe_stream_text(text: str) -> str:
+            nonlocal full_answer, restart_buffer
+            if not text:
+                return ""
+            if restart_buffer:
+                restart_buffer += text
+                if full_answer.startswith(restart_buffer):
+                    return ""
+                if restart_buffer.startswith(full_answer):
+                    emit = restart_buffer[len(full_answer):]
+                    full_answer += emit
+                    restart_buffer = ""
+                    return emit
+                emit = restart_buffer
+                full_answer += emit
+                restart_buffer = ""
+                return emit
+            if full_answer and full_answer.startswith(text):
+                restart_buffer = text
+                return ""
+            full_answer += text
+            return text
+
+        async def _emit_log() -> None:
+            nonlocal _logged, stream_prompt_tokens, stream_cached_tokens
+            nonlocal stream_completion_tokens, stream_provider, stream_cost
+            nonlocal stream_generation_id, stream_total_tokens
+            if _logged:
+                return
+            _logged = True
+            try:
+                usage = await _complete_openrouter_usage(OpenRouterUsage(
+                    prompt_tokens=stream_prompt_tokens,
+                    cached_tokens=stream_cached_tokens,
+                    completion_tokens=stream_completion_tokens,
+                    provider=stream_provider,
+                    cost=stream_cost,
+                    generation_id=stream_generation_id,
+                ))
+                stream_prompt_tokens = usage.prompt_tokens
+                stream_cached_tokens = usage.cached_tokens
+                stream_completion_tokens = usage.completion_tokens
+                stream_provider = usage.provider
+                stream_cost = usage.cost
+                stream_generation_id = usage.generation_id
+                if stream_total_tokens is None and (usage.prompt_tokens or usage.completion_tokens):
+                    stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
+
+                await batch_logger.add_log({
+                    "turn_id": turn_id,
+                    "endpoint": "chat-stream",
+                    "conversation_id": conversation_id,
+                    "query": request.query,
+                    "rewritten_query": resolved_query,
+                    "answer": full_answer,
+                    "chunks_retrieved": len(retrieved_context),
+                    "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                    "llm_tokens_used": stream_total_tokens if stream_total_tokens else token_count,
+                    "or_prompt_tokens": stream_prompt_tokens,
+                    "or_cached_tokens": stream_cached_tokens,
+                    "or_completion_tokens": stream_completion_tokens,
+                    "or_provider": stream_provider,
+                    "or_generation_id": stream_generation_id,
+                    "or_cost": stream_cost,
+                    "cache_hit": False,
+                    "retrieved_context": retrieved_context,
+                    **_quality_log_fields(
+                        intent,
+                        stream_intent_scores,
+                        stream_max_score,
+                        _serialize_gate_score(stream_gate_score),
+                    ),
+                })
+            except Exception as log_err:
+                logger.warning(f"Stream add_log failed: {log_err}")
+
+        try:
+            config: RunnableConfig = {"run_name": "ava-chat-stream"}
+            if resolved_query != request.query:
+                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+            pre = await _pre_processor(initial_state, config)
+            if isinstance(pre, dict):
+                initial_state.update(pre)
+                intent = pre.get("intent") or intent
+                stream_intent_scores = pre.get("intent_scores") or {}
+                stream_gate_score = pre.get("gate_score")
+                stream_off_scope_detected = intent == "OFF_SCOPE"
+                new_rewrite = pre.get("rewritten_query")
+                if new_rewrite and new_rewrite != resolved_query:
+                    resolved_query = new_rewrite
+                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+
+            if intent == "MALICIOUS":
+                out = await _handle_malicious(initial_state, config)
+                msgs = out.get("messages") if isinstance(out, dict) else None
+                content = getattr(msgs[-1], "content", "") if msgs else ""
+                if content:
+                    full_answer += content
+                    yield f"data: {json.dumps({'token': content})}\n\n"
+            else:
+                async for ev in stream_openrouter_generate(initial_state, config=config):
+                    ev_type = ev.get("type")
+                    if ev_type == "ping":
+                        yield ": ping\n\n"
+                        continue
+                    if ev_type == "usage":
+                        usage = ev.get("usage")
+                        if usage:
+                            stream_prompt_tokens = usage.prompt_tokens
+                            stream_cached_tokens = usage.cached_tokens
+                            stream_completion_tokens = usage.completion_tokens
+                            stream_provider = usage.provider
+                            stream_cost = usage.cost
+                            stream_generation_id = usage.generation_id
+                            stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
+                        continue
+                    if ev_type != "token":
+                        continue
+                    emit = _dedupe_stream_text(ev.get("text") or "")
+                    if not emit:
+                        continue
+                    token_count += 1
+                    safe = leak_guard.feed(emit)
+                    if safe:
+                        safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
+                        yield f"data: {json.dumps({'token': safe})}\n\n"
+                    if token_count % 10 == 0 and await req.is_disconnected():
+                        logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                        await _emit_log()
+                        return
+
+            tail = leak_guard.flush()
+            if tail:
+                yield f"data: {json.dumps({'token': tail})}\n\n"
+            if leak_guard.leak_detected:
+                full_answer = tail
+
+            cleaned_answer = _sanitize_answer(full_answer)
+            if cleaned_answer != full_answer:
+                full_answer = cleaned_answer
+            if "[OFFSCOPE]" in full_answer.upper():
+                stream_off_scope_detected = True
+
+            if not full_answer.strip():
+                logger.warning(
+                    "Raw OpenRouter stream produced empty answer; retrying graph ainvoke",
+                    conversation_id=conversation_id,
+                )
+                try:
+                    fb_result = await asyncio.wait_for(
+                        get_cag_graph().ainvoke(initial_state, config={"run_name": "ava-chat-stream-fb"}),
+                        timeout=settings.pipeline_total_timeout_s,
+                    )
+                    fb_msgs = fb_result.get("messages") or []
+                    if fb_result.get("off_scope_detected"):
+                        stream_off_scope_detected = True
+                    if fb_msgs:
+                        fb_msg = fb_msgs[-1]
+                        fb_content = getattr(fb_msg, "content", None) or ""
+                        if isinstance(fb_content, str) and fb_content.strip():
+                            full_answer = _sanitize_answer(fb_content)
+                            usage = extract_openrouter_usage(fb_msg)
+                            stream_prompt_tokens = usage.prompt_tokens
+                            stream_cached_tokens = usage.cached_tokens
+                            stream_completion_tokens = usage.completion_tokens
+                            stream_provider = usage.provider
+                            stream_cost = usage.cost
+                            stream_generation_id = usage.generation_id
+                            if usage.prompt_tokens or usage.completion_tokens:
+                                stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
+                            retrieved_context = fb_result.get("retrieved_context") or retrieved_context
+                            sources = _extract_sources(retrieved_context)
+                            yield f"data: {json.dumps({'token': full_answer})}\n\n"
+                except Exception as fb_exc:
+                    logger.warning(f"Fallback ainvoke failed after empty raw stream: {type(fb_exc).__name__}: {fb_exc}")
+
+            if not full_answer.strip():
+                yield f"event: error\ndata: {json.dumps({'error': 'empty response, please retry'})}\n\n"
+                await _emit_log()
+                return
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            sources = _extract_sources(retrieved_context)
+            coaching_topic = None
+            try:
+                if (not request.coaching_mode) and intent == "KNOWLEDGE":
+                    titles = [s["title"] for s in sources if s.get("title") and s["title"] != "Unknown"]
+                    if titles:
+                        coaching_topic = await bump_topic_streak(conversation_id, Counter(titles).most_common(1)[0][0])
+            except Exception as exc:
+                logger.debug(f"topic-streak hook skipped: {exc}")
+
+            suggest_coaching = bool(coaching_topic)
+            coaching_done = request.coaching_mode and intent == "COACHING" and "?" not in full_answer
+            stream_new_ban_ttl = 0
+            if stream_off_scope_detected:
+                new_count, _ = await _handle_off_scope_violation(current_user.user_id)
+                if new_count == settings.warning_off_scope_violations:
+                    warning_text = "\n\n**Peringatan**: Harap tanyakan hal seputar materi Amartha. Jika Anda terus bertanya di luar topik sekali lagi, Ai Trainer akan dinonaktifkan sementara."
+                    yield f"data: {json.dumps({'token': warning_text})}\n\n"
+                    full_answer += warning_text
+                elif new_count >= settings.max_off_scope_violations:
+                    stream_new_ban_ttl = await _get_ban_ttl(current_user.user_id)
+
+            try:
+                await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=full_answer)
+            except Exception as hist_err:
+                logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
+            try:
+                await add_seen_chunk_ids(conversation_id, retrieved_context)
+            except Exception as seen_err:
+                logger.debug(f"seen chunk tracking skipped: {seen_err}")
+
+            done_payload: dict = {
+                "sources": sources,
+                "conversation_id": conversation_id,
+                "cached": False,
+                "latency_ms": round(latency_ms, 2),
+                "suggest_coaching": suggest_coaching,
+                "coaching_topic": coaching_topic,
+                "coaching_done": coaching_done,
+            }
+            if stream_new_ban_ttl > 0:
+                done_payload["ban_remaining_seconds"] = stream_new_ban_ttl
+            yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
+
+            try:
+                if (
+                    intent not in ("GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE")
+                    and not is_low_relevance_stream
+                    and not _is_bare_affirmation(request.query)
+                    and not context.get("skip_cache", False)
+                ):
+                    ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
+                    await set_cached_response(
+                        query=_raw_query_for_cache,
+                        answer=full_answer,
+                        sources=sources,
+                        course_id=request.course_id,
+                        cache_namespace=ns,
+                    )
+                await _emit_log()
+                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
+                await _track_session_courses(conversation_id, retrieved_context)
+                if _should_eval_turn(
+                    intent=intent,
+                    intent_scores=stream_intent_scores,
+                    max_dense_score=stream_max_score,
+                    answer=full_answer,
+                    is_low_relevance=is_low_relevance_stream,
+                ):
+                    await _enqueue_eval(
+                        turn_id=turn_id,
+                        query=resolved_query,
+                        answer=full_answer,
+                        retrieved_context=retrieved_context,
+                        intent=intent,
+                        intent_scores=stream_intent_scores,
+                    )
+            except Exception as bg_err:
+                logger.warning(f"Stream background task error: {bg_err}")
+        except Exception:
+            logger.exception("Raw OpenRouter stream error", query=request.query[:60])
+            yield f"event: error\ndata: {json.dumps({'error': 'CAG pipeline failed'})}\n\n"
+            await _emit_log()
+        finally:
+            await _emit_log()
+            sem_release()
+
+    return StreamingResponse(_stream_cag_raw(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     cag_graph = get_cag_graph()
 
     async def _stream_cag_body():
@@ -1365,6 +1700,7 @@ async def chat_stream(
         stream_cached_tokens = 0
         stream_provider = None
         stream_generation_id = None
+        stream_cost = 0.0
         turn_id = str(uuid.uuid4())  # correlates this turn's agent_logs row to its async eval score
         stream_off_scope_detected = False
         leak_guard = StreamLeakGuard()
@@ -1414,11 +1750,30 @@ async def chat_stream(
             retrieved_context stays empty in CAG mode unless a future node emits
             explicit source context before the break.
             """
-            nonlocal _logged
+            nonlocal _logged, stream_prompt_tokens, stream_cached_tokens
+            nonlocal stream_completion_tokens, stream_provider, stream_cost
+            nonlocal stream_generation_id, stream_total_tokens
             if _logged:
                 return
             _logged = True
             try:
+                usage = await _complete_openrouter_usage(OpenRouterUsage(
+                    prompt_tokens=stream_prompt_tokens,
+                    cached_tokens=stream_cached_tokens,
+                    completion_tokens=stream_completion_tokens,
+                    provider=stream_provider,
+                    cost=stream_cost,
+                    generation_id=stream_generation_id,
+                ))
+                stream_prompt_tokens = usage.prompt_tokens
+                stream_cached_tokens = usage.cached_tokens
+                stream_completion_tokens = usage.completion_tokens
+                stream_provider = usage.provider
+                stream_cost = usage.cost
+                stream_generation_id = usage.generation_id
+                if stream_total_tokens is None and (usage.prompt_tokens or usage.completion_tokens):
+                    stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
+
                 await batch_logger.add_log({
                     "turn_id": turn_id,
                     "endpoint": "chat-stream",
@@ -1434,6 +1789,7 @@ async def chat_stream(
                     "or_completion_tokens": stream_completion_tokens,
                     "or_provider": stream_provider,
                     "or_generation_id": stream_generation_id,
+                    "or_cost": stream_cost,
                     "cache_hit": False,
                     "retrieved_context": retrieved_context,
                     **_quality_log_fields(
@@ -1585,25 +1941,16 @@ async def chat_stream(
                                         yield f"data: {json.dumps({'token': safe})}\n\n"
                             rm = getattr(last_msg, "response_metadata", None) or {}
                             tu = rm.get("token_usage") or {}
+                            usage = extract_openrouter_usage(last_msg)
+                            stream_generation_id = usage.generation_id
                             real_total = tu.get("total_tokens")
-                            if isinstance(real_total, int) and real_total > 0:
-                                stream_total_tokens = real_total
-                                stream_prompt_tokens = tu.get("prompt_tokens", 0)
-                                stream_completion_tokens = tu.get("completion_tokens", 0)
-                                stream_cached_tokens = (tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-                                stream_provider = rm.get("model_name")
-                            else:
-                                # Fallback to usage_metadata (LangChain-normalized).
-                                um = getattr(last_msg, "usage_metadata", None) or {}
-                                in_t = um.get("input_tokens") or 0
-                                out_t = um.get("output_tokens") or 0
-                                if in_t or out_t:
-                                    stream_total_tokens = int(in_t) + int(out_t)
-                                    stream_prompt_tokens = in_t
-                                    stream_completion_tokens = out_t
-                                    stream_cached_tokens = (um.get("input_token_details") or {}).get("cache_read") or 0
-                                    stream_provider = getattr(last_msg, "response_metadata", {}).get("model_name")
-                                    stream_generation_id = getattr(last_msg, "response_metadata", {}).get("id")
+                            if usage.prompt_tokens or usage.completion_tokens:
+                                stream_total_tokens = real_total if isinstance(real_total, int) and real_total > 0 else usage.prompt_tokens + usage.completion_tokens
+                                stream_prompt_tokens = usage.prompt_tokens
+                                stream_completion_tokens = usage.completion_tokens
+                                stream_cached_tokens = usage.cached_tokens
+                                stream_provider = usage.provider
+                                stream_cost = usage.cost
                 # Canned-response nodes return an AIMessage directly without
                 # invoking an LLM, so no `on_chat_model_stream` event fires
                 # for them. Emit their content from on_chain_end instead.
@@ -1779,24 +2126,16 @@ async def chat_stream(
                         # (LangChain-normalized) like _log_cache_usage does.
                         _rm = getattr(_fb_msg, "response_metadata", None) or {}
                         _tu = _rm.get("token_usage") or {}
+                        _usage = extract_openrouter_usage(_fb_msg)
+                        stream_generation_id = _usage.generation_id
                         _real_total = _tu.get("total_tokens")
-                        if isinstance(_real_total, int) and _real_total > 0:
-                            stream_total_tokens = _real_total
-                            stream_prompt_tokens = _tu.get("prompt_tokens", 0)
-                            stream_completion_tokens = _tu.get("completion_tokens", 0)
-                            stream_cached_tokens = (_tu.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-                            stream_provider = _rm.get("model_name")
-
-                        else:
-                            _um = getattr(_fb_msg, "usage_metadata", None) or {}
-                            _in = _um.get("input_tokens") or 0
-                            _out = _um.get("output_tokens") or 0
-                            if _in or _out:
-                                stream_total_tokens = int(_in) + int(_out)
-                                stream_prompt_tokens = int(_in)
-                                stream_completion_tokens = int(_out)
-                                stream_cached_tokens = (_um.get("input_token_details") or {}).get("cache_read") or 0
-                                stream_provider = getattr(_fb_msg, "response_metadata", {}).get("model_name")
+                        if _usage.prompt_tokens or _usage.completion_tokens:
+                            stream_total_tokens = _real_total if isinstance(_real_total, int) and _real_total > 0 else _usage.prompt_tokens + _usage.completion_tokens
+                            stream_prompt_tokens = _usage.prompt_tokens
+                            stream_completion_tokens = _usage.completion_tokens
+                            stream_cached_tokens = _usage.cached_tokens
+                            stream_provider = _usage.provider
+                            stream_cost = _usage.cost
 
                         yield f"data: {json.dumps({'token': _fb_content})}\n\n"
             except Exception as fb_exc:

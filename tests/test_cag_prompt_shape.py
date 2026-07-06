@@ -36,6 +36,7 @@ def test_extract_openrouter_usage_reads_cache_details():
 
     class Message:
         response_metadata = {
+            "id": "gen-abc",
             "model_name": "deepseek/deepseek-v4-flash",
             "provider_name": "alibaba",
             "token_usage": {
@@ -45,6 +46,7 @@ def test_extract_openrouter_usage_reads_cache_details():
                     "cache_write_tokens": 20,
                 },
                 "completion_tokens": 12,
+                "cost": 0.00042,
             },
         }
         usage_metadata = {}
@@ -55,7 +57,47 @@ def test_extract_openrouter_usage_reads_cache_details():
     assert usage.cached_tokens == 80
     assert usage.cache_write_tokens == 20
     assert usage.completion_tokens == 12
+    assert usage.provider == "deepseek/deepseek-v4-flash"
+    assert usage.cost == 0.00042
+    assert usage.generation_id == "gen-abc"
+
+
+@pytest.mark.asyncio
+async def test_fetch_openrouter_generation_usage_reads_total_cost():
+    from app.llm.cag_client import fetch_openrouter_generation_usage
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "id": "gen-abc",
+                    "tokens_prompt": 100,
+                    "native_tokens_cached": 80,
+                    "tokens_completion": 12,
+                    "provider_name": "alibaba",
+                    "total_cost": 0.00042,
+                }
+            }
+
+    class Client:
+        async def get(self, url, **kwargs):
+            assert url.endswith("/generation")
+            assert kwargs["params"] == {"id": "gen-abc"}
+            return Response()
+
+    usage = await fetch_openrouter_generation_usage(
+        "gen-abc",
+        client=Client(),
+        sleep=lambda _delay: None,
+    )
+
+    assert usage.prompt_tokens == 100
+    assert usage.cached_tokens == 80
+    assert usage.completion_tokens == 12
     assert usage.provider == "alibaba"
+    assert usage.cost == 0.00042
 
 
 def test_cag_graph_routes_knowledge_directly_to_generate_node():
@@ -66,7 +108,7 @@ def test_cag_graph_routes_knowledge_directly_to_generate_node():
 
 @pytest.mark.asyncio
 async def test_cag_graph_does_not_call_retrieval_for_knowledge(monkeypatch):
-    from langchain_core.messages import AIMessageChunk
+    from langchain_core.messages import AIMessage
 
     from app.graph import pipeline
 
@@ -76,13 +118,13 @@ async def test_cag_graph_does_not_call_retrieval_for_knowledge(monkeypatch):
     async def fake_log_cache_usage(*args, **kwargs):
         return None
 
-    class FakeStreamingLLM:
-        async def astream(self, messages, config=None):
-            yield AIMessageChunk(content="OK")
+    class FakeLLM:
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(content="OK")
 
     pipeline.get_cag_graph.cache_clear()
     monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
-    monkeypatch.setattr(pipeline, "get_generate_llm", lambda: FakeStreamingLLM())
+    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: FakeLLM())
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
 
     try:
@@ -105,11 +147,11 @@ def test_cag_model_knob_removed_from_settings():
 async def test_generate_node_binds_stable_prefix_openrouter_session_id(monkeypatch):
     import hashlib
 
-    from langchain_core.messages import AIMessageChunk
+    from langchain_core.messages import AIMessage
 
     from app.graph import pipeline
 
-    class FakeStreamingLLM:
+    class FakeLLM:
         extra_body = {"usage": {"include": True}, "provider": {"order": ["xiaomi"]}}
 
         def __init__(self):
@@ -119,15 +161,15 @@ async def test_generate_node_binds_stable_prefix_openrouter_session_id(monkeypat
             self.bound_extra_bodies.append(kwargs["extra_body"])
             return self
 
-        async def astream(self, messages, config=None):
-            yield AIMessageChunk(content="Halo")
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(content="Halo")
 
-    fake = FakeStreamingLLM()
+    fake = FakeLLM()
 
     async def fake_log_cache_usage(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(pipeline, "get_chat_llm", lambda: fake)
+    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: fake)
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
 
     for conversation_id in ("conv-a", "conv-b"):
@@ -155,15 +197,25 @@ async def test_generate_node_binds_stable_prefix_openrouter_session_id(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_generate_node_accumulates_stream_chunks(monkeypatch):
-    from langchain_core.messages import AIMessageChunk
+async def test_generate_node_uses_nonstream_response_metadata(monkeypatch):
+    from langchain_core.messages import AIMessage
 
     from app.graph import pipeline
 
-    class FakeStreamingLLM:
-        async def astream(self, messages, config=None):
-            yield AIMessageChunk(content="Ha")
-            yield AIMessageChunk(content="lo")
+    class FakeLLM:
+        async def ainvoke(self, messages, config=None):
+            return AIMessage(
+                content="Halo",
+                response_metadata={
+                    "id": "gen-test",
+                    "model_name": "inclusionai/ling-2.6-flash-20260421",
+                    "token_usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 2,
+                        "cost": 0.00042,
+                    },
+                },
+            )
 
     async def fake_load_kb():
         return "<knowledge_base>KB</knowledge_base>"
@@ -172,7 +224,7 @@ async def test_generate_node_accumulates_stream_chunks(monkeypatch):
         return None
 
     monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
-    monkeypatch.setattr(pipeline, "get_generate_llm", lambda: FakeStreamingLLM())
+    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: FakeLLM())
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
 
     result = await pipeline._generate_node(
@@ -181,20 +233,16 @@ async def test_generate_node_accumulates_stream_chunks(monkeypatch):
     )
 
     assert result["messages"][-1].content == "Halo"
+    assert result["messages"][-1].response_metadata["id"] == "gen-test"
 
 
 @pytest.mark.asyncio
-async def test_generate_node_falls_back_when_stream_returns_no_chunks(monkeypatch):
+async def test_generate_node_uses_nonstream_llm(monkeypatch):
     from langchain_core.messages import AIMessage
 
     from app.graph import pipeline
 
-    class EmptyStreamingLLM:
-        async def astream(self, messages, config=None):
-            if False:
-                yield None
-
-    class FallbackLLM:
+    class FakeLLM:
         async def ainvoke(self, messages, config=None):
             return AIMessage(content="fallback answer")
 
@@ -205,8 +253,7 @@ async def test_generate_node_falls_back_when_stream_returns_no_chunks(monkeypatc
         return None
 
     monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
-    monkeypatch.setattr(pipeline, "get_generate_llm", lambda: EmptyStreamingLLM())
-    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: FallbackLLM())
+    monkeypatch.setattr(pipeline, "get_generate_llm_nostream", lambda: FakeLLM())
     monkeypatch.setattr(pipeline, "_log_cache_usage", fake_log_cache_usage)
 
     result = await pipeline._generate_node(

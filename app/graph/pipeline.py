@@ -8,6 +8,7 @@ Architecture change vs prior RAG pattern:
 import asyncio
 from functools import lru_cache
 import hashlib
+import json
 from pathlib import Path
 import re
 import time
@@ -22,7 +23,8 @@ from loguru import logger
 
 from app.config.settings import get_settings
 from app.graph.state import CAGState
-from app.llm.client import get_chat_llm, get_generate_llm, get_generate_llm_nostream
+from app.llm.cag_client import OpenRouterUsage
+from app.llm.client import _provider_extra_body, _shared_http_client, get_generate_llm_nostream
 from app.llm.prompts import CHIT_CHAT_PROMPT, CONVERSATIONAL_PROMPT, SOCRATIC_PROMPT
 from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections
 
@@ -329,16 +331,14 @@ async def _log_cache_usage(response: Any, call_name: str, turn_id=None, started_
             prompt = um.get("input_tokens", 0) or 0
             details = um.get("input_token_details") or {}
             cached = details.get("cache_read", 0) or 0
+        rm = getattr(response, "response_metadata", None) or {}
+        tu = rm.get("token_usage") or {}
         if not cached or not prompt:
-            rm = getattr(response, "response_metadata", None) or {}
-            tu = rm.get("token_usage") or {}
             prompt = prompt or (tu.get("prompt_tokens", 0) or 0)
             ptd = tu.get("prompt_tokens_details") or {}
             cached = cached or (ptd.get("cached_tokens", 0) or 0)
-        rm = getattr(response, "response_metadata", None) or {}
         completion = int((um or {}).get("output_tokens", 0) or 0)
         if not completion:
-            tu = rm.get("token_usage") or {}
             completion = int(tu.get("completion_tokens", 0) or 0)
         model = rm.get("model_name") or rm.get("model") or "unknown"
         provider = rm.get("provider_name") or rm.get("provider") or _infer_provider(model)
@@ -352,6 +352,7 @@ async def _log_cache_usage(response: Any, call_name: str, turn_id=None, started_
             call_name, cached, prompt, pct, completion,
             model, provider, duration_s, (turn_id or "-")[:8],
         )
+        cost = float(tu.get("cost", 0.0) or 0.0)
         if turn_id:
             try:
                 await _persist_or_cache_metrics(
@@ -361,6 +362,7 @@ async def _log_cache_usage(response: Any, call_name: str, turn_id=None, started_
                     completion=completion,
                     provider=provider,
                     duration_s=duration_s,
+                    cost=cost,
                 )
             except Exception as e:
                 logger.warning("_persist_or_cache_metrics failed for turn={}: {}", (turn_id or "-")[:8], e)
@@ -376,6 +378,7 @@ async def _persist_or_cache_metrics(
     completion: int,
     provider: str,
     duration_s: float | None,
+    cost: float | None,
 ) -> None:
     """UPDATE agent_logs row matching turn_id with OpenRouter cache metrics.
 
@@ -396,6 +399,7 @@ async def _persist_or_cache_metrics(
                     or_completion_tokens=completion,
                     or_provider=provider,
                     or_duration_s=duration_s,
+                    or_cost=cost,
                 )
             )
             await s.commit()
@@ -1077,6 +1081,236 @@ def _with_openrouter_session(llm, session_id: str | None):
     return llm.bind(extra_body={**extra_body, "session_id": session_id})
 
 
+def _openrouter_messages(messages: list) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            role = "system"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        else:
+            role = "user"
+        content = getattr(msg, "content", msg)
+        if isinstance(content, list):
+            content = "".join(str(part.get("text", part)) if isinstance(part, dict) else str(part) for part in content)
+        out.append({"role": role, "content": str(content)})
+    return out
+
+
+async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
+    """Build the exact prompt used by generate_node."""
+    summary = state.get("conversation_summary") or ""
+    profile = state.get("user_profile") or {}
+    intent = state.get("intent") or "KNOWLEDGE"
+
+    cag_kb_text = ""
+    if intent in ("KNOWLEDGE", "COACHING"):
+        try:
+            cag_kb_text = await _load_active_cag_kb_text()
+        except Exception as exc:
+            logger.warning(f"CAG KB pack load failed: {exc}")
+
+    has_kb_context = bool(cag_kb_text)
+    context_section = ""
+    if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
+        context_section = (
+            "\n\n<knowledge_base_missing>\n"
+            "No active CAG knowledge base pack is available. Ask an admin to run Moodle KB sync first."
+            "\n</knowledge_base_missing>"
+        )
+
+    topics_section = ""
+    if intent == "TOPIC_LIST":
+        try:
+            course_names = await _load_course_names()
+        except Exception:
+            course_names = []
+        topics_section = (
+            "\n\n<available_topics>\n"
+            + ("\n".join(f"- {c}" for c in course_names) if course_names else "(could not load topic list right now)")
+            + "\n</available_topics>"
+        )
+
+    section_section = ""
+    drilldown_sec = state.get("drilldown_section")
+    if drilldown_sec:
+        try:
+            items = (await _load_section_map()).get(drilldown_sec, [])
+        except Exception:
+            items = []
+        if items:
+            section_section = (
+                f'\n\n<section_materials section="{drilldown_sec}">\n'
+                + "\n".join(f"- {it}" for it in items)
+                + "\n</section_materials>"
+            )
+
+    ltm_section = ""
+    if profile.get("summary"):
+        course_names_str = ", ".join(profile.get("course_names", []))
+        unanswered = profile.get("unanswered_questions") or []
+        history_lines = [
+            f"User pernah membahas materi: {course_names_str}",
+            f"Konteks sesi sebelumnya: {profile['summary']}",
+        ]
+        if unanswered:
+            history_lines.append(
+                "Pertanyaan user yang belum sempat terjawab di sesi lalu: "
+                + "; ".join(unanswered)
+            )
+        ltm_section = "\n\n<user_history>\n" + "\n".join(history_lines) + "\n</user_history>"
+
+    summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
+
+    pref_section = ""
+    prefs = state.get("user_preferences")
+    if prefs:
+        pref_lines = []
+        if prefs.get("role"):
+            pref_lines.append(f"Role/Jabatan User: {prefs['role']}")
+        if prefs.get("preferred_tone"):
+            pref_lines.append(f"Gaya Bahasa yang Diinginkan: {prefs['preferred_tone']}")
+        if prefs.get("formatting_pref"):
+            pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
+        if prefs.get("custom_instructions"):
+            ci = re.sub(r"<[^>]+>", "", prefs["custom_instructions"])
+            ci = re.sub(
+                r"(?i)(?:ignore|forget|disregard|override)\s+(?:all\s+)?(?:previous|above|prior|system)\s+(?:instructions?|rules?|prompts?)",
+                "[filtered]",
+                ci,
+            )[:500]
+            pref_lines.append(f"Instruksi Tambahan: {ci}")
+        if pref_lines:
+            pref_section = (
+                "\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n"
+                + "\n".join(pref_lines)
+                + "\n</user_preferences>"
+            )
+
+    user_ctx_section = ""
+    uctx = state.get("user_context") or {}
+    if uctx:
+        ctx_lines = []
+        if uctx.get("name"):
+            ctx_lines.append(f"Nama: {uctx['name']}")
+        if uctx.get("dept"):
+            ctx_lines.append(f"Departemen: {uctx['dept']}")
+        if uctx.get("position"):
+            ctx_lines.append(f"Posisi: {uctx['position']}")
+        if uctx.get("grade"):
+            ctx_lines.append(f"Grade: {uctx['grade']}")
+        if uctx.get("location"):
+            ctx_lines.append(f"Lokasi: {uctx['location']}")
+        if uctx.get("point"):
+            ctx_lines.append(f"Point: {uctx['point']}")
+        if ctx_lines:
+            user_ctx_section = (
+                "\n\n<user_context>\nKamu sedang berbicara dengan user berikut. "
+                "Sesuaikan jawaban dengan konteksnya, tetapi JANGAN memanggil atau "
+                "menyapa nama depannya secara berulang-ulang di setiap awal kalimat atau transisi:\n"
+                + "\n".join(ctx_lines)
+                + "\n</user_context>"
+            )
+
+    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
+    is_coaching = intent == "COACHING"
+    windowed_messages = _window_generate_history(
+        list(state["messages"]),
+        max_fresh_turns=_settings.max_fresh_turns,
+        max_ai_chars=_settings.max_history_ai_chars,
+    )
+
+    if is_coaching:
+        system_prompt_text = SOCRATIC_PROMPT
+    elif intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE"):
+        system_prompt_text = CHIT_CHAT_PROMPT
+    else:
+        system_prompt_text = CONVERSATIONAL_PROMPT
+
+    msgs: list = [SystemMessage(content=system_prompt_text)]
+    if cag_kb_text:
+        msgs.append(SystemMessage(content=cag_kb_text))
+    if dynamic_tail:
+        msgs.append(HumanMessage(content=dynamic_tail))
+    msgs += windowed_messages
+    return msgs, _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
+
+
+async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | None = None):
+    """Stream generate directly from OpenRouter so final usage.cost is preserved."""
+    messages, session_id = await _build_generate_messages(state)
+    extra_body = _provider_extra_body(_settings.llm_model)
+    if session_id:
+        extra_body = {**extra_body, "session_id": session_id}
+    body = {
+        "model": _settings.llm_model,
+        "messages": _openrouter_messages(messages),
+        "temperature": _settings.generate_llm_temperature,
+        "max_tokens": _settings.llm_max_tokens,
+        "stream": True,
+        **extra_body,
+    }
+    headers = {
+        "Authorization": f"Bearer {_settings.openrouter_api_key}",
+        "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
+        "X-Title": "CAG AI TRAINER (Generate)",
+    }
+
+    generation_id = None
+    model = None
+    provider = None
+    sent_usage = False
+    url = _settings.openrouter_base_url.rstrip("/") + "/chat/completions"
+    async with _shared_http_client().stream("POST", url, headers=headers, json=body) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+            if line.startswith(":"):
+                yield {"type": "ping"}
+                continue
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                if not sent_usage and generation_id:
+                    yield {
+                        "type": "usage",
+                        "usage": OpenRouterUsage(
+                            provider=model or provider,
+                            generation_id=generation_id,
+                        ),
+                    }
+                break
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            generation_id = data.get("id") or generation_id
+            model = data.get("model") or model
+            provider = data.get("provider") or data.get("provider_name") or provider
+            for choice in data.get("choices") or []:
+                delta = choice.get("delta") or {}
+                token = delta.get("content")
+                if token:
+                    yield {"type": "token", "text": token}
+            usage = data.get("usage") or {}
+            if usage:
+                sent_usage = True
+                details = usage.get("prompt_tokens_details") or {}
+                yield {
+                    "type": "usage",
+                    "usage": OpenRouterUsage(
+                        prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                        cached_tokens=int(details.get("cached_tokens") or 0),
+                        completion_tokens=int(usage.get("completion_tokens") or 0),
+                        provider=model or provider,
+                        cost=float(usage.get("cost") or 0.0),
+                        generation_id=generation_id,
+                    ),
+                }
+
+
 async def _generate_node(state: CAGState, config: RunnableConfig):
     """Single conversational LLM call — the only answer-generating node.
 
@@ -1247,7 +1481,7 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
 
     openrouter_session_id = _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
     llm = _with_openrouter_session(
-        get_generate_llm() if _is_grounded else get_chat_llm(),
+        get_generate_llm_nostream(),
         openrouter_session_id,
     )
 
@@ -1261,21 +1495,12 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
 
     _t0 = time.monotonic()
     try:
-        response = None
-        async for chunk in llm.astream(msgs, config=config):
-            response = chunk if response is None else response + chunk
-        if response is None:
-            raise RuntimeError("empty streaming response")
+        response = await llm.ainvoke(msgs, config=config)
     except Exception as gen_exc:
         logger.warning(
-            f"generate_node stream ainvoke failed ({type(gen_exc).__name__}), "
-            f"retrying non-stream: {gen_exc}"
+            f"generate_node ainvoke failed ({type(gen_exc).__name__}): {gen_exc}"
         )
-        _t0 = time.monotonic()
-        response = await _with_openrouter_session(
-            get_generate_llm_nostream(),
-            openrouter_session_id,
-        ).ainvoke(msgs, config=config)
+        raise
     await _log_cache_usage(
         response,
         "generate",

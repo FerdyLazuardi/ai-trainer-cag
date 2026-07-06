@@ -231,6 +231,7 @@ async def test_prepare_cag_context_skips_rewrite_and_embedding(monkeypatch):
 
 def _patch_stream_basics(monkeypatch, graph):
     from app.api.routes import chat
+    from app.graph import pipeline
 
     async def fake_acquire():
         return lambda: None
@@ -250,11 +251,50 @@ def _patch_stream_basics(monkeypatch, graph):
     async def fake_resolve_numeric_query(query, conversation_id):
         return query
 
+    graph_events = None
+
+    async def fake_graph_events():
+        nonlocal graph_events
+        if graph_events is None:
+            graph_events = []
+            async for event in graph.astream_events({}, config={}, version="v2"):
+                graph_events.append(event)
+        return graph_events
+
+    async def fake_pre_processor(state, config):
+        for event in await fake_graph_events():
+            if event.get("event") == "on_chain_end" and event.get("name") == "pre_processor":
+                return event.get("data", {}).get("output", {})
+        return {
+            "intent": "KNOWLEDGE",
+            "rewritten_query": state["messages"][-1].content,
+            "intent_scores": {},
+            "gate_score": None,
+        }
+
+    async def fake_stream_openrouter_generate(state, config=None):
+        for event in await fake_graph_events():
+            if event.get("event") == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and getattr(chunk, "content", None):
+                    yield {"type": "token", "text": chunk.content}
+            if event.get("event") == "on_chain_end" and event.get("name") == "generate_node":
+                output = event.get("data", {}).get("output", {})
+                msgs = output.get("messages") if isinstance(output, dict) else None
+                if msgs:
+                    msg = msgs[-1]
+                    content = getattr(msg, "content", "") or ""
+                    if content:
+                        yield {"type": "token", "text": content}
+                    yield {"type": "usage", "usage": chat.extract_openrouter_usage(msg)}
+
     monkeypatch.setattr(chat, "acquire_pipeline_slot_or_503", fake_acquire)
     monkeypatch.setattr(chat, "_verify_conversation_ownership", noop_async)
     monkeypatch.setattr(chat, "resolve_numeric_query", fake_resolve_numeric_query)
     monkeypatch.setattr(chat, "_prepare_cag_context", fake_prepare)
     monkeypatch.setattr(chat, "get_cag_graph", lambda: graph)
+    monkeypatch.setattr(pipeline, "_pre_processor", fake_pre_processor)
+    monkeypatch.setattr(pipeline, "stream_openrouter_generate", fake_stream_openrouter_generate)
     monkeypatch.setattr(chat, "_schedule_afk_ltm_sync", noop_async)
     monkeypatch.setattr(chat, "_track_session_courses", noop_async)
     monkeypatch.setattr(chat, "add_seen_chunk_ids", noop_async)
@@ -351,6 +391,67 @@ async def test_stream_dedupes_provider_restart_tokens(monkeypatch):
 
     assert answer == "Oke ini jawaban final"
     assert history == [("conv-restart", "jelaskan modal", "Oke ini jawaban final")]
+
+
+@pytest.mark.asyncio
+async def test_stream_log_fetches_generation_cost_when_usage_cost_missing(monkeypatch):
+    class EndOnlyGraph:
+        def astream_events(self, *args, **kwargs):
+            async def gen():
+                yield {
+                    "event": "on_chain_end",
+                    "name": "generate_node",
+                    "data": {
+                        "output": {
+                            "messages": [AIMessage(
+                                content="jawaban",
+                                response_metadata={
+                                    "id": "gen-cost",
+                                    "model_name": "model-x",
+                                    "token_usage": {
+                                        "prompt_tokens": 10,
+                                        "completion_tokens": 2,
+                                        "total_tokens": 12,
+                                    },
+                                },
+                            )],
+                        },
+                    },
+                }
+
+            return gen()
+
+    chat = _patch_stream_basics(monkeypatch, EndOnlyGraph())
+    logs = []
+
+    async def fake_log(row):
+        logs.append(row)
+
+    async def fake_cost(generation_id):
+        assert generation_id == "gen-cost"
+        return chat.OpenRouterUsage(
+            prompt_tokens=10,
+            cached_tokens=3,
+            completion_tokens=2,
+            provider="provider-x",
+            cost=0.00042,
+            generation_id=generation_id,
+        )
+
+    monkeypatch.setattr(chat.batch_logger, "add_log", fake_log)
+    monkeypatch.setattr(chat, "fetch_openrouter_generation_usage", fake_cost)
+
+    response = await chat.chat_stream(
+        chat.ChatRequest(query="jelaskan modal", conversation_id="conv-cost"),
+        _DummyRequest(),
+        chat.User(user_id="u-1", role="moodle_user", username="User"),
+    )
+
+    await _collect_sse(response)
+
+    assert logs[0]["or_generation_id"] == "gen-cost"
+    assert logs[0]["or_cost"] == 0.00042
+    assert logs[0]["or_provider"] == "provider-x"
 
 
 @pytest.mark.asyncio

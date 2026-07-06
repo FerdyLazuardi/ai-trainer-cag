@@ -143,6 +143,7 @@ class AgentLog(Base):
     or_generation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     or_cache_savings_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     or_duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    or_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieved_context: Mapped[list[dict]] = mapped_column(JSON, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

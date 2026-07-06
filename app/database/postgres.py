@@ -158,6 +158,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_cached_tokens INTEGER"))
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_completion_tokens INTEGER"))
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_provider VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_cost DOUBLE PRECISION"))
 
 
 @asynccontextmanager

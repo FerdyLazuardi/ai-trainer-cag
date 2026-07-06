@@ -18,32 +18,6 @@ router = APIRouter()
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-def calculate_cost(or_provider: str, prompt: int, cached: int, completion: int) -> float:
-    # Normalize model name
-    m = (or_provider or "").lower()
-    
-    # Defaults (DeepSeek V3/V4 flash pricing as baseline fallback: $0.14 / $0.28 per M)
-    prompt_rate = 0.14 / 1_000_000
-    cached_rate = 0.014 / 1_000_000
-    completion_rate = 0.28 / 1_000_000
-    
-    if "gemini" in m:
-        # Gemini 2.5 Flash pricing: $0.075 / $0.30 per M
-        prompt_rate = 0.075 / 1_000_000
-        cached_rate = 0.01875 / 1_000_000
-        completion_rate = 0.30 / 1_000_000
-    elif "deepseek-chat" in m or "deepseek-v3" in m or "deepseek-v4" in m:
-        prompt_rate = 0.14 / 1_000_000
-        cached_rate = 0.014 / 1_000_000
-        completion_rate = 0.28 / 1_000_000
-
-    # Non-cached prompt tokens are charged at prompt_rate
-    non_cached_prompt = max(0, prompt - cached)
-    
-    cost = (non_cached_prompt * prompt_rate) + (cached * cached_rate) + (completion * completion_rate)
-    return round(cost, 8)
-
-
 def verify_api_key(api_key: str = Security(api_key_header)):
     settings = get_settings()
     # Constant-time compare to avoid a timing side-channel that could let an
@@ -124,7 +98,7 @@ async def get_dashboard_logs(
     total_q, avg_lat, cache_hits, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
         _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {chat_where}"),
         _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {chat_where}"),
-        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens) FROM agent_logs WHERE {chat_where}"),
+        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens), SUM(or_cost) FROM agent_logs WHERE {chat_where}"),
         _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {chat_where} GROUP BY intent"),
         _run_one(f"""
             SELECT DATE(created_at) AS date, COUNT(*) AS queries
@@ -139,7 +113,7 @@ async def get_dashboard_logs(
                    conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
                    retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
-                   rewritten_query
+                   rewritten_query, or_cost, or_generation_id
             FROM agent_logs
             WHERE {chat_where}
               {cursor_clause}
@@ -177,7 +151,7 @@ async def get_dashboard_logs(
     or_prompt = int(or_stats[0] or 0) if or_stats else 0
     or_cached = int(or_stats[1] or 0) if or_stats else 0
     or_completion = int(or_stats[2] or 0) if or_stats else 0
-    total_cost = calculate_cost(settings.llm_model, or_prompt, or_cached, or_completion)
+    total_cost = float(or_stats[3] or 0.0) if or_stats else 0.0
     hit_rate = (or_cached / or_prompt * 100.0) if or_prompt > 0 else 0.0
 
     perf = perf_q.fetchone()
@@ -226,12 +200,8 @@ async def get_dashboard_logs(
             "or_completion_tokens": int(row[17]) if row[17] is not None else 0,
             "or_provider": str(row[18]) if row[18] else "",
             "rewritten_query": str(row[19]) if len(row) > 19 and row[19] else None,
-            "cost": calculate_cost(
-                str(row[18]) if row[18] else "",
-                int(row[15]) if row[15] is not None else 0,
-                int(row[16]) if row[16] is not None else 0,
-                int(row[17]) if row[17] is not None else 0,
-            ),
+            "cost": float(row[20]) if len(row) > 20 and row[20] is not None else 0.0,
+            "or_generation_id": str(row[21]) if len(row) > 21 and row[21] else None,
         }
         for row in log_rows
     ]

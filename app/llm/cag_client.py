@@ -1,9 +1,14 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.config.settings import get_settings
 from app.llm.client import get_generate_llm_nostream
+
+settings = get_settings()
 
 
 CAG_SYSTEM_PROMPT = (
@@ -20,6 +25,8 @@ class OpenRouterUsage:
     cache_write_tokens: int = 0
     completion_tokens: int = 0
     provider: str | None = None
+    cost: float = 0.0
+    generation_id: str | None = None
 
 
 def build_cag_messages(
@@ -74,8 +81,57 @@ def extract_openrouter_usage(message: Any) -> OpenRouterUsage:
         cached_tokens=int(details.get("cached_tokens") or input_details.get("cache_read") or 0),
         cache_write_tokens=int(details.get("cache_write_tokens") or 0),
         completion_tokens=int(usage.get("completion_tokens") or um.get("output_tokens") or 0),
-        provider=rm.get("provider_name") or rm.get("provider") or rm.get("model_name"),
+        provider=rm.get("model_name") or rm.get("model") or rm.get("provider_name") or rm.get("provider"),
+        cost=float(usage.get("cost") or 0.0),
+        generation_id=rm.get("id") or rm.get("generation_id"),
     )
+
+
+async def fetch_openrouter_generation_usage(
+    generation_id: str | None,
+    *,
+    client: httpx.AsyncClient | None = None,
+    sleep=asyncio.sleep,
+) -> OpenRouterUsage:
+    generation_id = (generation_id or "").strip()
+    if not generation_id or not settings.openrouter_api_key:
+        return OpenRouterUsage(generation_id=generation_id or None)
+
+    async def _get(c):
+        return await c.get(
+            settings.openrouter_base_url.rstrip("/") + "/generation",
+            headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            params={"id": generation_id},
+            timeout=10,
+        )
+
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient()
+
+    try:
+        for delay in (0, 0.25, 0.75):
+            if delay:
+                await sleep(delay)
+            response = await _get(client)
+            if response.status_code == 404:
+                continue
+            if response.status_code != 200:
+                return OpenRouterUsage(generation_id=generation_id)
+            data = (response.json() or {}).get("data") or {}
+            return OpenRouterUsage(
+                prompt_tokens=int(data.get("tokens_prompt") or data.get("native_tokens_prompt") or 0),
+                cached_tokens=int(data.get("native_tokens_cached") or 0),
+                completion_tokens=int(data.get("tokens_completion") or data.get("native_tokens_completion") or 0),
+                provider=data.get("model") or data.get("provider_name"),
+                cost=float(data.get("total_cost") or data.get("usage") or 0.0),
+                generation_id=data.get("id") or generation_id,
+            )
+    finally:
+        if owns_client:
+            await client.aclose()
+
+    return OpenRouterUsage(generation_id=generation_id)
 
 
 def _dynamic_context(
