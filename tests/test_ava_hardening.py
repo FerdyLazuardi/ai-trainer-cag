@@ -130,6 +130,20 @@ def test_sanitize_answer_strips_course_context_dump():
     assert cleaned == "**Visi Amartha:** Kemakmuran Bersama."
 
 
+def test_sanitize_answer_adjusts_closing_reference():
+    from app.graph.pipeline import _sanitize_answer
+
+    # Test single-line match
+    raw1 = "Ini penjelasan materi. Untuk detail prosedur pelaporan atau alur spesifik lainnya, silakan cek langsung di modul Business Process pada materi Amarthapedia."
+    expected1 = "Ini penjelasan materi. Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku."
+    assert _sanitize_answer(raw1) == expected1
+
+    # Test multi-line and whitespace variations
+    raw2 = "Ini penjelasan.\nUntuk detail prosedur pelaporan atau alur\nspesifik lainnya, silakan cek langsung di\nmodul Business Process pada materi\nAmarthapedia."
+    expected2 = "Ini penjelasan.\nKamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku."
+    assert _sanitize_answer(raw2) == expected2
+
+
 
 
 

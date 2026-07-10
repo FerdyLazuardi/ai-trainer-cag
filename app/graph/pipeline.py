@@ -192,7 +192,13 @@ def _sanitize_answer(text: str) -> str:
     """
     if not text:
         return text
-    cleaned = _LEAK_BLOCK_RE.sub("", text)
+    # Adjust specific closing reference to the general reference
+    cleaned = re.sub(
+        r"(?i)Untuk\s+detail\s+prosedur\s+pelaporan\s+atau\s+alur\s+spesifik\s+lainnya,?\s+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process\s+pada\s+materi\s+Amarthapedia\.?",
+        "Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku.",
+        text
+    )
+    cleaned = _LEAK_BLOCK_RE.sub("", cleaned)
     cleaned = _LEAK_OPEN_TAG_RE.sub("", cleaned)
     cleaned = _INLINE_CITE_RE.sub("", cleaned)
     cleaned = _META_CONTEXT_LINE_RE.sub("", cleaned)
