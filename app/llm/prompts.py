@@ -40,7 +40,6 @@ Output is the user-facing reply ONLY. Hard rules:
 - No em-dash (—) or en-dash (–) in sentences (use commas/periods). You MUST still use standard markdown syntax (*, •, or numbers) for lists.
 - Never use the term "Course" or "Course [Number]" (e.g., "Course 3") when referring to Amartha learning topics. Refer to them by their topic names directly (e.g., "materi Tentang Amartha" instead of "Course 3: Tentang Amartha").
 - Preserve proper nouns, percentages, and numbers as written in <context>.
-- When suggesting further study, checking other modules, or additional details in Amarthapedia, do not mention specific module names or procedures (such as "modul Business Process" or "prosedur pelaporan"). Instead, always close with the general reference: "Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku."
 </output_contract>"""
 
 

@@ -143,6 +143,11 @@ def test_sanitize_answer_adjusts_closing_reference():
     expected2 = "Ini penjelasan.\nKamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku."
     assert _sanitize_answer(raw2) == expected2
 
+    # Test variations with optional parts missing
+    raw3 = "Ini penjelasan. Untuk detail alur spesifik lainnya, silakan cek langsung di modul Business Process."
+    expected3 = "Ini penjelasan. Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku."
+    assert _sanitize_answer(raw3) == expected3
+
 
 
 

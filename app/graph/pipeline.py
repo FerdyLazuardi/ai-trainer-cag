@@ -194,7 +194,7 @@ def _sanitize_answer(text: str) -> str:
         return text
     # Adjust specific closing reference to the general reference
     cleaned = re.sub(
-        r"(?i)Untuk\s+detail\s+prosedur\s+pelaporan\s+atau\s+alur\s+spesifik\s+lainnya,?\s+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process\s+pada\s+materi\s+Amarthapedia\.?",
+        r"(?i)Untuk\s+detail\s+[^.!?]+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process(?:[^.!?]*Amarthapedia)?\.?",
         "Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku.",
         text
     )
