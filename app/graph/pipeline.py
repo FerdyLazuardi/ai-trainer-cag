@@ -1050,9 +1050,6 @@ def clear_cag_kb_cache() -> None:
 
 
 async def _load_active_cag_kb_text() -> str:
-    if "content" in _active_kb_cache and _active_kb_cache["content"]:
-        return _active_kb_cache["content"]
-
     from app.database.postgres import AsyncSessionLocal
     from app.knowledge.store import get_active_kb_pack
 
@@ -1060,14 +1057,16 @@ async def _load_active_cag_kb_text() -> str:
         async with AsyncSessionLocal() as session:
             active = await get_active_kb_pack(session, source=_settings.cag_kb_source)
             if active:
-                _active_kb_cache.update({
-                    "hash": active.kb_hash,
-                    "content": active.content,
-                })
-                return active.content
+                if _active_kb_cache.get("hash") != active.kb_hash:
+                    clear_cag_kb_cache()
+                    _active_kb_cache.update({
+                        "hash": active.kb_hash,
+                        "content": active.content,
+                    })
+                return _active_kb_cache["content"]
     except Exception as exc:
         logger.warning(f"Failed to load active cag kb text: {exc}")
-    return ""
+    return _active_kb_cache.get("content", "")
 
 
 def _openrouter_prompt_session_id(*parts: str) -> str:
