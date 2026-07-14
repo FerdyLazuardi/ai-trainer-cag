@@ -264,8 +264,10 @@ class StreamLeakGuard:
         if any(p.search(self._buffer) for p in self._LEAK_PATTERNS):
             self._mode = "buffered"
             return ""
-        if self._mode == "buffered":
-            return ""
+        
+        # If we were buffered but the buffer no longer matches any leak pattern,
+        # we can safely flush it and return to passthrough mode.
+        self._mode = "passthrough"
         out = self._buffer
         self._buffer = ""
         return out

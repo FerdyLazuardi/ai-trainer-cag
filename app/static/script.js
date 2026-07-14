@@ -1168,6 +1168,19 @@ async function send(presetText, opts) {
     let _coachingTopic = null;
     let _coachingDone = false;
 
+    let streamTimeout = null;
+    const STREAM_TIMEOUT_MS = 15000;
+    function resetStreamTimeout() {
+        if (streamTimeout) clearTimeout(streamTimeout);
+        streamTimeout = setTimeout(() => {
+            console.warn("Stream stalled, aborting...");
+            _streamFailed = true;
+            if (currentAbortController) {
+                currentAbortController.abort();
+            }
+        }, STREAM_TIMEOUT_MS);
+    }
+
     function startStreamBubble() {
         if (!_streamStarted) {
             const bubbleObj = createStreamBubble();
@@ -1213,6 +1226,8 @@ async function send(presetText, opts) {
             }
             throw new Error(`Server returned ${res.status}`);
         }
+
+        resetStreamTimeout();
 
         // ── Init SSE reader ──
         const reader = res.body.getReader();
@@ -1277,16 +1292,17 @@ async function send(presetText, opts) {
 
         smoothStreamWorker();
 
+        let currentEventType = "";
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+
+            resetStreamTimeout();
 
             buffer += decoder.decode(value, { stream: true });
 
             const lines = buffer.split("\n");
             buffer = lines.pop() || "";
-
-            let currentEventType = "";
 
             for (const line of lines) {
                 if (line.startsWith("event: ")) {
@@ -1379,7 +1395,7 @@ async function send(presetText, opts) {
 
     } catch (err) {
         _streamActive = false; // Ensure stream is flagged as inactive
-        if (err.name === 'AbortError') {
+        if (err.name === 'AbortError' && !_streamFailed) {
             console.log("Request cancelled by user.");
             removeTyping();
             return;
@@ -1403,6 +1419,10 @@ async function send(presetText, opts) {
         }
         showStreamRetryStatus(streamWrap, () => send(text, { skipBubble: true }));
     } finally {
+        if (streamTimeout) {
+            clearTimeout(streamTimeout);
+            streamTimeout = null;
+        }
         isStreaming = false;
         setSendButtonState(false);
         currentAbortController = null;
