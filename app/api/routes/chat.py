@@ -611,6 +611,9 @@ async def _prepare_cag_context(
         "position": current_user.position,
         "grade": current_user.grade,
         "point": current_user.point,
+        "gender": current_user.gender,
+        "area": current_user.area,
+        "regional": current_user.regional,
     }
 
     # For Tier-1 intents (GREETING, AMBIGUOUS), skip all expensive I/O:

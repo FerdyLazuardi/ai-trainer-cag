@@ -1104,16 +1104,86 @@ def _openrouter_messages(messages: list) -> list[dict[str, str]]:
     return out
 
 
+def resolve_user_role(user_context: dict | None) -> str:
+    if not user_context:
+        return "ALL"
+        
+    location = str(user_context.get("location") or "").strip().upper()
+    position = str(user_context.get("position") or "").strip().lower()
+    
+    # 1. HO (Head Office) -> HO
+    if location == "HO":
+        return "HO"
+        
+    # 2. FO (Field Office) or general fallback
+    if "regional" in position or "rm" in position:
+        return "RM"
+    elif "area" in position or "am" in position:
+        return "AM"
+    elif "hub" in position or "hmb" in position:
+        return "HMB"
+    elif "business manager" in position or "bm" in position:
+        return "BM"
+    elif "business partner" in position or "bp" in position:
+        return "BP"
+        
+    if location == "FO":
+        return "FO"
+        
+    return "ALL"
+
+
+def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
+    if not kb_text or not user_role:
+        return kb_text
+    
+    role = user_role.upper().strip()
+    
+    # 1. Extract the <kb_index> block if present
+    kb_index_match = re.search(r'(<kb_index>.*?</kb_index>)', kb_text, re.DOTALL)
+    kb_index = kb_index_match.group(1) if kb_index_match else ""
+    
+    # 2. Find and filter the <doc> blocks
+    doc_pattern = re.compile(r'(<doc\s+[^>]*>)(.*?)(</doc>)', re.DOTALL)
+    roles_attr_pattern = re.compile(r'roles="([^"]*)"')
+    
+    filtered_docs = []
+    for header, content, footer in doc_pattern.findall(kb_text):
+        match = roles_attr_pattern.search(header)
+        if match:
+            doc_roles = [r.strip().upper() for r in match.group(1).split(",")]
+            if "ALL" in doc_roles or role in doc_roles:
+                filtered_docs.append(f"{header}{content}{footer}")
+        else:
+            filtered_docs.append(f"{header}{content}{footer}")
+            
+    # 3. Get the version attribute if present to reconstruct the root tag
+    version_match = re.search(r'<knowledge_base\s+([^>]*?)>', kb_text)
+    root_attrs = version_match.group(1) if version_match else ""
+    
+    # Reassemble
+    out = [f"<knowledge_base {root_attrs}>".strip()]
+    if kb_index:
+        out.append(kb_index)
+    out.extend(filtered_docs)
+    out.append("</knowledge_base>")
+    
+    return "\n".join(out)
+
+
 async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     """Build the exact prompt used by generate_node."""
     summary = state.get("conversation_summary") or ""
     profile = state.get("user_profile") or {}
     intent = state.get("intent") or "KNOWLEDGE"
+    user_context = state.get("user_context") or {}
 
     cag_kb_text = ""
     if intent in ("KNOWLEDGE", "COACHING"):
         try:
-            cag_kb_text = await _load_active_cag_kb_text()
+            full_kb = await _load_active_cag_kb_text()
+            resolved_role = resolve_user_role(user_context)
+            cag_kb_text = _filter_kb_by_role(full_kb, resolved_role)
         except Exception as exc:
             logger.warning(f"CAG KB pack load failed: {exc}")
 

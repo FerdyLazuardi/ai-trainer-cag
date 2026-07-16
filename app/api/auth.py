@@ -28,6 +28,9 @@ class User(BaseModel):
     position: str = ""
     grade: str = ""
     point: str = ""
+    gender: str = ""
+    area: str = ""
+    regional: str = ""
 
 async def get_current_user(
     request: Request,
@@ -98,6 +101,9 @@ async def get_current_user(
                 position=payload.get("position", "") or "",
                 grade=payload.get("grade", "") or "",
                 point=payload.get("point", "") or "",
+                gender=payload.get("gender", "") or "",
+                area=payload.get("area", "") or "",
+                regional=payload.get("regional", "") or "",
             )
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, ValueError, Exception) as e:
             # Single uniform 401 response regardless of why the token
