@@ -30,7 +30,32 @@ def test_assemble_kb_pack_is_stable_and_excludes_generated_timestamp():
     assert 'generated_at="' not in pack_a.text
     assert pack_a.text.startswith(f'<knowledge_base version="sha256:{pack_a.kb_hash}">\n')
     assert "- [DOC-001] Course: 1\n  Section: A\n  File: a.md" in pack_a.text
-    assert '<doc id="DOC-002" course="2" section="B &amp; B" file="b.md">\nLine\nTwo\n</doc>' in pack_a.text
+    assert '<doc id="DOC-002" course="2" section="B &amp; B" file="b.md" roles="ALL">\nLine\nTwo\n</doc>' in pack_a.text
+
+
+def test_assemble_kb_pack_parses_roles():
+    docs = [
+        MoodleMarkdownFile(
+            course_id=1,
+            section_id=1,
+            section_name="A",
+            filename="a.md",
+            content="<!-- roles: BP, BM -->\n# Title",
+            content_hash="ignored",
+        ),
+        MoodleMarkdownFile(
+            course_id=2,
+            section_id=2,
+            section_name="B",
+            filename="b.md",
+            content="---\ncourse_name: Amartha\nroles: [HO]\n---\n# Title",
+            content_hash="ignored",
+        ),
+    ]
+
+    pack = assemble_kb_pack(docs)
+    assert 'roles="BP,BM"' in pack.text
+    assert 'roles="HO"' in pack.text
 
 
 def test_extract_sections_from_kb_pack_text():

@@ -64,15 +64,24 @@ def test_filter_kb_by_role():
     assert "General content with no roles attribute" in filtered_bp
     assert '<kb_index>' in filtered_bp
     assert 'version="sha256:abc123xyz"' in filtered_bp
+    assert 'DOC-001' in filtered_bp.split("</kb_index>")[0]
+    assert 'DOC-002' not in filtered_bp.split("</kb_index>")[0]
+    assert 'DOC-003' in filtered_bp.split("</kb_index>")[0]
     
     # Filter for HO
     filtered_ho = _filter_kb_by_role(kb_text, "HO")
     assert "BP and BM content" not in filtered_ho
     assert "HO content" in filtered_ho
     assert "General content with no roles attribute" in filtered_ho
+    assert 'DOC-001' not in filtered_ho.split("</kb_index>")[0]
+    assert 'DOC-002' in filtered_ho.split("</kb_index>")[0]
+    assert 'DOC-003' in filtered_ho.split("</kb_index>")[0]
     
     # Filter for RM (should only get the general/no-roles one)
     filtered_rm = _filter_kb_by_role(kb_text, "RM")
     assert "BP and BM content" not in filtered_rm
     assert "HO content" not in filtered_rm
     assert "General content with no roles attribute" in filtered_rm
+    assert 'DOC-001' not in filtered_rm.split("</kb_index>")[0]
+    assert 'DOC-002' not in filtered_rm.split("</kb_index>")[0]
+    assert 'DOC-003' in filtered_rm.split("</kb_index>")[0]

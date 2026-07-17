@@ -1139,23 +1139,45 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
     
     role = user_role.upper().strip()
     
-    # 1. Extract the <kb_index> block if present
-    kb_index_match = re.search(r'(<kb_index>.*?</kb_index>)', kb_text, re.DOTALL)
-    kb_index = kb_index_match.group(1) if kb_index_match else ""
-    
-    # 2. Find and filter the <doc> blocks
-    doc_pattern = re.compile(r'(<doc\s+[^>]*>)(.*?)(</doc>)', re.DOTALL)
+    # 1. Find and filter the <doc> blocks first to collect allowed doc IDs
+    doc_pattern = re.compile(r'(<doc\s+([^>]*?)>)(.*?)(</doc>)', re.DOTALL)
     roles_attr_pattern = re.compile(r'roles="([^"]*)"')
+    id_attr_pattern = re.compile(r'id="([^"]*)"')
     
     filtered_docs = []
-    for header, content, footer in doc_pattern.findall(kb_text):
-        match = roles_attr_pattern.search(header)
+    allowed_doc_ids = set()
+    for header, attrs, content, footer in doc_pattern.findall(kb_text):
+        id_match = id_attr_pattern.search(attrs)
+        doc_id = id_match.group(1) if id_match else ""
+        
+        match = roles_attr_pattern.search(attrs)
         if match:
             doc_roles = [r.strip().upper() for r in match.group(1).split(",")]
             if "ALL" in doc_roles or role in doc_roles:
                 filtered_docs.append(f"{header}{content}{footer}")
+                if doc_id:
+                    allowed_doc_ids.add(doc_id)
         else:
             filtered_docs.append(f"{header}{content}{footer}")
+            if doc_id:
+                allowed_doc_ids.add(doc_id)
+                
+    # 2. Extract and filter the <kb_index> block based on allowed_doc_ids
+    kb_index_match = re.search(r'<kb_index>(.*?)</kb_index>', kb_text, re.DOTALL)
+    kb_index = ""
+    if kb_index_match:
+        index_content = kb_index_match.group(1)
+        entry_pattern = re.compile(
+            r'(-\s+\[(DOC-\d+)\](?:(?!-\s+\[DOC-).)*)',
+            re.DOTALL
+        )
+        filtered_entries = []
+        for entry, doc_id in entry_pattern.findall(index_content):
+            if doc_id in allowed_doc_ids:
+                filtered_entries.append(entry.strip())
+        
+        if filtered_entries:
+            kb_index = "<kb_index>\n" + "\n".join(filtered_entries) + "\n</kb_index>"
             
     # 3. Get the version attribute if present to reconstruct the root tag
     version_match = re.search(r'<knowledge_base\s+([^>]*?)>', kb_text)
@@ -1404,9 +1426,13 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     intent = state.get("intent") or "KNOWLEDGE"
 
     cag_kb_text = ""
+    user_context = state.get("user_context") or {}
     if intent in ("KNOWLEDGE", "COACHING"):
         try:
-            cag_kb_text = await _load_active_cag_kb_text()
+            full_kb = await _load_active_cag_kb_text()
+            resolved_role = resolve_user_role(user_context)
+            cag_kb_text = _filter_kb_by_role(full_kb, resolved_role)
+            logger.info(f"_generate_node: Filtered KB for role={resolved_role}: {len(cag_kb_text)} chars (out of {len(full_kb)})")
         except Exception as exc:
             logger.warning(f"CAG KB pack load failed: {exc}")
 

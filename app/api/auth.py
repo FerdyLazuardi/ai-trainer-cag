@@ -48,8 +48,33 @@ async def get_current_user(
         # the prod mis-config class where APP_ENV=development silently
         # disables auth across 13k users.
         if settings.app_env == "development" and settings.dev_bypass_enabled:
-            logger.info("Development bypass active: Authenticating as Dev User")
-            user = User(user_id="dev_user_123", role="moodle_user", username="Dev User")
+            # Check for local testing headers to fully simulate Moodle custom profile fields
+            loc = request.headers.get("x-mock-location", "FO")
+            pos = request.headers.get("x-mock-position", "Business Manager")
+            gender = request.headers.get("x-mock-gender", "Male")
+            grade = request.headers.get("x-mock-grade", "BP - Middle")
+            dept = request.headers.get("x-mock-dept", "Micro Business - Lending")
+            point = request.headers.get("x-mock-point", "Tutuyan")
+            area = request.headers.get("x-mock-area", "Minahasa")
+            reg = request.headers.get("x-mock-regional", "Sulawesi Utara")
+            
+            logger.info(
+                f"Development bypass active: loc={loc}, pos={pos}, gender={gender}, "
+                f"grade={grade}, dept={dept}, point={point}, area={area}, reg={reg}"
+            )
+            user = User(
+                user_id="dev_user_123",
+                role="moodle_user",
+                username="Dev User",
+                dept=dept,
+                location=loc,
+                position=pos,
+                grade=grade,
+                point=point,
+                gender=gender,
+                area=area,
+                regional=reg
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

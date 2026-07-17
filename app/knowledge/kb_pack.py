@@ -21,6 +21,22 @@ _DOC_TAG_RE = re.compile(
 )
 
 
+def _extract_roles(content: str) -> list[str]:
+    # Match: <!-- roles: HO, HMB, AM, RM -->
+    match = re.search(r'(?i)<!--\s*roles:\s*([^\-]+?)\s*-->', content)
+    if match:
+        return [r.strip().upper() for r in match.group(1).split(",")]
+    
+    # Check frontmatter:
+    # roles: [BP, BM]
+    # roles: BP, BM
+    match_fm = re.search(r'(?m)^roles:\s*\[?([^\]\n]+)\]?', content)
+    if match_fm:
+        return [r.strip().upper() for r in match_fm.group(1).split(",")]
+        
+    return ["ALL"]
+
+
 def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
     ordered = sorted(docs, key=lambda d: (d.course_id, d.section_id, d.filename))
     canonical = [
@@ -30,6 +46,7 @@ def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
             "section_name": d.section_name,
             "filename": d.filename,
             "content": _normalize_text(d.content),
+            "roles": _extract_roles(d.content),
         }
         for d in ordered
     ]
@@ -49,12 +66,14 @@ def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
     lines.extend(["</kb_index>", ""])
 
     for i, doc in enumerate(canonical, 1):
+        roles_str = ",".join(doc["roles"])
         lines.extend(
             [
                 (
                     f'<doc id="DOC-{i:03d}" course="{doc["course_id"]}" '
                     f'section="{html.escape(str(doc["section_name"]), quote=True)}" '
-                    f'file="{html.escape(str(doc["filename"]), quote=True)}">'
+                    f'file="{html.escape(str(doc["filename"]), quote=True)}" '
+                    f'roles="{roles_str}">'
                 ),
                 str(doc["content"]),
                 "</doc>",
