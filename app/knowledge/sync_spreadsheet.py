@@ -43,11 +43,13 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
         branches_list = data.get("branches", [])
     elif isinstance(data, list):
         for item in data:
-            # Check for user identifier
-            if any(k in item and item[k] for k in ("user_id", "username", "nik", "user_name")):
+            # Check for user identifier (case-insensitive)
+            has_user = any(k.lower().strip() in ("user_id", "username", "nik", "user_name") for k in item.keys() if item[k])
+            if has_user:
                 users_list.append(item)
-            # Check for point or cabang key to store branch data
-            if ("point" in item and item["point"]) or ("cabang" in item and item["cabang"]):
+            # Check for point or cabang key to store branch data (case-insensitive)
+            has_branch = any(k.lower().strip() in ("point", "cabang") for k in item.keys() if item[k])
+            if has_branch:
                 branches_list.append(item)
     else:
         logger.error(f"Invalid spreadsheet data format returned. Expected list or dict, got: {type(data)}")
@@ -56,11 +58,20 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
     # 1. Upsert User KPI Data
     for row in users_list:
         try:
-            username = str(row.get("user_id") or row.get("username") or row.get("nik") or row.get("user_name") or "").strip()
+            username = ""
+            username_key = None
+            for k, v in row.items():
+                if k.lower().strip() in ("user_id", "username", "nik", "user_name"):
+                    username = str(v).strip()
+                    username_key = k
+                    break
+
             if not username:
                 continue
 
-            exclude_keys = {"user_id", "username", "nik", "user_name", "full_name"}
+            exclude_keys = {"full_name"}
+            if username_key:
+                exclude_keys.add(username_key)
             data_payload = {k: v for k, v in row.items() if k not in exclude_keys}
 
             stmt = insert(UserKPIData).values(
@@ -83,11 +94,20 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
     # 2. Upsert Branch Data
     for row in branches_list:
         try:
-            point = str(row.get("point") or row.get("cabang")).strip()
+            point = ""
+            point_key = None
+            for k, v in row.items():
+                if k.lower().strip() in ("point", "cabang"):
+                    point = str(v).strip()
+                    point_key = k
+                    break
+
             if not point:
                 continue
 
-            exclude_keys = {"point", "cabang", "nama_cabang", "full_name"}
+            exclude_keys = {"nama_cabang", "full_name"}
+            if point_key:
+                exclude_keys.add(point_key)
             data_payload = {k: v for k, v in row.items() if k not in exclude_keys}
 
             stmt = insert(BranchData).values(
