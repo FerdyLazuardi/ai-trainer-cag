@@ -117,6 +117,50 @@ async def moodle_sync(
     )
 
 
+class SpreadsheetSyncResponse(BaseModel):
+    message: str
+    users_updated: int
+    branches_updated: int
+
+
+@router.post(
+    "/ingest/spreadsheet/sync",
+    response_model=SpreadsheetSyncResponse,
+    summary="Sync weekly Google Spreadsheet KPI and branch data",
+)
+async def spreadsheet_sync(
+    current_user: User = Depends(get_current_user),
+    _admin_key: str = Depends(verify_api_key),
+) -> SpreadsheetSyncResponse:
+    """
+    Trigger manual sync of Google Spreadsheet KPI and branch data.
+    """
+    logger.info(f"Spreadsheet sync triggered by user: {current_user.username}")
+    from app.database.postgres import AsyncSessionLocal
+    from app.knowledge.sync_spreadsheet import sync_kpi_from_spreadsheet
+
+    async with AsyncSessionLocal() as session:
+        result = await sync_kpi_from_spreadsheet(session)
+
+    if result.get("status") == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sync failed: {result.get('message')}"
+        )
+    elif result.get("status") == "skipped":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sync skipped: SPREADSHEET_SYNC_URL is not configured."
+        )
+
+    return SpreadsheetSyncResponse(
+        message="Spreadsheet sync successful.",
+        users_updated=result.get("users_updated", 0),
+        branches_updated=result.get("branches_updated", 0)
+    )
+
+
+
 @router.post("/test/dummy-task", summary="Enqueue a dummy task to verify the worker")
 async def enqueue_dummy_task(
     name: str = "Tester",

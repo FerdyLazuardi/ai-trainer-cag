@@ -1299,24 +1299,16 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     uctx = state.get("user_context") or {}
     if uctx:
         ctx_lines = []
-        if uctx.get("name"):
-            ctx_lines.append(f"Name: {uctx['name']}")
-        if uctx.get("gender"):
-            ctx_lines.append(f"Gender: {uctx['gender']}")
-        if uctx.get("dept"):
-            ctx_lines.append(f"Department: {uctx['dept']}")
-        if uctx.get("position"):
-            ctx_lines.append(f"Position: {uctx['position']}")
-        if uctx.get("grade"):
-            ctx_lines.append(f"Grade: {uctx['grade']}")
-        if uctx.get("location"):
-            ctx_lines.append(f"Location: {uctx['location']}")
-        if uctx.get("point"):
-            ctx_lines.append(f"Point: {uctx['point']}")
-        if uctx.get("area"):
-            ctx_lines.append(f"Area: {uctx['area']}")
-        if uctx.get("regional"):
-            ctx_lines.append(f"Regional: {uctx['regional']}")
+        standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
+        for k in standard_keys:
+            if uctx.get(k):
+                ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
+        for k, v in uctx.items():
+            if k not in standard_keys and v is not None:
+                label = k.replace("_", " ").title()
+                if label.lower().startswith("kpi"):
+                    label = "KPI" + label[3:]
+                ctx_lines.append(f"{label}: {v}")
         if ctx_lines:
             user_ctx_section = (
                 "\n\n<user_context>\nYou are speaking with the following user. "
@@ -1559,24 +1551,16 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     uctx = state.get("user_context") or {}
     if uctx:
         ctx_lines = []
-        if uctx.get("name"):
-            ctx_lines.append(f"Name: {uctx['name']}")
-        if uctx.get("gender"):
-            ctx_lines.append(f"Gender: {uctx['gender']}")
-        if uctx.get("dept"):
-            ctx_lines.append(f"Department: {uctx['dept']}")
-        if uctx.get("position"):
-            ctx_lines.append(f"Position: {uctx['position']}")
-        if uctx.get("grade"):
-            ctx_lines.append(f"Grade: {uctx['grade']}")
-        if uctx.get("location"):
-            ctx_lines.append(f"Location: {uctx['location']}")
-        if uctx.get("point"):
-            ctx_lines.append(f"Point: {uctx['point']}")
-        if uctx.get("area"):
-            ctx_lines.append(f"Area: {uctx['area']}")
-        if uctx.get("regional"):
-            ctx_lines.append(f"Regional: {uctx['regional']}")
+        standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
+        for k in standard_keys:
+            if uctx.get(k):
+                ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
+        for k, v in uctx.items():
+            if k not in standard_keys and v is not None:
+                label = k.replace("_", " ").title()
+                if label.lower().startswith("kpi"):
+                    label = "KPI" + label[3:]
+                ctx_lines.append(f"{label}: {v}")
         if ctx_lines:
             user_ctx_section = (
                 "\n\n<user_context>\nYou are speaking with the following user. "

@@ -58,14 +58,15 @@ async def get_current_user(
             area = request.headers.get("x-mock-area", "Minahasa")
             reg = request.headers.get("x-mock-regional", "Sulawesi Utara")
             
+            mock_user = request.headers.get("x-mock-username") or request.query_params.get("mock_username") or "mock_user"
             logger.info(
-                f"Development bypass active: loc={loc}, pos={pos}, gender={gender}, "
+                f"Development bypass active: username={mock_user}, loc={loc}, pos={pos}, gender={gender}, "
                 f"grade={grade}, dept={dept}, point={point}, area={area}, reg={reg}"
             )
             user = User(
                 user_id="dev_user_123",
                 role="moodle_user",
-                username="Dev User",
+                username=mock_user,
                 dept=dept,
                 location=loc,
                 position=pos,

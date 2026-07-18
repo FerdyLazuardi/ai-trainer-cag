@@ -600,6 +600,26 @@ async def _prepare_cag_context(
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
 
+    # Query KPI and Branch data from the database
+    kpi_data = None
+    branch_data = None
+    try:
+        async with AsyncSessionLocal() as db_session:
+            from sqlalchemy import select
+            from app.database.models import UserKPIData, BranchData
+
+            # Fetch User KPI
+            kpi_stmt = select(UserKPIData).where(UserKPIData.username == current_user.username)
+            kpi_data = (await db_session.execute(kpi_stmt)).scalars().first()
+
+            # Fetch Branch Data
+            point_val = current_user.point
+            if point_val:
+                branch_stmt = select(BranchData).where(BranchData.point == point_val)
+                branch_data = (await db_session.execute(branch_stmt)).scalars().first()
+    except Exception as exc:
+        logger.warning(f"Failed to load spreadsheet data from database: {exc}")
+
     # Live Moodle profile (firstname + custom fields) from the JWT. Lets the
     # generate node greet by name and tailor answers to the user's dept/role.
     # Per-user, so it never goes in the shared cache key (cache_namespace_for
@@ -615,6 +635,22 @@ async def _prepare_cag_context(
         "area": current_user.area,
         "regional": current_user.regional,
     }
+
+    if kpi_data and kpi_data.full_name:
+        user_context["name"] = kpi_data.full_name
+
+    # Inject user-specific spreadsheet data dynamically
+    if kpi_data and isinstance(kpi_data.data, dict):
+        for k, v in kpi_data.data.items():
+            if k not in user_context:
+                user_context[k] = v
+
+    # Inject branch-specific spreadsheet data dynamically
+    if branch_data and isinstance(branch_data.data, dict):
+        for k, v in branch_data.data.items():
+            if k not in user_context:
+                user_context[k] = v
+
 
     # For Tier-1 intents (GREETING, AMBIGUOUS), skip all expensive I/O:
     # no history summarization (avoids LLM call), no LTM, no UserProfile.

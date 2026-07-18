@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     retrieval_mode: Literal["cag"] = Field(default="cag", alias="RETRIEVAL_MODE")
     cag_kb_source: str = Field(default="moodle", alias="CAG_KB_SOURCE")
     cag_moodle_course_id: int = Field(default=3, alias="CAG_MOODLE_COURSE_ID")
+    spreadsheet_sync_url: str = Field(default="", alias="SPREADSHEET_SYNC_URL")
+    spreadsheet_sync_token: str = Field(default="amartha_secret_kpi_token_2026", alias="SPREADSHEET_SYNC_TOKEN")
+
 
     @property
     def llm_provider_order_list(self) -> list[str]:

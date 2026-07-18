@@ -199,5 +199,39 @@ class UserProfile(Base):
         return f"<UserProfile user_id={self.user_id} role={self.role!r}>"
 
 
+class UserKPIData(Base):
+    """Stores user-specific KPI and mitra data synced from spreadsheet."""
+
+    __tablename__ = "user_kpi_data"
+
+    username: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserKPIData username={self.username} full_name={self.full_name!r}>"
+
+
+class BranchData(Base):
+    """Stores branch-specific performance targets and NPL data synced from spreadsheet."""
+
+    __tablename__ = "branch_data"
+
+    point: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+    nama_cabang: Mapped[str] = mapped_column(String(255), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<BranchData point={self.point!r}>"
+
+
+
+
 
 
