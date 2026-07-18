@@ -1291,22 +1291,28 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     if uctx:
         ctx_lines = []
         if uctx.get("name"):
-            ctx_lines.append(f"Nama: {uctx['name']}")
+            ctx_lines.append(f"Name: {uctx['name']}")
+        if uctx.get("gender"):
+            ctx_lines.append(f"Gender: {uctx['gender']}")
         if uctx.get("dept"):
-            ctx_lines.append(f"Departemen: {uctx['dept']}")
+            ctx_lines.append(f"Department: {uctx['dept']}")
         if uctx.get("position"):
-            ctx_lines.append(f"Posisi: {uctx['position']}")
+            ctx_lines.append(f"Position: {uctx['position']}")
         if uctx.get("grade"):
             ctx_lines.append(f"Grade: {uctx['grade']}")
         if uctx.get("location"):
-            ctx_lines.append(f"Lokasi: {uctx['location']}")
+            ctx_lines.append(f"Location: {uctx['location']}")
         if uctx.get("point"):
             ctx_lines.append(f"Point: {uctx['point']}")
+        if uctx.get("area"):
+            ctx_lines.append(f"Area: {uctx['area']}")
+        if uctx.get("regional"):
+            ctx_lines.append(f"Regional: {uctx['regional']}")
         if ctx_lines:
             user_ctx_section = (
-                "\n\n<user_context>\nKamu sedang berbicara dengan user berikut. "
-                "Sesuaikan jawaban dengan konteksnya, tetapi JANGAN memanggil atau "
-                "menyapa nama depannya secara berulang-ulang di setiap awal kalimat atau transisi:\n"
+                "\n\n<user_context>\nYou are speaking with the following user. "
+                "Adapt your answers to their context, but DO NOT call or greet them by their first name "
+                "repeatedly at the beginning of sentences or transitions:\n"
                 + "\n".join(ctx_lines)
                 + "\n</user_context>"
             )
@@ -1544,22 +1550,28 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     if uctx:
         ctx_lines = []
         if uctx.get("name"):
-            ctx_lines.append(f"Nama: {uctx['name']}")
+            ctx_lines.append(f"Name: {uctx['name']}")
+        if uctx.get("gender"):
+            ctx_lines.append(f"Gender: {uctx['gender']}")
         if uctx.get("dept"):
-            ctx_lines.append(f"Departemen: {uctx['dept']}")
+            ctx_lines.append(f"Department: {uctx['dept']}")
         if uctx.get("position"):
-            ctx_lines.append(f"Posisi: {uctx['position']}")
+            ctx_lines.append(f"Position: {uctx['position']}")
         if uctx.get("grade"):
             ctx_lines.append(f"Grade: {uctx['grade']}")
         if uctx.get("location"):
-            ctx_lines.append(f"Lokasi: {uctx['location']}")
+            ctx_lines.append(f"Location: {uctx['location']}")
         if uctx.get("point"):
             ctx_lines.append(f"Point: {uctx['point']}")
+        if uctx.get("area"):
+            ctx_lines.append(f"Area: {uctx['area']}")
+        if uctx.get("regional"):
+            ctx_lines.append(f"Regional: {uctx['regional']}")
         if ctx_lines:
             user_ctx_section = (
-                "\n\n<user_context>\nKamu sedang berbicara dengan user berikut. "
-                "Sesuaikan jawaban dengan konteksnya, tetapi JANGAN memanggil atau "
-                "menyapa nama depannya secara berulang-ulang di setiap awal kalimat atau transisi:\n"
+                "\n\n<user_context>\nYou are speaking with the following user. "
+                "Adapt your answers to their context, but DO NOT call or greet them by their first name "
+                "repeatedly at the beginning of sentences or transitions:\n"
                 + "\n".join(ctx_lines)
                 + "\n</user_context>"
             )

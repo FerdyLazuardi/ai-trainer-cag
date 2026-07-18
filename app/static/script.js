@@ -997,8 +997,7 @@ function renderMarkdownSafe(text) {
 // ============================================================
 function getSessionId() {
     if (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0) {
-        // MUST match $user_id_readable in block_chatbot.php byte-for-byte:
-        //   {user_id}_{firstname}_{department}_{point}   e.g. "11_rossy_academy_ho"
+        // MUST match $user_id_readable in block_ai_trainer.php byte-for-byte
         // Slug rule mirrors PHP: spaces→underscore, lowercase, then fallback.
         const slug = (v, fallback) => {
             const s = (typeof v === 'string' && v)
@@ -1007,9 +1006,12 @@ function getSessionId() {
             return s || fallback;
         };
         const nama = slug(typeof MOODLE_USER_NAME !== 'undefined' ? MOODLE_USER_NAME : '', 'user');
-        const dept = slug(typeof MOODLE_DEPT !== 'undefined' ? MOODLE_DEPT : '', 'general');
+        const loc = slug(typeof MOODLE_LOCATION !== 'undefined' ? MOODLE_LOCATION : '', 'na');
+        const pos = slug(typeof MOODLE_POSITION !== 'undefined' ? MOODLE_POSITION : '', 'na');
         const point = slug(typeof MOODLE_POINT !== 'undefined' ? MOODLE_POINT : '', 'na');
-        return `${MOODLE_USER_ID}_${nama}_${dept}_${point}`;
+        
+        const fullSessionId = `${MOODLE_USER_ID}_${nama}_${loc}_${pos}_${point}`;
+        return fullSessionId.substring(0, 64);
     }
     let sid = sessionStorage.getItem("ava_sid");
     if (!sid) {
