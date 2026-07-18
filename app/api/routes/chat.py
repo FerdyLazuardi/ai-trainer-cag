@@ -1256,9 +1256,14 @@ async def list_sections(
     "jelaskan tentang <item>" query. Deterministic (no LLM, no NLP section
     parsing). Reuses _load_section_map (TTL-cached) so this is a ~ms return.
     """
-    from app.graph.pipeline import _load_section_map
+    from app.graph.pipeline import _load_section_map, resolve_user_role
     try:
-        sections = await _load_section_map()
+        user_ctx = {
+            "location": current_user.location if current_user else "",
+            "grade": current_user.grade if current_user else "",
+        }
+        resolved_role = resolve_user_role(user_ctx)
+        sections = await _load_section_map(resolved_role)
     except Exception as exc:
         logger.warning(f"/chat/sections load failed: {exc}")
         sections = {}

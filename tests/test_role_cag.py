@@ -3,36 +3,33 @@ from app.graph.pipeline import resolve_user_role, _filter_kb_by_role
 
 def test_resolve_user_role():
     # HO Location
-    assert resolve_user_role({"location": "HO", "position": "Operations Senior Analyst"}) == "HO"
-    assert resolve_user_role({"location": "ho", "position": "any"}) == "HO"
+    assert resolve_user_role({"location": "HO", "grade": "BP - 2"}) == "HO"
+    assert resolve_user_role({"location": "ho", "grade": "any"}) == "HO"
     
-    # FO Location with BP keywords
-    assert resolve_user_role({"location": "FO", "position": "Business Partner"}) == "BP"
-    assert resolve_user_role({"location": "FO", "position": "Business Partner OJT"}) == "BP"
-    assert resolve_user_role({"location": "FO", "position": "BP - Middle"}) == "BP"
-    assert resolve_user_role({"location": "FO", "position": "Business Partner Recovery"}) == "BP"
+    # FO Location with BP grades
+    assert resolve_user_role({"location": "FO", "grade": "BP - Junior"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BP - Senior"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BP"}) == "BP"
     
-    # FO Location with BM keywords
-    assert resolve_user_role({"location": "FO", "position": "Business Manager"}) == "BM"
-    assert resolve_user_role({"location": "FO", "position": "Business Manager OJT"}) == "BM"
-    assert resolve_user_role({"location": "FO", "position": "Business Manager PJS"}) == "BM"
-    assert resolve_user_role({"location": "FO", "position": "BM"}) == "BM"
+    # FO Location with BM grades
+    assert resolve_user_role({"location": "FO", "grade": "BM - 2"}) == "BM"
+    assert resolve_user_role({"location": "FO", "grade": "BM"}) == "BM"
 
-    # FO Location with RM keywords
-    assert resolve_user_role({"location": "FO", "position": "Regional Manager"}) == "RM"
-    assert resolve_user_role({"location": "FO", "position": "RM"}) == "RM"
+    # FO Location with RM grades
+    assert resolve_user_role({"location": "FO", "grade": "RM - 1A"}) == "RM"
+    assert resolve_user_role({"location": "FO", "grade": "RM"}) == "RM"
 
-    # FO Location with AM keywords
-    assert resolve_user_role({"location": "FO", "position": "Area Manager"}) == "AM"
-    assert resolve_user_role({"location": "FO", "position": "AM"}) == "AM"
+    # FO Location with AM grades
+    assert resolve_user_role({"location": "FO", "grade": "AM - 2B"}) == "AM"
+    assert resolve_user_role({"location": "FO", "grade": "AM"}) == "AM"
 
-    # FO Location with HMB keywords
-    assert resolve_user_role({"location": "FO", "position": "Hub Manager Bisnis"}) == "HMB"
-    assert resolve_user_role({"location": "FO", "position": "HMB"}) == "HMB"
+    # FO Location with HMB grades
+    assert resolve_user_role({"location": "FO", "grade": "HMB - 1A"}) == "HMB"
+    assert resolve_user_role({"location": "FO", "grade": "HMB"}) == "HMB"
     
     # Fallbacks
-    assert resolve_user_role({"location": "FO", "position": "Security Guard"}) == "FO"
-    assert resolve_user_role({"location": "Unknown", "position": "BP"}) == "BP"  # Position match takes precedence over non-FO loc
+    assert resolve_user_role({"location": "FO", "grade": "Security - 1A"}) == "FO"
+    assert resolve_user_role({"location": "Unknown", "grade": "BP - Junior"}) == "BP"  # Grade match takes precedence over non-FO loc
     assert resolve_user_role(None) == "ALL"
     assert resolve_user_role({}) == "ALL"
 

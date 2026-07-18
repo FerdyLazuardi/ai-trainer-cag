@@ -493,7 +493,8 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
     # route to SECTION_DRILLDOWN immediately, regardless of the initial rule_intent.
     if _is_section_drilldown_shape(user_msg_str):
         try:
-            _sm = await _load_section_map()
+            resolved_role = resolve_user_role(state.get("user_context"))
+            _sm = await _load_section_map(resolved_role)
         except Exception:
             _sm = {}
         _resolved, _respath = _resolve_drilldown_section(user_msg_str, messages, _sm)
@@ -1016,28 +1017,39 @@ def _is_section_drilldown_shape(query: str) -> bool:
     return any(p in low for p in _SECTION_DRILLDOWN_PHRASES)
 
 
-async def _load_section_map() -> dict[str, list[str]]:
-    """Map each Moodle SECTION → its item list, TTL-cached (10min)."""
+async def _load_section_map(user_role: str = "ALL") -> dict[str, list[str]]:
+    """Map each Moodle SECTION → its item list, filtered by role, TTL-cached (10min)."""
     import time as _time
 
+    role = user_role.upper().strip()
     now = _time.time()
-    if now < _section_map_cache["expires_at"] and _section_map_cache["map"]:
-        return _section_map_cache["map"]
+    
+    if now >= _section_map_cache["expires_at"]:
+        _section_map_cache["map"] = {}
+        _section_map_cache["expires_at"] = 0.0
+
+    if role in _section_map_cache["map"]:
+        return _section_map_cache["map"][role]
 
     lock = _get_section_map_lock()
     async with lock:
         now = _time.time()
-        if now < _section_map_cache["expires_at"] and _section_map_cache["map"]:
-            return _section_map_cache["map"]
+        if now >= _section_map_cache["expires_at"]:
+            _section_map_cache["map"] = {}
+            _section_map_cache["expires_at"] = 0.0
+            
+        if role in _section_map_cache["map"]:
+            return _section_map_cache["map"][role]
 
         try:
-            cag_kb_text = await _load_active_cag_kb_text()
+            full_kb = await _load_active_cag_kb_text()
+            cag_kb_text = _filter_kb_by_role(full_kb, role) if full_kb else ""
             section_map = extract_kb_sections(cag_kb_text) if cag_kb_text else {}
         except Exception as exc:
-            logger.warning(f"Section-map load failed: {exc}")
+            logger.warning(f"Section-map load failed for role {role}: {exc}")
             return {}
 
-        _section_map_cache["map"] = section_map
+        _section_map_cache["map"][role] = section_map
         _section_map_cache["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
         return section_map
 
@@ -1109,24 +1121,20 @@ def resolve_user_role(user_context: dict | None) -> str:
         return "ALL"
         
     location = str(user_context.get("location") or "").strip().upper()
-    position = str(user_context.get("position") or "").strip().lower()
+    grade = str(user_context.get("grade") or "").strip().upper()
+    
+    # Extract prefix before '-'
+    grade_prefix = grade.split('-')[0].strip()
     
     # 1. HO (Head Office) -> HO
     if location == "HO":
         return "HO"
         
-    # 2. FO (Field Office) or general fallback
-    if "regional" in position or "rm" in position:
-        return "RM"
-    elif "area" in position or "am" in position:
-        return "AM"
-    elif "hub" in position or "hmb" in position:
-        return "HMB"
-    elif "business manager" in position or "bm" in position:
-        return "BM"
-    elif "business partner" in position or "bp" in position:
-        return "BP"
+    # 2. Map grade prefix to corresponding role
+    if grade_prefix in ("RM", "AM", "HMB", "BM", "BP"):
+        return grade_prefix
         
+    # Fallback to location
     if location == "FO":
         return "FO"
         
@@ -1234,7 +1242,8 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     drilldown_sec = state.get("drilldown_section")
     if drilldown_sec:
         try:
-            items = (await _load_section_map()).get(drilldown_sec, [])
+            resolved_role = resolve_user_role(state.get("user_context"))
+            items = (await _load_section_map(resolved_role)).get(drilldown_sec, [])
         except Exception:
             items = []
         if items:
@@ -1475,7 +1484,8 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     drilldown_sec = state.get("drilldown_section")
     if drilldown_sec:
         try:
-            items = (await _load_section_map()).get(drilldown_sec, [])
+            resolved_role = resolve_user_role(state.get("user_context"))
+            items = (await _load_section_map(resolved_role)).get(drilldown_sec, [])
         except Exception:
             items = []
         if items:
