@@ -675,16 +675,9 @@ async def get_or_summarize_history(
         f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:300]}"
         for m in turns_to_summarize
     )
-    prompt = (
-        "Refine the running conversation summary by integrating the key points from the new dialogue segment. "
-        "Keep it tight but complete: up to about 6 sentences for a long conversation, fewer if little has been discussed. "
-        "PRESERVE specific facts either side actually stated — names, numbers, percentages, product/policy names, and any decision or still-open question — verbatim; do NOT generalize them away (keep a stated figure as the exact figure, not 'membahas angka'). Never add a fact, number, or name that does not appear in the dialogue below. "
-        "Drop only pleasantries and redundant phrasing. "
-        "Write the summary in the dominant language of the conversation (English or Indonesian).\n\n"
-        f"Existing Summary:\n{old_summary}\n\n"
-        f"New context to integrate:\n{old_text}\n\n"
-        "Updated Summary:"
-    )
+    from app.llm.prompts import STM_SUMMARY_PROMPT
+
+    prompt = STM_SUMMARY_PROMPT.format(old_summary=old_summary, old_text=old_text)
 
     try:
         resp = await llm.ainvoke(

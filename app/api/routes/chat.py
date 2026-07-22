@@ -4,7 +4,7 @@ import random
 import re
 import time
 import uuid
-from typing import Optional
+from typing import Any, Optional
 from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, status
@@ -19,7 +19,7 @@ from app.agents import conversation_state as _cs
 from app.api.schemas import ChatRequest, ChatResponse, SourceReference
 from app.api.concurrency import acquire_pipeline_slot, acquire_pipeline_slot_or_503
 from app.database.postgres import AsyncSessionLocal
-from app.database.models import UserProfile
+from app.database.models import UserLTMMemory
 from app.utils.cache import get_cached_response, set_cached_response
 from app.config.settings import get_settings
 from app.utils.logger_batch import batch_logger
@@ -113,23 +113,22 @@ def compute_was_personalized(
     A first-turn-ever query (no history, summary, LTM, or prefs) returns False
     and stays globally cacheable, preserving the cold-KB cache-hit rate.
     """
+def compute_was_personalized(
+    *,
+    ltm_profile: Optional[dict],
+    recent_history: list,
+    summary: str,
+    user_context: Optional[dict],
+) -> bool:
+    """Return True if prompt contains user-specific payload."""
     _ltm = ltm_profile or {}
-    has_ltm = (
-        bool((_ltm.get("summary") or "").strip())
-        or bool(_ltm.get("course_names"))
-        or bool(_ltm.get("unanswered_questions"))
-    )
-    prefs = user_pref_dict or {}
-    has_prefs = bool(prefs) and any(
-        bool((v or "").strip()) if isinstance(v, str) else bool(v)
-        for v in prefs.values()
-    )
+    has_ltm = bool((_ltm.get("learning_summary") or "").strip())
     has_history = bool(recent_history) or bool((summary or "").strip())
     ctx = user_context or {}
     has_user_ctx = bool(ctx) and any(
         bool(str(v).strip()) for v in ctx.values() if v
     )
-    return has_ltm or has_prefs or has_history or has_user_ctx
+    return has_ltm or has_history or has_user_ctx
 
 
 def cache_namespace_for(*, was_personalized: bool, user_id) -> str:
@@ -683,6 +682,10 @@ async def _prepare_cag_context(
         max_fresh_turns=settings.max_fresh_turns,
         persist=False,  # C7: no LLM, no write on the hot path
     )
+    # C7: kick the out-of-band summary refresh (fire-and-forget). Only enqueues
+    # if the conversation overflowed the fresh window; NX-deduped.
+    asyncio.create_task(_schedule_summary_refresh(conversation_id))
+
     seen_chunk_ids = await get_seen_chunk_ids(conversation_id)
     logger.debug(f"[TIMING] history: {_time.perf_counter()-_t_hist:.2f}s")
     if (recent_history or summary) and len(resolved_query.split()) <= 3:
@@ -719,10 +722,6 @@ async def _prepare_cag_context(
             "skip_cache": skip_cache,
         }
 
-    # C7: kick the out-of-band summary refresh (fire-and-forget). Only enqueues
-    # if the conversation overflowed the fresh window; NX-deduped.
-    asyncio.create_task(_schedule_summary_refresh(conversation_id))
-
     # Build langchain messages for the CAG graph. Retrieval-era rewrite and
     # embedding are deliberately skipped: generate_node receives the full KB.
     messages: list[BaseMessage] = []
@@ -737,64 +736,24 @@ async def _prepare_cag_context(
     _retrieval_query = resolved_query
     _rewritten_queries = None
     query_embedding = None
-    ltm_profile = {"summary": "", "course_names": []}
+    ltm_profile = {"learning_summary": ""}
 
     user_profile_obj = None
-    if ltm_eligible and not is_brand_new_session:
+    if ltm_eligible:
         async with AsyncSessionLocal() as session:
-            user_profile_obj = await session.get(UserProfile, user_id)
+            user_profile_obj = await session.get(UserLTMMemory, user_id)
 
-    user_pref_dict = None
-
-    # Skip LTM lookup entirely on the first turn of a brand-new session — there
-    # is nothing in `recent_history` yet AND no prior summary, which means the
-    # user has never spoken to Ava before in this conversation. Loading LTM
-    # here just bloats the prompt by ~200 tokens and is rarely useful for the
-    # very first message ("hi", "halo", "apa itu X"). We still pay the fetch
-    # cost (parallel gather above) but discard the payload so the prompt
-    # stays lean.
-    is_brand_new_session = not recent_history and not summary
-    if is_brand_new_session:
-        ltm_profile = {"summary": "", "course_names": []}
-        user_profile_obj = None
-
-    if ltm_eligible and not is_brand_new_session and user_profile_obj is not None:
-        # Drop stale prefs — anything older than `user_pref_max_age_days` is
-        # treated as expired so a one-off "pakai bahasa awam" three months ago
-        # doesn't bind every future session.
-        from datetime import datetime, timedelta, timezone
-
-        updated_at = user_profile_obj.updated_at
-        is_fresh = True
-        age = None
-        if updated_at is not None:
-            # SQLAlchemy returns naive datetime for some drivers — normalize.
-            if updated_at.tzinfo is None:
-                updated_at = updated_at.replace(tzinfo=timezone.utc)
-            age = datetime.now(timezone.utc) - updated_at
-            is_fresh = age <= timedelta(days=settings.user_pref_max_age_days)
-
-        if is_fresh:
-            user_pref_dict = {
-                "role": user_profile_obj.role,
-                "preferred_tone": user_profile_obj.preferred_tone,
-                "formatting_pref": user_profile_obj.formatting_pref,
-                "custom_instructions": user_profile_obj.custom_instructions
-            }
-        else:
-            logger.info(
-                "User preferences ignored — older than threshold",
-                user_id=user_id,
-                age_days=age.days if age else None,
-                threshold_days=settings.user_pref_max_age_days,
-            )
+    if ltm_eligible and user_profile_obj is not None:
+        ltm_profile = {
+            "learning_summary": user_profile_obj.learning_summary or "",
+        }
 
     initial_state = {
         "messages": messages,
         "conversation_id": conversation_id,
         "conversation_summary": summary,
         "user_profile": ltm_profile,
-        "user_preferences": user_pref_dict,
+        "user_preferences": None,
         "user_context": user_context,
         # Legacy embedding fields are intentionally empty in CAG mode.
         "query_embedding": query_embedding,
@@ -817,7 +776,6 @@ async def _prepare_cag_context(
     # can't leak to another user asking the same question.
     was_personalized = compute_was_personalized(
         ltm_profile=ltm_profile,
-        user_pref_dict=user_pref_dict,
         recent_history=recent_history,
         summary=summary,
         user_context=user_context,
@@ -1001,6 +959,47 @@ async def _run_chat(
         _sem.release()
 
 
+async def _process_off_scope_status(
+    off_scope_detected: bool,
+    user_id: str,
+    settings: Any,
+    answer: str,
+) -> tuple[str, int]:
+    off_scope_ban_ttl: int = 0
+    if off_scope_detected:
+        new_count, _ = await _handle_off_scope_violation(user_id)
+        if new_count == settings.warning_off_scope_violations:
+            warning_text = "\n\n**Peringatan**: Harap tanyakan hal seputar materi Amartha. Jika Anda terus bertanya di luar topik sekali lagi, Ai Trainer akan dinonaktifkan sementara."
+            answer += warning_text
+        elif new_count >= settings.max_off_scope_violations:
+            off_scope_ban_ttl = await _get_ban_ttl(user_id)
+    return answer, off_scope_ban_ttl
+
+
+async def _extract_message_token_usage(final_message: Any) -> dict[str, Any]:
+    usage_data = {
+        "llm_tokens_used": 0,
+        "or_prompt_tokens": 0,
+        "or_completion_tokens": 0,
+        "or_cached_tokens": 0,
+        "or_provider": None,
+        "or_cost": 0.0,
+        "or_generation_id": None,
+    }
+    if hasattr(final_message, "response_metadata"):
+        rm = final_message.response_metadata or {}
+        tu = rm.get("token_usage", {})
+        usage = await _complete_openrouter_usage(extract_openrouter_usage(final_message))
+        usage_data["llm_tokens_used"] = tu.get("total_tokens", usage.prompt_tokens + usage.completion_tokens)
+        usage_data["or_prompt_tokens"] = usage.prompt_tokens
+        usage_data["or_completion_tokens"] = usage.completion_tokens
+        usage_data["or_cached_tokens"] = usage.cached_tokens
+        usage_data["or_provider"] = usage.provider
+        usage_data["or_cost"] = usage.cost
+        usage_data["or_generation_id"] = usage.generation_id
+    return usage_data
+
+
 async def _execute_chat_flow(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
@@ -1033,36 +1032,23 @@ async def _execute_chat_flow(
         latency_ms = (time.perf_counter() - start_time) * 1000
         final_message = result["messages"][-1]
         from app.graph.pipeline import _sanitize_answer
-        answer = final_message.content if hasattr(final_message, "content") else str(final_message)
-        answer = _sanitize_answer(answer)
+        raw_answer = final_message.content if hasattr(final_message, "content") else str(final_message)
+        sanitized = _sanitize_answer(raw_answer)
 
         off_scope_detected = result.get("off_scope_detected", False)
-        off_scope_ban_ttl: int = 0
-        if off_scope_detected:
-            new_count, just_banned = await _handle_off_scope_violation(current_user.user_id)
-            if new_count == settings.warning_off_scope_violations:
-                warning_text = "\n\n**Peringatan**: Harap tanyakan hal seputar materi Amartha. Jika Anda terus bertanya di luar topik sekali lagi, Ai Trainer akan dinonaktifkan sementara."
-                answer += warning_text
-            elif new_count >= settings.max_off_scope_violations:
-                off_scope_ban_ttl = await _get_ban_ttl(current_user.user_id)
-        or_prompt_tokens = 0
-        or_cached_tokens = 0
-        or_completion_tokens = 0
-        or_provider = None
-        or_cost = 0.0
-        or_generation_id = None
-        llm_tokens_used = 0
-        if hasattr(final_message, "response_metadata"):
-            rm = final_message.response_metadata or {}
-            tu = rm.get("token_usage", {})
-            usage = await _complete_openrouter_usage(extract_openrouter_usage(final_message))
-            llm_tokens_used = tu.get("total_tokens", usage.prompt_tokens + usage.completion_tokens)
-            or_prompt_tokens = usage.prompt_tokens
-            or_completion_tokens = usage.completion_tokens
-            or_cached_tokens = usage.cached_tokens
-            or_provider = usage.provider
-            or_cost = usage.cost
-            or_generation_id = usage.generation_id
+        answer, off_scope_ban_ttl = await _process_off_scope_status(
+            off_scope_detected, current_user.user_id, settings, sanitized
+        )
+
+        usage_data = await _extract_message_token_usage(final_message)
+        llm_tokens_used = usage_data["llm_tokens_used"]
+        or_prompt_tokens = usage_data["or_prompt_tokens"]
+        or_completion_tokens = usage_data["or_completion_tokens"]
+        or_cached_tokens = usage_data["or_cached_tokens"]
+        or_provider = usage_data["or_provider"]
+        or_cost = usage_data["or_cost"]
+        or_generation_id = usage_data["or_generation_id"]
+
 
     except asyncio.TimeoutError as exc:
         # An upstream black-hole pinned this slot to the wall-clock ceiling.
@@ -1234,7 +1220,7 @@ async def get_onboarding_status(
     if not is_real_user(current_user.user_id, current_user.role):
         return {"completed": False}
     async with AsyncSessionLocal() as session:
-        profile = await session.get(UserProfile, current_user.user_id)
+        profile = await session.get(UserLTMMemory, current_user.user_id)
     completed = bool(profile and profile.onboarding_completed_at is not None)
     return {"completed": completed}
 
@@ -1243,19 +1229,19 @@ async def get_onboarding_status(
 async def complete_onboarding(
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Stamp user_profiles.onboarding_completed_at = now() for this user.
+    """Stamp user_ltm_memories.onboarding_completed_at = now() for this user.
 
     Idempotent: re-calling just refreshes the timestamp. Creates the
-    UserProfile row if it doesn't exist yet (first-ever interaction). No-op for
+    UserLTMMemory row if it doesn't exist yet (first-ever interaction). No-op for
     the dev-bypass user so we don't pollute the table with a synthetic row.
     """
     if not is_real_user(current_user.user_id, current_user.role):
         return {"status": "skipped"}
     from datetime import datetime, timezone
     async with AsyncSessionLocal() as session:
-        profile = await session.get(UserProfile, current_user.user_id)
+        profile = await session.get(UserLTMMemory, current_user.user_id)
         if not profile:
-            profile = UserProfile(user_id=current_user.user_id)
+            profile = UserLTMMemory(user_id=current_user.user_id)
             session.add(profile)
         profile.onboarding_completed_at = datetime.now(timezone.utc)
         await session.commit()

@@ -76,10 +76,11 @@ async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
 
     redis = get_redis_client()
     try:
+        from app.llm.client import get_stm_llm
         await get_or_summarize_history(
             redis,
             conversation_id,
-            llm=get_cheap_llm(),
+            llm=get_stm_llm(),
             max_fresh_turns=settings.max_fresh_turns,
             persist=True,
         )
@@ -93,9 +94,75 @@ async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
     return {"status": "disabled", "reason": "portfolio_sync_disabled_in_cag"}
 
 
-@worker.task(max_tries=None, timeout=60)
+@worker.task(max_tries=2, timeout=90)
 async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
-    return {"status": "skipped", "reason": "ltm_disabled_in_cag"}
+    from langchain_core.messages import HumanMessage
+    from app.agents.conversation_state import get_history_and_summary
+    from app.database.models import UserLTMMemory
+    from app.database.postgres import AsyncSessionLocal
+    from app.database.redis_client import get_redis_client
+    from app.knowledge.kb_pack import extract_h2_headings
+    from app.llm.client import get_cheap_llm
+
+    redis = await get_redis_client()
+    history, stm_summary = await get_history_and_summary(redis, conversation_id)
+
+    if not history and not stm_summary:
+        return {"status": "skipped", "reason": "empty_session"}
+
+    dialogue_str = "\n".join(
+        f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')}"
+        for m in history
+    )
+    h2_headings = extract_h2_headings(dialogue_str)
+
+    session_parts = []
+    if stm_summary:
+        session_parts.append(f"[EARLIER TURNS SUMMARY]:\n{stm_summary}")
+    if dialogue_str:
+        session_parts.append(f"[RECENT DIALOGUE TURNS]:\n{dialogue_str}")
+    combined_session_summary = "\n\n".join(session_parts) if session_parts else "No session activity."
+
+    async with AsyncSessionLocal() as session:
+        memory = await session.get(UserLTMMemory, user_id)
+        if not memory:
+            memory = UserLTMMemory(user_id=user_id)
+            session.add(memory)
+
+        old_learning_summary = memory.learning_summary or "Belum ada riwayat profil belajar sebelumnya."
+
+        from app.llm.prompts import LTM_LEARNING_SUMMARY_PROMPT
+        prompt = LTM_LEARNING_SUMMARY_PROMPT.format(
+            old_learning_summary=old_learning_summary,
+            session_summary=combined_session_summary,
+        )
+
+        from app.llm.client import get_ltm_llm
+        llm = get_ltm_llm()
+        resp = await llm.ainvoke([HumanMessage(content=prompt)])
+        raw_output = resp.content.strip()
+
+        new_learning_summary = raw_output
+        import json as _json
+        import re as _re
+        try:
+            clean_json = raw_output
+            if clean_json.startswith("```"):
+                clean_json = _re.sub(r"^```(?:json)?\n?|\n?```$", "", clean_json, flags=_re.IGNORECASE).strip()
+            parsed = _json.loads(clean_json)
+            if isinstance(parsed, dict) and "learning_summary" in parsed:
+                new_learning_summary = str(parsed["learning_summary"])
+        except Exception:
+            pass
+
+        memory.learning_summary = new_learning_summary
+        await session.commit()
+
+    return {
+        "status": "synced",
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+    }
 
 
 async def prune_ltm_cron_task() -> dict[str, Any]:

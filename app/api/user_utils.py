@@ -3,22 +3,22 @@ Utility functions for user identity validation.
 Single source of truth for long-term memory gating.
 """
 
-def is_real_user(user_id: str, role: str) -> bool:
-    """
-    Return True only if this user is an authenticated Moodle user
-    eligible for long-term memory storage.
+from app.config.settings import get_settings
 
-    Blocked cases:
-    - Empty or whitespace-only user_id
-    - Literal "None" / "null" / "undefined" (from str() conversion bug)
-    - Dev bypass user (dev_user_123) — not a real Moodle user
-    - Role is NOT "moodle_user"
+
+def is_real_user(user_id: str, role: str) -> bool:
+    """Return True if user is eligible for long-term memory.
+
+    Allows dev_user_123 when dev_bypass_enabled is True in local dev settings.
     """
     if not user_id or not user_id.strip():
         return False
-    if role != "moodle_user":
+    if user_id.lower() in ("none", "null", "undefined"):
         return False
-    if user_id.lower() in ("none", "null", "undefined", "dev_user_123"):
+    settings = get_settings()
+    if settings.dev_bypass_enabled:
+        return True
+    if role != "moodle_user":
         return False
     return True
 

@@ -327,18 +327,7 @@ def create_app() -> FastAPI:
                 return HTMLResponse(content=f.read())
         return {"message": "UI files not found."}
 
-    @app.get("/askfer-ui", summary="Askfer Portfolio Chat UI (Development)", include_in_schema=settings.app_debug)
-    async def askfer_ui():
-        """Serve the Askfer dev preview chat interface. Same gating as /test-ui."""
-        if not settings.app_debug:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail="Not Found")
-        askfer_path = os.path.join(static_dir, "askfer.html")
-        if os.path.exists(askfer_path):
-            with open(askfer_path, "r", encoding="utf-8") as f:
-                return HTMLResponse(content=f.read())
-        return {"message": "Askfer UI files not found."}
-        
+
     @app.get("/health", summary="Liveness Check (always 200 if process is up)")
     async def health_check() -> dict:
         """Liveness probe — does NOT check downstream services.

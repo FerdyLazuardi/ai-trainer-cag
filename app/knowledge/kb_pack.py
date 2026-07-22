@@ -37,6 +37,22 @@ def _extract_roles(content: str) -> list[str]:
     return ["ALL"]
 
 
+class KBService:
+    """Encapsulated Knowledge Base service for pack assembly and section/topic parsing."""
+
+    @staticmethod
+    def assemble_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
+        return assemble_kb_pack(docs)
+
+    @staticmethod
+    def extract_sections(kb_text: str) -> dict[str, list[str]]:
+        return extract_kb_sections(kb_text)
+
+    @staticmethod
+    def extract_topics(kb_text: str) -> list[str]:
+        return extract_kb_topics(kb_text)
+
+
 def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
     ordered = sorted(docs, key=lambda d: (d.course_id, d.section_id, d.filename))
     canonical = [
@@ -102,3 +118,31 @@ def extract_kb_sections(kb_text: str) -> dict[str, list[str]]:
 
 def extract_kb_topics(kb_text: str) -> list[str]:
     return list(extract_kb_sections(kb_text).keys())
+
+
+def extract_kb_filenames(kb_text: str) -> list[str]:
+    """Extract all individual document filenames (without extension) from active KB."""
+    filenames: list[str] = []
+    for _section, file_raw in _DOC_TAG_RE.findall(kb_text or ""):
+        stem = Path(html.unescape(file_raw).strip()).stem.strip()
+        if stem and stem not in filenames:
+            filenames.append(stem)
+    return sorted(filenames)
+
+
+def extract_h2_headings(markdown_text: str) -> list[str]:
+    """Extract headings (#, ##, ###) or bold titles from markdown content."""
+    if not markdown_text:
+        return []
+    headings = re.findall(r"(?m)^(?:AI:\s*|User:\s*)?#{1,3}\s+(.+)$", markdown_text)
+    bolds = re.findall(r"\*\*([^*]{3,50})\*\*", markdown_text)
+    candidates = headings + bolds
+    cleaned = []
+    ignore_words = {"user", "ai", "note", "catatan", "perhatian", "penting", "sumber", "ringkasan"}
+    for c in candidates:
+        clean = re.sub(r"<[^>]+>", "", c).strip().strip(":#*-_")
+        if clean and len(clean) >= 3 and clean.lower() not in ignore_words and clean not in cleaned:
+            cleaned.append(clean)
+    return cleaned[:10]
+
+

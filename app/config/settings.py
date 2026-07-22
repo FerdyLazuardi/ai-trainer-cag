@@ -145,7 +145,9 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
     # Cheap slot for background tasks (memory summarization, pre-processor,
     # generate node). Same model as the main slot.
-    cheap_llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="CHEAP_LLM_MODEL")
+    cheap_llm_model: str = Field(
+        default="inclusionai/ling-2.6-flash", alias="CHEAP_LLM_MODEL"
+    )
 
     # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
     # Comma-separated OpenRouter provider SLUGS to pin the generator to, in

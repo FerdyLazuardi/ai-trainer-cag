@@ -86,7 +86,7 @@ async def test_dashboard_cost_uses_openrouter_logged_cost_only(monkeypatch):
                     None,
                 ),
             ])
-        if "FROM user_profiles" in sql:
+        if "FROM user_ltm_memories" in sql:
             return Result(all=[])
         if "percentile_cont" in sql:
             return Result(one=(10.0, 15.0, None, 0, 0))

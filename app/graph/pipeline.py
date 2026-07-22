@@ -678,6 +678,30 @@ async def _load_course_names() -> list[str]:
         return courses
 
 
+_doc_cache: dict[str, Any] = {"titles": [], "expires_at": 0.0}
+
+
+async def _load_doc_titles() -> list[str]:
+    """Distinct document filenames from the active CAG KB pack, TTL-cached (10min)."""
+    import time as _time
+
+    now = _time.time()
+    if now < _doc_cache["expires_at"] and _doc_cache["titles"]:
+        return _doc_cache["titles"]
+
+    try:
+        cag_kb_text = await _load_active_cag_kb_text()
+        from app.knowledge.kb_pack import extract_kb_filenames
+        titles = extract_kb_filenames(cag_kb_text) if cag_kb_text else []
+    except Exception as exc:
+        logger.warning(f"Doc-title load failed: {exc}")
+        return []
+
+    _doc_cache["titles"] = titles
+    _doc_cache["expires_at"] = now + 600.0
+    return titles
+
+
 # ── Section → items map (for "apa aja di <section>" questions) ────────────────
 _section_map_cache: dict[str, Any] = {"map": {}, "expires_at": 0.0}
 _section_map_lock: asyncio.Lock | None = None
@@ -1254,46 +1278,13 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
             )
 
     ltm_section = ""
-    if profile.get("summary"):
-        course_names_str = ", ".join(profile.get("course_names", []))
-        unanswered = profile.get("unanswered_questions") or []
-        history_lines = [
-            f"User pernah membahas materi: {course_names_str}",
-            f"Konteks sesi sebelumnya: {profile['summary']}",
-        ]
-        if unanswered:
-            history_lines.append(
-                "Pertanyaan user yang belum sempat terjawab di sesi lalu: "
-                + "; ".join(unanswered)
-            )
-        ltm_section = "\n\n<user_history>\n" + "\n".join(history_lines) + "\n</user_history>"
+    learning_summary = (profile.get("learning_summary") or "").strip()
+    if learning_summary:
+        ltm_section = f"\n\n<user_history>\nRingkasan progres & konteks belajar user:\n{learning_summary}\n</user_history>"
 
     summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
 
     pref_section = ""
-    prefs = state.get("user_preferences")
-    if prefs:
-        pref_lines = []
-        if prefs.get("role"):
-            pref_lines.append(f"Role/Jabatan User: {prefs['role']}")
-        if prefs.get("preferred_tone"):
-            pref_lines.append(f"Gaya Bahasa yang Diinginkan: {prefs['preferred_tone']}")
-        if prefs.get("formatting_pref"):
-            pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
-        if prefs.get("custom_instructions"):
-            ci = re.sub(r"<[^>]+>", "", prefs["custom_instructions"])
-            ci = re.sub(
-                r"(?i)(?:ignore|forget|disregard|override)\s+(?:all\s+)?(?:previous|above|prior|system)\s+(?:instructions?|rules?|prompts?)",
-                "[filtered]",
-                ci,
-            )[:500]
-            pref_lines.append(f"Instruksi Tambahan: {ci}")
-        if pref_lines:
-            pref_section = (
-                "\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n"
-                + "\n".join(pref_lines)
-                + "\n</user_preferences>"
-            )
 
     user_ctx_section = ""
     uctx = state.get("user_context") or {}
@@ -1498,18 +1489,15 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
 
     # Long-term memory (LTM profile)
     ltm_section = ""
-    if profile.get("summary"):
-        course_names_str = ", ".join(profile.get("course_names", []))
-        unanswered = profile.get("unanswered_questions") or []
-        history_lines = [
-            f"User pernah membahas materi: {course_names_str}",
-            f"Konteks sesi sebelumnya: {profile['summary']}",
-        ]
-        if unanswered:
-            history_lines.append(
-                "Pertanyaan user yang belum sempat terjawab di sesi lalu: "
-                + "; ".join(unanswered)
-            )
+    learning_summary = (profile.get("learning_summary") or "").strip()
+    last_topics = profile.get("last_topics") or []
+    if learning_summary or last_topics:
+        history_lines = []
+        if learning_summary:
+            history_lines.append(f"Ringkasan progres & konteks belajar user: {learning_summary}")
+        if last_topics:
+            topics_str = ", ".join(last_topics) if isinstance(last_topics, list) else str(last_topics)
+            history_lines.append(f"Topik utama yang pernah dibahas: {topics_str}")
         ltm_section = "\n\n<user_history>\n" + "\n".join(history_lines) + "\n</user_history>"
 
     # Short-term rolling summary
@@ -1519,32 +1507,6 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
 
     # Persistent user preferences
     pref_section = ""
-    prefs = state.get("user_preferences")
-    if prefs:
-        pref_lines = []
-        if prefs.get("role"):
-            pref_lines.append(f"Role/Jabatan User: {prefs['role']}")
-        if prefs.get("preferred_tone"):
-            pref_lines.append(f"Gaya Bahasa yang Diinginkan: {prefs['preferred_tone']}")
-        if prefs.get("formatting_pref"):
-            pref_lines.append(f"Format Jawaban: {prefs['formatting_pref']}")
-        if prefs.get("custom_instructions"):
-            ci = prefs["custom_instructions"]
-            import re as _re2
-            ci = _re2.sub(r"<[^>]+>", "", ci)
-            ci = _re2.sub(
-                r"(?i)(?:ignore|forget|disregard|override)\s+(?:all\s+)?(?:previous|above|prior|system)\s+(?:instructions?|rules?|prompts?)",
-                "[filtered]",
-                ci,
-            )
-            ci = ci[:500]
-            pref_lines.append(f"Instruksi Tambahan: {ci}")
-        if pref_lines:
-            pref_section = (
-                "\n\n<user_preferences>\nSesuaikan jawabanmu dengan profil user berikut:\n"
-                + "\n".join(pref_lines)
-                + "\n</user_preferences>"
-            )
 
     # Live Moodle profile of the person asking (firstname + custom fields).
     user_ctx_section = ""

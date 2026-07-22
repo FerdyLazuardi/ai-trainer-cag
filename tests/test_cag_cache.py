@@ -6,7 +6,6 @@ def test_user_context_makes_answer_cache_user_scoped():
 
     assert compute_was_personalized(
         ltm_profile={},
-        user_pref_dict=None,
         recent_history=[],
         summary="",
         user_context={"name": "Ferdy", "dept": "Learning"},
@@ -18,7 +17,6 @@ def test_empty_user_context_stays_globally_cacheable():
 
     assert compute_was_personalized(
         ltm_profile={},
-        user_pref_dict=None,
         recent_history=[],
         summary="",
         user_context={"name": None, "dept": "", "location": None},

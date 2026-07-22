@@ -214,3 +214,36 @@ Answer briefly and warmly as a colleague.
 - Off-topic question (general knowledge, coding, math [except Excel/spreadsheet questions, always answer those], weather, other companies, personal questions, etc.): politely decline to answer, state clearly that it is outside your scope as an Trainer. Do NOT attempt to answer or explain the off-topic subject under any circumstance. Maximum 1-2 sentences. You MUST append the exact tag [OFFSCOPE] at the very end of your response.
 
 </instructions>"""
+
+
+# ── Summarization Prompts (STM & LTM) ──────────────────────────────────────
+
+STM_SUMMARY_PROMPT = (
+    "Refine the running conversation summary by integrating key points from the new dialogue segment.\n\n"
+    "[RULES]:\n"
+    "1. Output MUST be strictly 2-4 short bullet points in English (MAX 60 words total).\n"
+    "2. Each bullet point MUST be a concise summary line of key topics, decisions, or policy details discussed.\n"
+    "3. Keep specific numbers, percentages, or policy names verbatim if present.\n"
+    "4. DO NOT write long paragraphs, essays, or unnecessary fluff.\n\n"
+    "[PREVIOUS SUMMARY]:\n{old_summary}\n\n"
+    "[NEW SEGMENT TO INTEGRATE]:\n{old_text}\n\n"
+    "[UPDATED SUMMARY]:"
+)
+
+
+LTM_LEARNING_SUMMARY_PROMPT = (
+    "You are an AI Learning Analyst. Your task is to update the user's Long-Term Learning Profile.\n\n"
+    "[PREVIOUS LEARNING PROFILE]:\n{old_learning_summary}\n\n"
+    "[LATEST SESSION SUMMARY]:\n{session_summary}\n\n"
+    "[RULES]:\n"
+    "1. Output MUST be strictly 2 lines of bullet points:\n"
+    "   Line 1: '- Mastered: ' followed by short topic names fully understood or discussed, separated by commas.\n"
+    "   Line 2: '- Needs Practice: ' followed by short topic names needing further practice or remaining unclear, separated by commas.\n"
+    "2. Keep topic names extremely brief (2-4 words per topic). DO NOT write explanations, descriptions, or prose sentences.\n"
+    "3. STATE TRANSITION: If a topic previously listed under 'Needs Practice' was asked about and addressed in the latest session, MOVE it to 'Mastered'.\n"
+    "4. Write strictly in English, maximum 40 words total.\n\n"
+    "[INSTRUCTIONS]:\n"
+    "Respond STRICTLY in valid JSON format with one key:\n"
+    "1. \"learning_summary\": The 2-line bullet point text following the RULES above.\n\n"
+    "JSON OUTPUT:"
+)

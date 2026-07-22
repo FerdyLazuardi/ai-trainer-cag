@@ -144,12 +144,10 @@ async def init_db() -> None:
                  "ON documents ((metadata->>'doc_type'))")
         )
 
-        # user_profiles predates the onboarding-tour flag. create_all won't ALTER
-        # an existing table, so add the column idempotently here (NULL = tour
-        # never seen). Drives the DB-backed first-run tour gate.
+        # user_ltm_memories column migrations for existing instances.
         await conn.execute(
-            text("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS "
-                 "onboarding_completed_at TIMESTAMPTZ")
+            text("ALTER TABLE user_ltm_memories ADD COLUMN IF NOT EXISTS "
+                 "learning_summary TEXT")
         )
         
         # agent_logs predates OpenRouter token tracking. create_all won't ALTER

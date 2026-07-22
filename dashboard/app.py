@@ -321,14 +321,13 @@ with tab_explorer:
                     show_chat_details(selected_turn)
 
 with tab_ltm:
-    st.subheader("User LTM Profiles")
-    st.markdown("Preferensi dan informasi profil jangka panjang (Long-Term Memory) dari masing-masing pengguna.")
+    st.subheader("User LTM Profiles & Learning Memories")
+    st.markdown("Preferensi dan profil memori jangka panjang pengguna (Long-Term Memory) dari PostgreSQL.")
     
     if not users:
         st.info("Belum ada data User LTM.")
     else:
         df_users = pd.DataFrame(users)
-        df_users = df_users.rename(columns={"user_id": "session_id"})
         st.dataframe(
             df_users,
             use_container_width=True,

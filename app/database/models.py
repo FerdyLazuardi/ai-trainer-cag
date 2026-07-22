@@ -175,28 +175,19 @@ class KnowledgeBasePack(Base):
         return f"<KnowledgeBasePack id={self.id} source={self.source!r} active={self.is_active}>"
 
 
-class UserProfile(Base):
-    """Stores persistent user preferences derived from conversation history."""
+class UserLTMMemory(Base):
+    """Stores persistent user long-term memory across sessions."""
 
-    __tablename__ = "user_profiles"
+    __tablename__ = "user_ltm_memories"
 
     user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    role: Mapped[str] = mapped_column(String(128), nullable=True)
-    preferred_tone: Mapped[str] = mapped_column(String(64), nullable=True)
-    formatting_pref: Mapped[str] = mapped_column(String(64), nullable=True)
-    custom_instructions: Mapped[str] = mapped_column(Text, nullable=True)
-    # First-run onboarding tour: set once when the user finishes (or skips) the
-    # tour. NULL = never seen it. DB-backed (not localStorage) so the tour shows
-    # exactly once per Moodle user, even across browsers/devices.
-    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    learning_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     def __repr__(self) -> str:
-        return f"<UserProfile user_id={self.user_id} role={self.role!r}>"
+        return f"<UserLTMMemory user_id={self.user_id}>"
 
 
 class UserKPIData(Base):

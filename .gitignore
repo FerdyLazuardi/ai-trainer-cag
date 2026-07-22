@@ -60,3 +60,7 @@ _moodle_md/
 
 # Intent-gate calibration run output (regenerable; overwritten each run)
 eval/results/*.json
+
+# Graphify generated knowledge graph output & cache
+graphify-out/
+

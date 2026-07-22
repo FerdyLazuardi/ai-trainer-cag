@@ -108,10 +108,6 @@ def get_llm() -> ChatOpenAI:
 
 @lru_cache(maxsize=1)
 def get_cheap_llm() -> ChatOpenAI:
-    # Non-stream calls (rewrite, preprocessor) are safe on google-ai-studio even
-    # if vertex 429s, so allow_fallbacks=True. The streaming generate_llm stays
-    # pinned to google-vertex (allow_fallbacks=False) because ai-studio corrupts
-    # SSE mid-stream.
     _eb = _provider_extra_body(settings.cheap_llm_model)
     if isinstance(_eb.get("provider"), dict):
         _eb["provider"]["allow_fallbacks"] = True
@@ -124,6 +120,42 @@ def get_cheap_llm() -> ChatOpenAI:
         default_headers={
             "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Background Worker)",
+        },
+    )
+
+
+@lru_cache(maxsize=1)
+def get_stm_llm() -> ChatOpenAI:
+    _eb = _provider_extra_body(settings.cheap_llm_model)
+    if isinstance(_eb.get("provider"), dict):
+        _eb["provider"]["allow_fallbacks"] = True
+    return create_llm(
+        model=settings.cheap_llm_model,
+        temperature=settings.cheap_llm_temperature,
+        max_tokens=1000,
+        request_timeout=30,
+        extra_body=_eb,
+        default_headers={
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
+            "X-Title": "CAG AI TRAINER (STM Summary)",
+        },
+    )
+
+
+@lru_cache(maxsize=1)
+def get_ltm_llm() -> ChatOpenAI:
+    _eb = _provider_extra_body(settings.cheap_llm_model)
+    if isinstance(_eb.get("provider"), dict):
+        _eb["provider"]["allow_fallbacks"] = True
+    return create_llm(
+        model=settings.cheap_llm_model,
+        temperature=settings.cheap_llm_temperature,
+        max_tokens=1000,
+        request_timeout=30,
+        extra_body=_eb,
+        default_headers={
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
+            "X-Title": "CAG AI TRAINER (LTM Worker)",
         },
     )
 
@@ -149,30 +181,8 @@ def assert_judge_model_distinct(
     if judge_model in generator_models:
         raise RuntimeError(
             f"JUDGE_LLM_MODEL={judge_model!r} matches a generator model "
-            f"({sorted(generator_models)!r}). The eval judge must be a "
-            f"different model family than the generator — a same-family judge "
-            f"shares fabrication patterns and undercounts the hallucination "
-            f"rate (judge grading itself). Set JUDGE_LLM_MODEL to a distinct "
-            f"model (default: deepseek/deepseek-v4-pro)."
+            f"({sorted(generator_models)!r})."
         )
-
-
-@lru_cache(maxsize=1)
-def get_preprocessor_llm() -> ChatOpenAI:
-    _eb = _provider_extra_body(settings.cheap_llm_model)
-    if isinstance(_eb.get("provider"), dict):
-        _eb["provider"]["allow_fallbacks"] = True
-    return create_llm(
-        model=settings.cheap_llm_model,
-        temperature=settings.preprocessor_llm_temperature,
-        max_tokens=500,
-        request_timeout=30,
-        extra_body=_eb,
-        default_headers={
-            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
-            "X-Title": "CAG AI TRAINER (Pre-Processor)",
-        },
-    )
 
 
 @lru_cache(maxsize=1)

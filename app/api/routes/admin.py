@@ -121,8 +121,8 @@ async def get_dashboard_logs(
             LIMIT :limit
         """, {"limit": recent_limit, **cursor_params}),
         _run_one("""
-            SELECT user_id, role, preferred_tone, formatting_pref, custom_instructions, updated_at
-            FROM user_profiles
+            SELECT user_id, learning_summary, updated_at
+            FROM user_ltm_memories
             ORDER BY updated_at DESC
         """),
         # Rolling-7d perf + quality. Window matters: an all-time AVG/percentile
@@ -214,11 +214,8 @@ async def get_dashboard_logs(
     users = [
         {
             "user_id": str(row[0]),
-            "role": str(row[1]) if row[1] else "",
-            "preferred_tone": str(row[2]) if row[2] else "",
-            "formatting_pref": str(row[3]) if row[3] else "",
-            "custom_instructions": str(row[4]) if row[4] else "",
-            "updated_at": str(row[5]),
+            "learning_summary": str(row[1]) if row[1] else "",
+            "updated_at": str(row[2]),
         }
         for row in users_q.fetchall()
     ]

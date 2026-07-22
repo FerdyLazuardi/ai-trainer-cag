@@ -61,15 +61,15 @@
   },
   {
     "id": "cal-011",
-    "query": "Apa saja tahapan dalam proses ADDIE?",
+    "query": "Apa saja langkah-langkah untuk membuat kuis baru di Moodle?",
     "gold_faithful": null,
-    "note": "Learning-design KB content; enumerated stages."
+    "note": "Moodle KB content; enumerated steps."
   },
   {
     "id": "cal-012",
-    "query": "Jelaskan taksonomi Bloom dan penerapannya",
+    "query": "Jelaskan cara menambahkan materi pembelajaran di Moodle",
     "gold_faithful": null,
-    "note": "Concept + application — partial-grounding likely (0.5 zone)."
+    "note": "Moodle concept + application."
   },
   {
     "id": "cal-013",
