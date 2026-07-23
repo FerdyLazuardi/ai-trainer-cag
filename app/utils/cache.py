@@ -1,10 +1,13 @@
 """
 Query cache — Redis exact-match only.
 
-Redis exact-match uses sha256 of the exact (canonical) query string, so only
-a byte-identical re-ask hits, and a grounded turn is deterministic (temp 0)
-so the re-served answer is the one that query would have produced anyway.
-This eliminates any risk of serving an answer cached for a different intent.
+Redis exact-match has no risk of cross-user/cross-tone leaks: the key is sha256 of the exact (canonical)
+query string, so only a byte-identical re-ask hits, and a grounded turn is
+deterministic (temp 0) so the re-served answer is the one that query would have
+produced anyway.
+
+Tradeoff: paraphrases ("apa itu modal" vs "modal itu apa") are now cache misses
+— each costs one extra LLM call, never a wrong/foreign answer.
 """
 import hashlib
 import json

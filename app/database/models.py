@@ -103,8 +103,8 @@ class AgentLog(Base):
     cache_hit: Mapped[bool] = mapped_column(nullable=False, default=False)
     # Cache observability columns (Jun 2026 — wired by _log_cache_event in
     # app/utils/cache.py). Populated for `endpoint='cache_lookup'` rows only.
-    # cache_score: 1.0 for Redis exact hit, None for miss.
-    #   The Streamlit dashboard bins p50/p95 across this.
+    # cache_score: 1.0 for Redis exact hit,
+    #   None for miss. The Streamlit dashboard bins p50/p95 across this.
     # cache_namespace: 'rag' (Ava), 'rag_user_<id>' (user-scoped),
     #   'portfolio' (Askfer). Lets ops see which persona drives hit-rate.
     # query_hash: sha256(query.strip().lower())[:16] — same scheme as the

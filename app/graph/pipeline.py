@@ -436,7 +436,7 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
         conversational generate node with NO <context>. That prevents an
         irrelevant chunk from being dumped into a greeting/vague turn, and lets
         the prompt ask a clarifying question on ambiguous input instead of
-        guessing. Cheaper too (no KB filtering overhead).
+        guessing. Cheaper too (no retrieval round-trip).
       - KNOWLEDGE (regex returns None — a real question): retrieve, then generate.
 
     `intent` carries the regex label so chat.py's existing cache/eval gates
@@ -1333,23 +1333,6 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
 
     pref_section = ""
 
-def _format_ctx_val(label: str, val: Any) -> str:
-    if val is None:
-        return ""
-    val_str = str(val).strip()
-    if val_str.endswith("%"):
-        return val_str
-    try:
-        fval = float(val_str)
-        lbl_lower = label.lower()
-        is_score = any(x in lbl_lower for x in ["score", "skor", "rangking", "insentif"])
-        is_pct = "%" in label or any(x in lbl_lower for x in ["rate", "cohort", "repayment", "renewal", "ppob"])
-        if is_pct and not is_score and -5.0 <= fval <= 5.0:
-            return f"{round(fval * 100, 2):g}%"
-    except (ValueError, TypeError):
-        pass
-    return val_str
-
     user_ctx_section = ""
     uctx = state.get("user_context") or {}
     if uctx:
@@ -1363,8 +1346,7 @@ def _format_ctx_val(label: str, val: Any) -> str:
                 label = k.replace("_", " ").title()
                 if label.lower().startswith("kpi"):
                     label = "KPI" + label[3:]
-                formatted_v = _format_ctx_val(label, v)
-                ctx_lines.append(f"{label}: {formatted_v}")
+                ctx_lines.append(f"{label}: {v}")
         if ctx_lines:
             user_ctx_section = (
                 "\n\n<user_context>\nYou are speaking with the following user. "
@@ -1587,8 +1569,7 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
                 label = k.replace("_", " ").title()
                 if label.lower().startswith("kpi"):
                     label = "KPI" + label[3:]
-                formatted_v = _format_ctx_val(label, v)
-                ctx_lines.append(f"{label}: {formatted_v}")
+                ctx_lines.append(f"{label}: {v}")
         if ctx_lines:
             user_ctx_section = (
                 "\n\n<user_context>\nYou are speaking with the following user. "
