@@ -611,11 +611,19 @@ async def _prepare_cag_context(
             kpi_stmt = select(UserKPIData).where(UserKPIData.username == current_user.username)
             kpi_data = (await db_session.execute(kpi_stmt)).scalars().first()
 
-            # Fetch Branch Data
-            point_val = current_user.point
+            # Fetch Branch Data (with normalized fallback match)
+            point_val = str(current_user.point or "").strip()
             if point_val:
                 branch_stmt = select(BranchData).where(BranchData.point == point_val)
                 branch_data = (await db_session.execute(branch_stmt)).scalars().first()
+                if not branch_data:
+                    norm_point = point_val.lower().replace(" ", "")
+                    all_branches_stmt = select(BranchData)
+                    all_branches = (await db_session.execute(all_branches_stmt)).scalars().all()
+                    for b in all_branches:
+                        if (b.point or "").lower().replace(" ", "") == norm_point:
+                            branch_data = b
+                            break
     except Exception as exc:
         logger.warning(f"Failed to load spreadsheet data from database: {exc}")
 
@@ -638,8 +646,11 @@ async def _prepare_cag_context(
     if kpi_data and kpi_data.full_name:
         user_context["name"] = kpi_data.full_name
 
-    # Keys to exclude from raw dynamic injection because they duplicate standard profile fields
-    REDUNDANT_KEYS = {"full_name", "Jabatan", "Role", "nama_cabang", "username", "user_id", "nik", "user_name"}
+    # Keys to exclude from raw dynamic injection because they duplicate standard profile fields or internal metadata
+    REDUNDANT_KEYS = {
+        "full_name", "Jabatan", "Role", "nama_cabang", "username", 
+        "user_id", "nik", "user_name", "updated_at", "periode", "periode_kpi"
+    }
 
     # Special handling for Management Trainee role adaptation from spreadsheet
     pos_upper = str(user_context.get("position") or "").strip().upper()
@@ -656,11 +667,31 @@ async def _prepare_cag_context(
             if k not in user_context and k not in REDUNDANT_KEYS and v is not None:
                 user_context[k] = v
 
-    # Inject branch-specific spreadsheet data dynamically
+    # Inject branch-specific spreadsheet data dynamically (role-tailored & metadata filtered)
     if branch_data and isinstance(branch_data.data, dict):
+        user_role = str(user_context.get("role") or "").strip().upper()
+        if not user_role and user_context.get("position"):
+            pos_str = str(user_context["position"]).upper()
+            if "BM" in pos_str or "MANAGER" in pos_str:
+                user_role = "BM"
+            elif "BP" in pos_str or "PARTNER" in pos_str:
+                user_role = "BP"
+
         for k, v in branch_data.data.items():
-            if k not in user_context and k not in REDUNDANT_KEYS and v is not None:
-                user_context[k] = v
+            k_clean = str(k).strip()
+            if k_clean in REDUNDANT_KEYS or v is None:
+                continue
+            if k_clean.lower().endswith("updated_at") or k_clean.lower().endswith("updated at"):
+                continue
+
+            # Tailor role-specific branch aggregates (e.g. "Point BP - ..." vs "Point BM - ...")
+            if user_role and ("Point BP - " in k_clean or "Point BM - " in k_clean):
+                opposite_role = "BM" if user_role == "BP" else "BP"
+                if f"Point {opposite_role} - " in k_clean:
+                    continue  # Skip opposite role's branch aggregate
+
+            if k_clean not in user_context:
+                user_context[k_clean] = v
 
 
     # For Tier-1 intents (GREETING, AMBIGUOUS), skip all expensive I/O:
