@@ -25,7 +25,7 @@ DECISION RULE (from the plan):
 
 ⚠️ THIS IS A LIVE RUN — NOT A UNIT TEST. It:
   - calls the real DeepSeek judge API (costs tokens, needs OPENROUTER creds)
-  - calls the real embedding + generator + Qdrant (needs the live KB)
+  - calls the real generator + pipeline (needs the live KB)
   - requires human `gold_faithful` labels in the dataset (see the seed file)
 Do NOT add it to the pytest suite. Run it manually:
 

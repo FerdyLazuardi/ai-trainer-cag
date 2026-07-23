@@ -1,20 +1,10 @@
 """
 Query cache — Redis exact-match only.
 
-Previously a two-layer cache (Redis exact + Qdrant semantic-similarity). The
-semantic layer was REMOVED: a cosine match (>=0.88) could serve an answer cached
-for a DIFFERENT user's question — a cross-intent / cross-tone leak we observed in
-practice ("emng topiknya apa aja" hit a product-list answer at 0.8838). Because
-answers can be personalized (tone, user history, role), serving one user's
-answer to another via a fuzzy match is a correctness AND privacy hazard.
-
-Redis exact-match has no such risk: the key is sha256 of the exact (canonical)
-query string, so only a byte-identical re-ask hits, and a grounded turn is
-deterministic (temp 0) so the re-served answer is the one that query would have
-produced anyway.
-
-Tradeoff: paraphrases ("apa itu modal" vs "modal itu apa") are now cache misses
-— each costs one extra LLM call, never a wrong/foreign answer.
+Redis exact-match uses sha256 of the exact (canonical) query string, so only
+a byte-identical re-ask hits, and a grounded turn is deterministic (temp 0)
+so the re-served answer is the one that query would have produced anyway.
+This eliminates any risk of serving an answer cached for a different intent.
 """
 import hashlib
 import json

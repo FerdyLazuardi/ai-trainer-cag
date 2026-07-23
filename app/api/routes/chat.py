@@ -586,15 +586,14 @@ async def _prepare_cag_context(
         )
 
     # Build message history + LTM + UserProfile in parallel.
-    # These three I/O calls are independent (Redis, Qdrant, Postgres) — fan
+    # These I/O calls are independent (Redis, Postgres) — fan
     # them out instead of awaiting serially. Only LTM and UserProfile depend
     # on `ltm_eligible`, so they're guarded with stub coroutines that early-
     # return for non-real users (dev bypass, anonymous, etc.).
     #
     # Tradeoff: on a brand-new session of a real user we'll fetch LTM +
     # UserProfile that get discarded (since `is_brand_new_session` is only
-    # known AFTER history resolves). That's 1 Qdrant call + 1 Postgres
-    # SELECT on first-turn-ever — acceptable to save 100-300ms on every
+    # known AFTER history resolves) — acceptable to save 100-300ms on every
     # subsequent regular turn.
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)

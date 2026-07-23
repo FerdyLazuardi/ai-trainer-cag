@@ -315,7 +315,7 @@ def create_app() -> FastAPI:
         Gated on APP_DEBUG. In production this route returns 404 even
         though it's registered — the audit flagged it as a dev
         playground that any internet visitor can hit to fire
-        arbitrary queries at the LLM/Qdrant (cost amplification +
+        arbitrary queries at the LLM (cost amplification +
         prompt-cache-miss provocation).
         """
         if not settings.app_debug:

@@ -64,7 +64,7 @@ async def init_db() -> None:
             # Cache observability columns (Jun 2026 — written by
             # _log_cache_event in app/utils/cache.py). Populated for
             # `endpoint='cache_lookup'` rows only; NULL for chat turns.
-            # cache_score: 1.0 exact, qdrant cosine for semantic, NULL miss.
+            # cache_score: 1.0 exact hit, NULL miss.
             # cache_namespace: 'rag' (Ava) / 'rag_user_<id>' / 'portfolio'.
             # query_hash: sha256(query.strip().lower())[:16], same scheme as
             #   the Redis cache key (cache.py:_cache_key) so dashboard

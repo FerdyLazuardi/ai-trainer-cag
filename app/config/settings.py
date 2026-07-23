@@ -389,8 +389,7 @@ class Settings(BaseSettings):
     generate_llm_temperature: float = 0.0
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    # Query→answer cache lifetime (Redis exact-match only; the Qdrant semantic
-    # layer was removed to eliminate cross-user/cross-tone leaks). 7d: the KB is
+    # Query→answer cache lifetime (Redis exact-match only). 7d: the KB is
     # near-static (updates ~yearly) so a long TTL maximizes hit rate, but we cap
     # at 7 days NOT a year on purpose: if any KB-update path ever skips
     # flush_cache_by_course, a stale answer's blast radius is bounded to a week,
