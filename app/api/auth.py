@@ -52,7 +52,7 @@ async def get_current_user(
             loc = request.headers.get("x-mock-location", "FO")
             pos = request.headers.get("x-mock-position", "Business Manager")
             gender = request.headers.get("x-mock-gender", "Male")
-            grade = request.headers.get("x-mock-grade", "BP - Junior")
+            grade = request.headers.get("x-mock-grade", "BM - Junior")
             dept = request.headers.get("x-mock-dept", "Micro Business - Lending")
             point = request.headers.get("x-mock-point", "Tutuyan")
             area = request.headers.get("x-mock-area", "Minahasa")

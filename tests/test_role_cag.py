@@ -2,17 +2,18 @@ import pytest
 from app.graph.pipeline import resolve_user_role, _filter_kb_by_role
 
 def test_resolve_user_role():
-    # HO Location always gets HO role (full access)
+    # HO Location always gets HO role (full access to all knowledge)
     assert resolve_user_role({"location": "HO", "grade": "Staff"}) == "HO"
-    assert resolve_user_role({"location": "ho", "grade": "any"}) == "HO"
     assert resolve_user_role({"location": "HO", "grade": "BP - 2"}) == "HO"
+    assert resolve_user_role({"location": "HO", "grade": "BM"}) == "HO"
+    assert resolve_user_role({"location": "ho", "grade": "any"}) == "HO"
     
-    # FO Location with BP grades (Field Officer role mapping)
+    # FO Location gets classified by grade (BM, BP, RM, AM, HMB)
     assert resolve_user_role({"location": "FO", "grade": "BP - Junior"}) == "BP"
     assert resolve_user_role({"location": "FO", "grade": "BP 2"}) == "BP"
     assert resolve_user_role({"location": "FO", "grade": "BP_Senior"}) == "BP"
-    assert resolve_user_role({"location": "FO", "grade": "BP/Level3"}) == "BP"
-    assert resolve_user_role({"location": "FO", "grade": "BP"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BM - 1"}) == "BM"
+    assert resolve_user_role({"location": "FO", "grade": "BM"}) == "BM"
     
     # FO Location with BM grades
     assert resolve_user_role({"location": "FO", "grade": "BM - 2"}) == "BM"
@@ -30,6 +31,10 @@ def test_resolve_user_role():
     assert resolve_user_role({"location": "FO", "grade": "HMB - 1A"}) == "HMB"
     assert resolve_user_role({"location": "FO", "grade": "HMB"}) == "HMB"
     
+    # Management Trainee with adapted role from spreadsheet
+    assert resolve_user_role({"position": "Management Trainee (BP)", "role": "BP"}) == "BP"
+    assert resolve_user_role({"position": "Management Trainee (BM)", "role": "BM"}) == "BM"
+
     # Fallbacks
     assert resolve_user_role({"location": "FO", "grade": "Security - 1A"}) == "FO"
     assert resolve_user_role({"location": "Unknown", "grade": "BP - Junior"}) == "BP"  # Grade match takes precedence over non-FO loc
@@ -120,4 +125,45 @@ def test_filter_inner_role_blocks():
     assert "Khusus BP: Limit 10jt" not in filtered_rm
     assert "Khusus BM: Limit 50jt" not in filtered_rm
     assert "Khusus BP dan BM info" not in filtered_rm
+
+
+def test_filter_portfolio_doc_by_user_role():
+    user_doc = (
+        '<doc id="DOC-001" course="11" section="Business Process" file="Basic Portfolio Management.md" roles="ALL">\n'
+        '# Basic Portfolio Management\n'
+        '<role_block roles="RM">\n'
+        '### RM\n'
+        '- Menentukan pembagian target regional...\n'
+        '</role_block>\n'
+        '<role_block roles="AM">\n'
+        '### AM\n'
+        '- Membuat strategi berdasarkan target...\n'
+        '</role_block>\n'
+        '<role_block roles="BM">\n'
+        '### BM\n'
+        '- Menghitung total Os...\n'
+        '</role_block>\n'
+        '<role_block roles="BP">\n'
+        '### BP\n'
+        '- Membuat prioritas penagihan...\n'
+        '</role_block>\n'
+        '</doc>'
+    )
+
+    # Filter for BM
+    res_bm = _filter_kb_by_role(user_doc, "BM")
+    assert "### BM" in res_bm
+    assert "- Menghitung total Os..." in res_bm
+    assert "### RM" not in res_bm
+    assert "### AM" not in res_bm
+    assert "### BP" not in res_bm
+
+    # Filter for BP
+    res_bp = _filter_kb_by_role(user_doc, "BP")
+    assert "### BP" in res_bp
+    assert "- Membuat prioritas penagihan..." in res_bp
+    assert "### RM" not in res_bp
+    assert "### AM" not in res_bp
+    assert "### BM" not in res_bp
+
 

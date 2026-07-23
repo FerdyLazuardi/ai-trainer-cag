@@ -1146,16 +1146,19 @@ def resolve_user_role(user_context: dict | None) -> str:
         
     location = str(user_context.get("location") or "").strip().upper()
     grade = str(user_context.get("grade") or "").strip().upper()
+    user_role = str(user_context.get("role") or "").strip().upper()
 
-    # 1. HO (Head Office) -> HO (gets full access to all roles)
+    # Management Trainee or adapted role check (BP, BM, RM, AM, HMB)
+    if user_role in ("RM", "AM", "HMB", "BM", "BP"):
+        return user_role
+
+    # 1. HO (Head Office) -> HO (Head Office users get full access)
     if location == "HO":
         return "HO"
         
-    # Extract first token prefix before '-', '_', '/', or space (e.g. "BP - Junior", "BP_2", "BP 1" -> "BP")
+    # 2. FO Location: Extract first token prefix for Field Officers (BP, BM, RM, AM, HMB)
     tokens = re.split(r'[\s\-_/]+', grade)
     grade_prefix = tokens[0] if tokens else ""
-    
-    # 2. Map grade prefix to corresponding role for Field Officers
     if grade_prefix in ("RM", "AM", "HMB", "BM", "BP"):
         return grade_prefix
         
@@ -1339,7 +1342,7 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
             if uctx.get(k):
                 ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
         for k, v in uctx.items():
-            if k not in standard_keys and v is not None:
+            if k not in standard_keys and k != "role" and v is not None:
                 label = k.replace("_", " ").title()
                 if label.lower().startswith("kpi"):
                     label = "KPI" + label[3:]
@@ -1562,7 +1565,7 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
             if uctx.get(k):
                 ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
         for k, v in uctx.items():
-            if k not in standard_keys and v is not None:
+            if k not in standard_keys and k != "role" and v is not None:
                 label = k.replace("_", " ").title()
                 if label.lower().startswith("kpi"):
                     label = "KPI" + label[3:]

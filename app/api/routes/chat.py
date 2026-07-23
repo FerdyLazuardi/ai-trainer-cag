@@ -638,16 +638,28 @@ async def _prepare_cag_context(
     if kpi_data and kpi_data.full_name:
         user_context["name"] = kpi_data.full_name
 
-    # Inject user-specific spreadsheet data dynamically
+    # Keys to exclude from raw dynamic injection because they duplicate standard profile fields
+    REDUNDANT_KEYS = {"full_name", "Jabatan", "Role", "nama_cabang", "username", "user_id", "nik", "user_name"}
+
+    # Special handling for Management Trainee role adaptation from spreadsheet
+    pos_upper = str(user_context.get("position") or "").strip().upper()
+    grade_upper = str(user_context.get("grade") or "").strip().upper()
+    is_mt = "MANAGEMENT TRAINEE" in pos_upper or pos_upper == "MT" or "MT" in grade_upper
+
     if kpi_data and isinstance(kpi_data.data, dict):
+        sp_role = str(kpi_data.data.get("Role") or kpi_data.data.get("Jabatan") or "").strip()
+        if is_mt and sp_role:
+            user_context["position"] = f"Management Trainee ({sp_role.upper()})"
+            user_context["role"] = sp_role.upper()
+
         for k, v in kpi_data.data.items():
-            if k not in user_context:
+            if k not in user_context and k not in REDUNDANT_KEYS and v is not None:
                 user_context[k] = v
 
     # Inject branch-specific spreadsheet data dynamically
     if branch_data and isinstance(branch_data.data, dict):
         for k, v in branch_data.data.items():
-            if k not in user_context:
+            if k not in user_context and k not in REDUNDANT_KEYS and v is not None:
                 user_context[k] = v
 
 
