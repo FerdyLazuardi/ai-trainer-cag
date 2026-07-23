@@ -1146,15 +1146,16 @@ def resolve_user_role(user_context: dict | None) -> str:
         
     location = str(user_context.get("location") or "").strip().upper()
     grade = str(user_context.get("grade") or "").strip().upper()
-    
-    # Extract prefix before '-'
-    grade_prefix = grade.split('-')[0].strip()
-    
-    # 1. HO (Head Office) -> HO
+
+    # 1. HO (Head Office) -> HO (gets full access to all roles)
     if location == "HO":
         return "HO"
         
-    # 2. Map grade prefix to corresponding role
+    # Extract first token prefix before '-', '_', '/', or space (e.g. "BP - Junior", "BP_2", "BP 1" -> "BP")
+    tokens = re.split(r'[\s\-_/]+', grade)
+    grade_prefix = tokens[0] if tokens else ""
+    
+    # 2. Map grade prefix to corresponding role for Field Officers
     if grade_prefix in ("RM", "AM", "HMB", "BM", "BP"):
         return grade_prefix
         
@@ -1163,6 +1164,43 @@ def resolve_user_role(user_context: dict | None) -> str:
         return "FO"
         
     return "ALL"
+
+
+def _filter_inner_role_blocks(text: str, role: str) -> str:
+    """Filter inner <role_block roles="..."> and <!-- role: ... --> blocks inside text."""
+    if not text or not role:
+        return text
+        
+    role = role.upper().strip()
+    roles_attr_pattern = re.compile(r'roles=["\']([^"\']*)["\']', re.IGNORECASE)
+
+    # 1. Handle <role_block roles="...">...</role_block>
+    role_block_pattern = re.compile(r'<role_block\s+([^>]*?)>(.*?)</role_block>', re.DOTALL | re.IGNORECASE)
+    def _replace_role_block(m: re.Match) -> str:
+        attrs = m.group(1)
+        content = m.group(2)
+        match = roles_attr_pattern.search(attrs)
+        if match:
+            block_roles = [r.strip().upper() for r in match.group(1).split(",")]
+            if role in ("ALL", "HO") or "ALL" in block_roles or role in block_roles:
+                return content.strip()
+            return ""
+        return content.strip()
+
+    text = role_block_pattern.sub(_replace_role_block, text)
+
+    # 2. Handle <!-- role: BP,BM --> ... <!-- /role -->
+    comment_role_pattern = re.compile(r'<!--\s*role:\s*([^>]*?)\s*-->(.*?)<!--\s*/role\s*-->', re.DOTALL | re.IGNORECASE)
+    def _replace_comment_block(m: re.Match) -> str:
+        roles_str = m.group(1)
+        content = m.group(2)
+        block_roles = [r.strip().upper() for r in roles_str.split(",")]
+        if role in ("ALL", "HO") or "ALL" in block_roles or role in block_roles:
+            return content.strip()
+        return ""
+
+    text = comment_role_pattern.sub(_replace_comment_block, text)
+    return text
 
 
 def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
@@ -1176,9 +1214,13 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
     roles_attr_pattern = re.compile(r'roles="([^"]*)"')
     id_attr_pattern = re.compile(r'id="([^"]*)"')
     
+    docs_found = doc_pattern.findall(kb_text)
+    if not docs_found:
+        return _filter_inner_role_blocks(kb_text, role)
+
     filtered_docs = []
     allowed_doc_ids = set()
-    for header, attrs, content, footer in doc_pattern.findall(kb_text):
+    for header, attrs, content, footer in docs_found:
         id_match = id_attr_pattern.search(attrs)
         doc_id = id_match.group(1) if id_match else ""
         
@@ -1186,11 +1228,13 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
         if match:
             doc_roles = [r.strip().upper() for r in match.group(1).split(",")]
             if "ALL" in doc_roles or role in doc_roles:
-                filtered_docs.append(f"{header}{content}{footer}")
+                filtered_content = _filter_inner_role_blocks(content, role)
+                filtered_docs.append(f"{header}{filtered_content}{footer}")
                 if doc_id:
                     allowed_doc_ids.add(doc_id)
         else:
-            filtered_docs.append(f"{header}{content}{footer}")
+            filtered_content = _filter_inner_role_blocks(content, role)
+            filtered_docs.append(f"{header}{filtered_content}{footer}")
             if doc_id:
                 allowed_doc_ids.add(doc_id)
                 

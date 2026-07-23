@@ -2,13 +2,16 @@ import pytest
 from app.graph.pipeline import resolve_user_role, _filter_kb_by_role
 
 def test_resolve_user_role():
-    # HO Location
-    assert resolve_user_role({"location": "HO", "grade": "BP - 2"}) == "HO"
+    # HO Location always gets HO role (full access)
+    assert resolve_user_role({"location": "HO", "grade": "Staff"}) == "HO"
     assert resolve_user_role({"location": "ho", "grade": "any"}) == "HO"
+    assert resolve_user_role({"location": "HO", "grade": "BP - 2"}) == "HO"
     
-    # FO Location with BP grades
+    # FO Location with BP grades (Field Officer role mapping)
     assert resolve_user_role({"location": "FO", "grade": "BP - Junior"}) == "BP"
-    assert resolve_user_role({"location": "FO", "grade": "BP - Senior"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BP 2"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BP_Senior"}) == "BP"
+    assert resolve_user_role({"location": "FO", "grade": "BP/Level3"}) == "BP"
     assert resolve_user_role({"location": "FO", "grade": "BP"}) == "BP"
     
     # FO Location with BM grades
@@ -82,3 +85,39 @@ def test_filter_kb_by_role():
     assert 'DOC-001' not in filtered_rm.split("</kb_index>")[0]
     assert 'DOC-002' not in filtered_rm.split("</kb_index>")[0]
     assert 'DOC-003' in filtered_rm.split("</kb_index>")[0]
+
+
+def test_filter_inner_role_blocks():
+    kb_text = (
+        '<doc id="DOC-001" roles="ALL">\n'
+        'General info for all.\n'
+        '<role_block roles="BP">\n'
+        'Khusus BP: Limit 10jt\n'
+        '</role_block>\n'
+        '<role_block roles="BM">\n'
+        'Khusus BM: Limit 50jt\n'
+        '</role_block>\n'
+        '<!-- role: BP,BM -->\n'
+        'Khusus BP dan BM info\n'
+        '<!-- /role -->\n'
+        '</doc>'
+    )
+
+    filtered_bp = _filter_kb_by_role(kb_text, "BP")
+    assert "General info for all." in filtered_bp
+    assert "Khusus BP: Limit 10jt" in filtered_bp
+    assert "Khusus BM: Limit 50jt" not in filtered_bp
+    assert "Khusus BP dan BM info" in filtered_bp
+
+    filtered_bm = _filter_kb_by_role(kb_text, "BM")
+    assert "General info for all." in filtered_bm
+    assert "Khusus BP: Limit 10jt" not in filtered_bm
+    assert "Khusus BM: Limit 50jt" in filtered_bm
+    assert "Khusus BP dan BM info" in filtered_bm
+
+    filtered_rm = _filter_kb_by_role(kb_text, "RM")
+    assert "General info for all." in filtered_rm
+    assert "Khusus BP: Limit 10jt" not in filtered_rm
+    assert "Khusus BM: Limit 50jt" not in filtered_rm
+    assert "Khusus BP dan BM info" not in filtered_rm
+
