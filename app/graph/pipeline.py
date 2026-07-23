@@ -1272,6 +1272,48 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
     return "\n".join(out)
 
 
+def _format_user_context_block(uctx: dict) -> str:
+    """Format user context into structured profile & performance/KPI metrics block."""
+    if not uctx:
+        return ""
+    
+    profile_lines = []
+    kpi_lines = []
+
+    standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
+    for k in standard_keys:
+        if uctx.get(k):
+            profile_lines.append(f"- {k.capitalize()}: {uctx[k]}")
+
+    for k, v in uctx.items():
+        if k not in standard_keys and k != "role" and v is not None:
+            label = str(k).replace("_", " ").strip()
+            # Preserve acronym capitalization if starts with kpi
+            if label.lower().startswith("kpi"):
+                label = "KPI" + label[3:]
+            else:
+                label = label.title()
+            kpi_lines.append(f"- {label}: {v}")
+
+    if not profile_lines and not kpi_lines:
+        return ""
+
+    content_parts = []
+    if profile_lines:
+        content_parts.append("Profile:\n" + "\n".join(profile_lines))
+    if kpi_lines:
+        content_parts.append("[Metrik Performa & KPI Cabang/User]:\n" + "\n".join(kpi_lines))
+
+    ctx_body = "\n\n".join(content_parts)
+    return (
+        "\n\n<user_context>\nYou are speaking with the following user. "
+        "Adapt your answers to their context, but DO NOT call or greet them by their first name "
+        "repeatedly at the beginning of sentences or transitions:\n"
+        + ctx_body
+        + "\n</user_context>"
+    )
+
+
 async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     """Build the exact prompt used by generate_node."""
     summary = state.get("conversation_summary") or ""
@@ -1333,28 +1375,8 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
 
     pref_section = ""
 
-    user_ctx_section = ""
     uctx = state.get("user_context") or {}
-    if uctx:
-        ctx_lines = []
-        standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
-        for k in standard_keys:
-            if uctx.get(k):
-                ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
-        for k, v in uctx.items():
-            if k not in standard_keys and k != "role" and v is not None:
-                label = k.replace("_", " ").title()
-                if label.lower().startswith("kpi"):
-                    label = "KPI" + label[3:]
-                ctx_lines.append(f"{label}: {v}")
-        if ctx_lines:
-            user_ctx_section = (
-                "\n\n<user_context>\nYou are speaking with the following user. "
-                "Adapt your answers to their context, but DO NOT call or greet them by their first name "
-                "repeatedly at the beginning of sentences or transitions:\n"
-                + "\n".join(ctx_lines)
-                + "\n</user_context>"
-            )
+    user_ctx_section = _format_user_context_block(uctx)
 
     dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
     is_coaching = intent == "COACHING"
@@ -1556,28 +1578,8 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     pref_section = ""
 
     # Live Moodle profile of the person asking (firstname + custom fields).
-    user_ctx_section = ""
     uctx = state.get("user_context") or {}
-    if uctx:
-        ctx_lines = []
-        standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
-        for k in standard_keys:
-            if uctx.get(k):
-                ctx_lines.append(f"{k.capitalize()}: {uctx[k]}")
-        for k, v in uctx.items():
-            if k not in standard_keys and k != "role" and v is not None:
-                label = k.replace("_", " ").title()
-                if label.lower().startswith("kpi"):
-                    label = "KPI" + label[3:]
-                ctx_lines.append(f"{label}: {v}")
-        if ctx_lines:
-            user_ctx_section = (
-                "\n\n<user_context>\nYou are speaking with the following user. "
-                "Adapt your answers to their context, but DO NOT call or greet them by their first name "
-                "repeatedly at the beginning of sentences or transitions:\n"
-                + "\n".join(ctx_lines)
-                + "\n</user_context>"
-            )
+    user_ctx_section = _format_user_context_block(uctx)
 
     dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
