@@ -74,12 +74,16 @@ async def _pull_with_client(
                             content_hash=hashlib.sha256(content.encode()).hexdigest(),
                         )
                     )
-                logger.info(f"Pulled {len(docs)} active markdown files directly from Knowledge Manager plugin API")
+                logger.info(f"Successfully pulled {len(docs)} active markdown files from Knowledge Manager plugin API")
+                # Return Knowledge Manager files directly without falling back to old course files!
                 return sorted(docs, key=lambda d: (d.course_id, d.section_name, d.filename))
+        else:
+            logger.warning(f"Knowledge Manager API returned HTTP {km_resp.status_code}: {km_resp.text}")
     except Exception as err:
-        logger.warning(f"Knowledge Manager API pull skipped/failed: {err}, falling back to legacy course ws")
+        logger.warning(f"Knowledge Manager API pull error: {err}")
 
-    # 2. Fallback: Pull from legacy Moodle course WS (core_course_get_contents)
+    # 2. Fallback: Pull from legacy Moodle course WS (core_course_get_contents) ONLY if Knowledge Manager API is not installed (404)
+    logger.info("Falling back to legacy Moodle course WS (core_course_get_contents)...")
     endpoint = f"{api_url.rstrip('/')}/webservice/rest/server.php"
     for course_id in course_ids:
         resp = await client.post(
