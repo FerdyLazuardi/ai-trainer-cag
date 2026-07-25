@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 import httpx
+from loguru import logger
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,40 @@ async def _pull_with_client(
     target_sections: list[str] | None,
 ) -> list[MoodleMarkdownFile]:
     docs: list[MoodleMarkdownFile] = []
-    endpoint = f"{api_url.rstrip('/')}/webservice/rest/server.php"
     target_names = {s.strip().lower() for s in target_sections or []}
 
+    # 1. Primary: Pull directly from Knowledge Manager local plugin API if installed
+    km_endpoint = f"{api_url.rstrip('/')}/local/knowledge_manager/api.php"
+    try:
+        km_resp = await client.get(km_endpoint, params={"token": token, "include_hidden": 0})
+        if km_resp.status_code == 200:
+            km_data = km_resp.json()
+            if isinstance(km_data, dict) and "files" in km_data and isinstance(km_data["files"], list):
+                for item in km_data["files"]:
+                    if item.get("hidden"):
+                        continue
+                    sec_name = html.unescape(item.get("section", "General") or "General")
+                    if target_names and sec_name.strip().lower() not in target_names:
+                        continue
+                    filename = item.get("filename", "")
+                    content = _normalize_text(item.get("content", ""))
+                    docs.append(
+                        MoodleMarkdownFile(
+                            course_id=3,
+                            section_id=int(item.get("id") or 0),
+                            section_name=sec_name,
+                            filename=filename,
+                            content=content,
+                            content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                        )
+                    )
+                logger.info(f"Pulled {len(docs)} active markdown files directly from Knowledge Manager plugin API")
+                return sorted(docs, key=lambda d: (d.course_id, d.section_name, d.filename))
+    except Exception as err:
+        logger.warning(f"Knowledge Manager API pull skipped/failed: {err}, falling back to legacy course ws")
+
+    # 2. Fallback: Pull from legacy Moodle course WS (core_course_get_contents)
+    endpoint = f"{api_url.rstrip('/')}/webservice/rest/server.php"
     for course_id in course_ids:
         resp = await client.post(
             endpoint,
