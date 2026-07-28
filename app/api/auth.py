@@ -20,6 +20,7 @@ class User(BaseModel):
     user_id: str
     role: str
     username: str
+    fullname: str = ""
     # Live Moodle profile fields (custom fields), passed through the JWT by the
     # block_chatbot plugin so the conversational prompt can contextualize answers
     # to who is asking. Optional — dev-bypass and older tokens omit them.
@@ -31,6 +32,25 @@ class User(BaseModel):
     gender: str = ""
     area: str = ""
     regional: str = ""
+
+def _extract_fullname_from_session_id(session_id: str, user_id: str) -> str:
+    """Fallback helper to extract user full name from session_id if fullname is absent from JWT payload."""
+    if not session_id or not user_id:
+        return ""
+    prefix = f"{user_id}_"
+    if not session_id.startswith(prefix):
+        return ""
+    rem = session_id[len(prefix):]
+    parts = rem.split("_")
+    if not parts or parts[0] == "user":
+        return ""
+    
+    name_tokens = []
+    for p in parts:
+        if p.lower() in ("ho", "fo", "na") or p.isdigit():
+            break
+        name_tokens.append(p.capitalize())
+    return " ".join(name_tokens)
 
 async def get_current_user(
     request: Request,
@@ -59,6 +79,7 @@ async def get_current_user(
             reg = request.headers.get("x-mock-regional", "Sulawesi Utara")
             
             mock_user = request.headers.get("x-mock-username") or request.query_params.get("mock_username") or "mock_user"
+            mock_fullname = request.headers.get("x-mock-fullname") or mock_user
             logger.info(
                 f"Development bypass active: username={mock_user}, loc={loc}, pos={pos}, gender={gender}, "
                 f"grade={grade}, dept={dept}, point={point}, area={area}, reg={reg}"
@@ -67,6 +88,7 @@ async def get_current_user(
                 user_id="dev_user_123",
                 role="moodle_user",
                 username=mock_user,
+                fullname=mock_fullname,
                 dept=dept,
                 location=loc,
                 position=pos,
@@ -115,6 +137,11 @@ async def get_current_user(
             role: str = payload.get("role", "moodle_user")
             username: str = payload.get("username", "Moodle User")
 
+            raw_fullname = payload.get("fullname") or payload.get("full_name") or payload.get("name")
+            fullname: str = str(raw_fullname).strip() if raw_fullname else _extract_fullname_from_session_id(
+                str(payload.get("session_id") or ""), user_id
+            )
+
             if not user_id or not user_id.strip():
                 raise ValueError("Invalid user_id in token payload")
 
@@ -122,6 +149,7 @@ async def get_current_user(
                 user_id=user_id,
                 role=role,
                 username=username,
+                fullname=fullname,
                 dept=payload.get("dept", "") or "",
                 location=payload.get("location", "") or "",
                 position=payload.get("position", "") or "",

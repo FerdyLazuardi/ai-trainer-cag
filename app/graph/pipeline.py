@@ -1308,7 +1308,8 @@ def _format_user_context_block(uctx: dict) -> str:
     return (
         "\n\n<user_context>\nYou are speaking with the following user. "
         "Adapt your answers to their context, but DO NOT call or greet them by their first name "
-        "repeatedly at the beginning of sentences or transitions:\n"
+        "repeatedly at the beginning of sentences or transitions, and DO NOT abbreviate or shorten "
+        "their Position/jabatan title (always write out the full position title as specified below):\n"
         + ctx_body
         + "\n</user_context>"
     )

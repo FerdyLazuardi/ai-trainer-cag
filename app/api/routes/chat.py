@@ -632,7 +632,7 @@ async def _prepare_cag_context(
     # Per-user, so it never goes in the shared cache key (cache_namespace_for
     # already splits on user_id).
     user_context = {
-        "name": current_user.username,
+        "name": current_user.fullname or current_user.username,
         "dept": current_user.dept,
         "location": current_user.location,
         "position": current_user.position,
