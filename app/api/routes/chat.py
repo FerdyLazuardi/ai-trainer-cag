@@ -38,7 +38,7 @@ settings = get_settings()
 _META_CONVO_RE = re.compile(
     r"(?:udah|sudah|udh|tadi|barusan|kita|kami)\b[^.?!\n]{0,30}"
     r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
-    r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:di)?(?:bahas|omongin|diskusi)"
+    r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:tadi|barusan|kita|kami|sebelumnya)\s+(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
     r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
     r"|(?:yg|yang)\s+(?:mana|tadi|yg\s+tadi|sebelumnya|sebelum|yg\s+sebelumnya)\b"

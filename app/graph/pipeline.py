@@ -135,7 +135,7 @@ _DIRECTIVE_LINE_RE = re.compile(
 _META_CONVO_RE = re.compile(
     r"(?:udah|sudah|udh|tadi|barusan|kita|kami)\b[^.?!\n]{0,30}"
     r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
-    r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:di)?(?:bahas|omongin|diskusi)"
+    r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:tadi|barusan|kita|kami|sebelumnya)\s+(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
     r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
     # Short deictic follow-ups: "which one?" / "the earlier one?" /
@@ -1278,31 +1278,64 @@ def _format_user_context_block(uctx: dict) -> str:
         return ""
     
     profile_lines = []
-    kpi_lines = []
+    regional_data = {}
+    other_kpis = []
 
-    standard_keys = ["name", "gender", "dept", "position", "grade", "location", "point", "area", "regional"]
-    for k in standard_keys:
-        if uctx.get(k):
-            profile_lines.append(f"- {k.capitalize()}: {uctx[k]}")
+    standard_keys = {
+        "name", "gender", "dept", "position", "grade", "location", "point", 
+        "area", "regional", "username", "full_name", "jabatan", "cakupan"
+    }
+
+    # Extract profile keys case-insensitively while preserving insertion order
+    profile_dict = {}
+    for k, v in uctx.items():
+        if v is not None and str(k).lower().strip() in standard_keys:
+            profile_dict[str(k).strip()] = v
+
+    for k, v in profile_dict.items():
+        label = k.replace("_", " ").title()
+        profile_lines.append(f"- {label}: {v}")
 
     for k, v in uctx.items():
-        if k not in standard_keys and k != "role" and v is not None:
-            label = str(k).replace("_", " ").strip()
-            # Preserve acronym capitalization if starts with kpi
-            if label.lower().startswith("kpi"):
-                label = "KPI" + label[3:]
-            else:
-                label = label.title()
-            kpi_lines.append(f"- {label}: {v}")
+        k_str = str(k).strip()
+        if k_str in profile_dict or k_str.lower() == "role" or v is None:
+            continue
+            
+        if " - " in k_str:
+            region, metric = k_str.split(" - ", 1)
+            region_name = region.strip()
+            metric_name = metric.strip()
+            # Clean KPI acronym in metric name
+            metric_name = re.sub(r'(?i)\bkpi\b', 'KPI', metric_name)
+            if region_name not in regional_data:
+                regional_data[region_name] = []
+            regional_data[region_name].append(f"  • {metric_name}: {v}")
+        else:
+            label = k_str.replace("_", " ").strip()
+            if label.lower().startswith("kpi "):
+                label = label[4:].strip()
+            elif label.lower().startswith("kpi_"):
+                label = label[4:].strip()
+            elif label.lower() == "kpi":
+                label = "KPI"
+            label = label[0].upper() + label[1:] if label else k_str
+            other_kpis.append(f"- {label}: {v}")
 
-    if not profile_lines and not kpi_lines:
+    if not profile_lines and not regional_data and not other_kpis:
         return ""
 
     content_parts = []
     if profile_lines:
         content_parts.append("Profile:\n" + "\n".join(profile_lines))
-    if kpi_lines:
-        content_parts.append("[Metrik Performa & KPI Cabang/User]:\n" + "\n".join(kpi_lines))
+
+    if regional_data:
+        reg_lines = ["[Metrik Performa & KPI Terstruktur/Tim]:"]
+        for region, metrics in regional_data.items():
+            reg_lines.append(f"- {region}:\n" + "\n".join(metrics))
+        content_parts.append("\n".join(reg_lines))
+
+    if other_kpis:
+        content_parts.append("[Metrik Performa & KPI Lainnya]:\n" + "\n".join(other_kpis))
 
     ctx_body = "\n\n".join(content_parts)
     return (

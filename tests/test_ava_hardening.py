@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 @pytest.mark.parametrize("query", [
     "Gimana caranya menangani mitra yang telat bayar cicilan?",
     "gimana caranya aku melindungi data mitra ya",
+    "apa saja yang harus dibahas dibreafing pagi",
 ])
 async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, query):
     from app.graph import pipeline
