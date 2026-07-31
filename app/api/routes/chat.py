@@ -1604,8 +1604,9 @@ async def chat_stream(
                     if safe:
                         safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
                         yield f"data: {json.dumps({'token': safe})}\n\n"
-                    if token_count % 10 == 0 and await req.is_disconnected():
+                    if token_count % 5 == 0 and await req.is_disconnected():
                         logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                        full_answer = ""
                         await _emit_log()
                         return
 
