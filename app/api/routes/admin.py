@@ -77,8 +77,7 @@ async def get_dashboard_logs(
     # cache_lookup rows are observability events (intentional, see audit
     # 5.11) — counted in KPIs/intents/trends but NOT in Recent Logs (would
     # show the same query 3-4× as a fake routing bug).
-    non_askfer = "(endpoint != 'askfer' OR endpoint IS NULL)"
-    chat_where = f"{non_askfer} AND endpoint != 'cache_lookup'"
+    chat_where = "(endpoint != 'cache_lookup' OR endpoint IS NULL)"
 
     # Keyset pagination: strict (created_at, id) less-than to avoid duplicates
     # on shared-second timestamps. OR form keeps it valid SQLAlchemy text()

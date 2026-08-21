@@ -252,8 +252,8 @@ def create_app() -> FastAPI:
     #      anyway; only the dashboard frontend hits CORS preflight.
     #
     # The default allowlist below is localhost-only (dev). Production must
-    # set ALLOWED_ORIGINS env to the real frontend origins (dashboard,
-    # Askfer preview). Tunnel traffic (ngrok → api) is NOT affected by CORS
+    # set CORS_ALLOW_ORIGINS env to the real frontend origins (dashboard,
+    # etc). Tunnel traffic (ngrok → api) is NOT affected by CORS
     # because the Moodle plugin uses a server-side HTTP client, not a
     # browser — CORS is a browser-only concern.
     app.add_middleware(

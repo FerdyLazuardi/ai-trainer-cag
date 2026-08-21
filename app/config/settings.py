@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # caller'. Default to the dev compose ports; override in prod via env.
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
+            "https://ai-trainer.lifeatamartha.com",
+            "https://lifeatamartha.com",
             "http://localhost:3000",
             "http://localhost:8000",
             "http://localhost:8001",

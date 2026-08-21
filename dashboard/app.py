@@ -24,7 +24,7 @@ load_dotenv(env_path, override=True)
 try:
     API_URL = st.secrets["API_URL"]
 except Exception:
-    API_URL = os.getenv("API_URL", "http://localhost:8000/api/v1")
+    API_URL = os.getenv("API_URL", "https://ai-trainer.lifeatamartha.com/api/v1")
 
 try:
     ADMIN_API_KEY = st.secrets["ADMIN_API_KEY"]

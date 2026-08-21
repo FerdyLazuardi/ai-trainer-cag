@@ -105,8 +105,8 @@ class AgentLog(Base):
     # app/utils/cache.py). Populated for `endpoint='cache_lookup'` rows only.
     # cache_score: 1.0 for Redis exact hit,
     #   None for miss. The Streamlit dashboard bins p50/p95 across this.
-    # cache_namespace: 'rag' (Ava), 'rag_user_<id>' (user-scoped),
-    #   'portfolio' (Askfer). Lets ops see which persona drives hit-rate.
+    # cache_namespace: 'rag', 'rag_user_<id>' (user-scoped).
+    #   Lets ops see which scope drives hit-rate.
     # query_hash: sha256(query.strip().lower())[:16] — same scheme as the
     #   Redis cache key (cache.py:_cache_key), so rows can be joined to
     #   the live cache state without re-hashing the user text.

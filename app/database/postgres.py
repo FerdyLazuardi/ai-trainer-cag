@@ -114,7 +114,7 @@ async def init_db() -> None:
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_gate_margin ON agent_logs (gate_margin)")
         )
         # Composite (endpoint, created_at DESC) for admin dashboard queries
-        # that filter by endpoint (cache_lookup exclusion, askfer exclusion)
+        # that filter by endpoint (e.g. cache_lookup exclusion)
         # AND sort/limit by created_at. Single-column created_at index
         # already exists; this one covers the combined predicate without a
         # sort step.

@@ -38,8 +38,8 @@ def _query_hash(query: str) -> str:
 def _cache_key(query: str, course_id: int | None = None, namespace: str = "rag") -> str:
     """Generate a deterministic Redis key from the query string and course_id.
 
-    `namespace` lets parallel personas (ava vs askfer) share the cache infra
-    without polluting each other. Default 'rag' preserves existing Ava keys
+    `namespace` lets parallel cache spaces share the cache infra
+    without polluting each other. Default 'rag' preserves keys
     byte-identically.
     """
     cid_str = str(course_id) if course_id and course_id > 0 else 'global'
@@ -175,10 +175,9 @@ async def set_cached_response(
 
 
 async def flush_cache_by_namespace(namespace: str) -> None:
-    """Delete Redis cache keys for a specific namespace (e.g. 'askfer').
+    """Delete Redis cache keys for a specific namespace.
 
-    Used by the profile.md auto-refresh watcher and any lightweight refresh path
-    that needs to invalidate one persona's cache without touching Ava's.
+    Used by any lightweight refresh path that needs to invalidate a specific cache namespace.
     """
     if not namespace:
         return

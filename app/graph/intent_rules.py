@@ -1,31 +1,6 @@
 """Deterministic intent pre-classifier.
 
-Fast, regex-based rules that handle the highest-confidence intent cases
-WITHOUT calling any LLM. Queries that don't match a rule here return None
-and fall through to the KNOWLEDGE retrieval path (the pipeline default) —
-this module just short-circuits the unambiguous 60-70% of traffic.
-
-NOTE (current state): this module is Ava-only, and Ava's `_pre_processor`
-(app/graph/pipeline.py) NO LONGER calls an LLM or embedding classifier for
-intent. An unmatched query now defaults to KNOWLEDGE. Askfer has its own
-separate LLM pre-processor and does NOT use this module.
-
-History (why this module exists): the original LLM classifier (Gemini Flash
-Lite) was bouncing on edge cases when its prompt grew to cover every intent —
-each prompt iteration that fixed one case broke another. Pulling deterministic
-patterns out eliminated flakiness for things that were never genuinely
-ambiguous (math, single emoji, "kamu siapa") and saved LLM cost + latency.
-The LLM classification step was later dropped completely, leaving these rules
-as the only pre-generation classifier.
-
-Design:
-  - Each rule is a function (text, low) -> Optional[Intent]
-  - Rules check IN ORDER, first match wins.
-  - Rules are conservative — false negatives (no match) fall through to
-    the KNOWLEDGE retrieval default; false positives (wrong rule fires)
-    are user-visible bugs.
-  - No history scanning here — a terse anaphoric follow-up is handled by
-    the retrieval-query prepend in _pre_processor, not in this module.
+Fast, regex-based rules that handle high-confidence intent cases without calling LLMs.
 """
 from __future__ import annotations
 from pathlib import Path

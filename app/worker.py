@@ -89,11 +89,6 @@ async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
         await redis.delete(f"{_SUMMARY_REFRESH_PREFIX}{conversation_id}")
 
 
-@worker.task(max_tries=1, timeout=60)
-async def sync_portfolio_task(force_reingest: bool = False) -> dict[str, Any]:
-    return {"status": "disabled", "reason": "portfolio_sync_disabled_in_cag"}
-
-
 @worker.task(max_tries=2, timeout=90)
 async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     from langchain_core.messages import HumanMessage

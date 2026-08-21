@@ -245,11 +245,7 @@ _BRUTE_FORCE_MAX_FAILURES = 30
 
 
 def _client_ip(request: Request) -> str:
-    """Resolve the real client IP, honoring X-Forwarded-For first hop.
-
-    Same logic as `app.api.askfer_deps._client_ip`. Inlined here to
-    avoid a circular import.
-    """
+    """Resolve the real client IP, honoring X-Forwarded-For first hop."""
     fwd = request.headers.get("x-forwarded-for", "")
     if fwd:
         return fwd.split(",")[0].strip()
