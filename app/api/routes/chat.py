@@ -1578,37 +1578,111 @@ async def chat_stream(
                     full_answer += content
                     yield f"data: {json.dumps({'token': content})}\n\n"
             else:
-                async for ev in stream_openrouter_generate(initial_state, config=config):
-                    ev_type = ev.get("type")
-                    if ev_type == "ping":
-                        yield ": ping\n\n"
-                        continue
-                    if ev_type == "usage":
-                        usage = ev.get("usage")
-                        if usage:
-                            stream_prompt_tokens = usage.prompt_tokens
-                            stream_cached_tokens = usage.cached_tokens
-                            stream_completion_tokens = usage.completion_tokens
-                            stream_provider = usage.provider
-                            stream_cost = usage.cost
-                            stream_generation_id = usage.generation_id
-                            stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
-                        continue
-                    if ev_type != "token":
-                        continue
-                    emit = _dedupe_stream_text(ev.get("text") or "")
-                    if not emit:
-                        continue
-                    token_count += 1
-                    safe = leak_guard.feed(emit)
-                    if safe:
-                        safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
-                        yield f"data: {json.dumps({'token': safe})}\n\n"
-                    if token_count % 5 == 0 and await req.is_disconnected():
-                        logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
-                        full_answer = ""
-                        await _emit_log()
-                        return
+                # Robust OpenRouter stream: periodic keepalive pings + 1x transient retry.
+                # The raw `async for` would block forever on a silent upstream and never
+                # emit SSE comments, letting proxies / Starlette time out. Poll with
+                # 2s timeout so we can emit `: ping` every 2s and detect a true stall
+                # (75s without any event) separately.
+                _ping_s = 2.0
+                _stall_s = settings.pipeline_stream_stall_timeout_s
+                _max_retries = 1
+                _attempt = 0
+                import time as _time
+
+                while True:
+                    try:
+                        _gen = stream_openrouter_generate(initial_state, config=config)
+                        _last_real = _time.monotonic()
+                        _pending = None
+                        while True:
+                            if _pending is None:
+                                _pending = asyncio.create_task(_gen.__anext__())
+                            _done, _ = await asyncio.wait([_pending], timeout=_ping_s)
+                            if _pending in _done:
+                                try:
+                                    ev = _pending.result()
+                                except StopAsyncIteration:
+                                    _pending = None
+                                    break
+                                except BaseException:
+                                    _pending = None
+                                    raise
+                                _pending = None
+                                _last_real = _time.monotonic()
+                                ev_type = ev.get("type")
+                                if ev_type == "ping":
+                                    yield ": ping\n\n"
+                                    continue
+                                if ev_type == "usage":
+                                    usage = ev.get("usage")
+                                    if usage:
+                                        stream_prompt_tokens = usage.prompt_tokens
+                                        stream_cached_tokens = usage.cached_tokens
+                                        stream_completion_tokens = usage.completion_tokens
+                                        stream_provider = usage.provider
+                                        stream_cost = usage.cost
+                                        stream_generation_id = usage.generation_id
+                                        stream_total_tokens = usage.prompt_tokens + usage.completion_tokens
+                                    continue
+                                if ev_type != "token":
+                                    continue
+                                emit = _dedupe_stream_text(ev.get("text") or "")
+                                if not emit:
+                                    continue
+                                token_count += 1
+                                safe = leak_guard.feed(emit)
+                                if safe:
+                                    safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
+                                    yield f"data: {json.dumps({'token': safe})}\n\n"
+                                if token_count % 5 == 0 and await req.is_disconnected():
+                                    logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                                    full_answer = ""
+                                    await _emit_log()
+                                    return
+                            else:
+                                if _time.monotonic() - _last_real < _stall_s:
+                                    yield ": ping\n\n"
+                                    continue
+                                logger.error(
+                                    "OpenRouter stream stalled — no events within stall window; freeing slot",
+                                    stall_s=_stall_s,
+                                    conversation_id=conversation_id,
+                                    tokens_so_far=token_count,
+                                )
+                                if _pending and not _pending.done():
+                                    _pending.cancel()
+                                raise asyncio.TimeoutError("openrouter stream stalled")
+                        break
+                    except BaseException as _stream_exc:
+                        # Only retry transient upstream errors before any token was emitted.
+                        _is_transient = isinstance(_stream_exc, (asyncio.TimeoutError, TimeoutError))
+                        try:
+                            import httpx as _httpx_mod
+
+                            if isinstance(
+                                _stream_exc,
+                                (
+                                    _httpx_mod.ReadError,
+                                    _httpx_mod.ReadTimeout,
+                                    _httpx_mod.WriteError,
+                                    _httpx_mod.ConnectError,
+                                    _httpx_mod.RemoteProtocolError,
+                                    _httpx_mod.PoolTimeout,
+                                ),
+                            ):
+                                _is_transient = True
+                        except Exception:
+                            pass
+                        if "httpx" in type(_stream_exc).__module__.lower():
+                            _is_transient = True
+                        if _is_transient and _attempt < _max_retries and token_count == 0 and not full_answer.strip():
+                            _attempt += 1
+                            logger.warning(
+                                f"Transient OpenRouter stream error, retry {_attempt}/{_max_retries}: {type(_stream_exc).__name__}: {_stream_exc}"
+                            )
+                            await asyncio.sleep(0.5 * _attempt)
+                            continue
+                        raise
 
             tail = leak_guard.flush()
             if tail:

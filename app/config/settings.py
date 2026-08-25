@@ -40,6 +40,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "https://ai-trainer.lifeatamartha.com",
             "https://lifeatamartha.com",
+            "https://academy.amartha.com",
             "http://localhost:3000",
             "http://localhost:8000",
             "http://localhost:8001",

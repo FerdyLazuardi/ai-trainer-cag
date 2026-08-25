@@ -95,6 +95,10 @@ let _banCountdownInterval = null;     // setInterval handle for running countdow
 let _banBubbleEl = null;              // the DOM element showing the countdown
 let _banActive = false;
 
+function _shouldAddNgrokHeader(baseUrl) {
+    return typeof baseUrl === "string" && baseUrl.includes("ngrok");
+}
+
 function banStorageKey() {
     const userKey = (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0)
         ? MOODLE_USER_ID
@@ -131,9 +135,9 @@ function restoreStoredBanCountdown() {
 async function refreshBanStatus() {
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true"
+        "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -347,7 +351,8 @@ function setCoaching(on, showMsg) {
 async function chipTopik() {
     removeWelcome();
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-    const headers = { "ngrok-skip-browser-warning": "true" };
+    const headers = {};
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -385,7 +390,8 @@ function _esc(s) {
 async function openSectionPanel() {
     if (document.getElementById("ava-section-panel")) return;  // already open
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-    const headers = { "ngrok-skip-browser-warning": "true" };
+    const headers = {};
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -787,9 +793,9 @@ async function loadHistory() {
 
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true"
+        "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -859,9 +865,9 @@ async function doClearChat() {
     const sessionId = getSessionId();
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true"
+        "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -1169,6 +1175,7 @@ async function send(presetText, opts) {
     let _suggestCoaching = null;
     let _coachingTopic = null;
     let _coachingDone = false;
+    let _receivedDone = false;
 
     let streamTimeout = null;
     const STREAM_TIMEOUT_MS = 15000;
@@ -1198,9 +1205,9 @@ async function send(presetText, opts) {
         : "";
 
     const headers = {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true"
+        "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -1244,6 +1251,7 @@ async function send(presetText, opts) {
         _streamActive = true;
         _finalized = false;
         _streamFailed = false;
+        _receivedDone = false;
         _suggestCoaching = null;  // backend auto-hook signal (set in done event)
         _coachingTopic = null;     // topic name when the offer was streak-triggered
         _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
@@ -1270,7 +1278,8 @@ async function send(presetText, opts) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
-                const finalText = _targetText || (_streamFailed ? "" : "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏");
+                const finalText = _receivedDone ? (_targetText || (_streamFailed ? "" : "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏")) : (_streamFailed ? _targetText : "");
+                if (!_receivedDone && !_streamFailed) return;
                 finalizeStreamBubble(contentDiv, bubble, finalText);
                 if (_streamFailed) return;
                 // Auto-hook: after the answer lands, offer coaching. Backend
@@ -1299,8 +1308,6 @@ async function send(presetText, opts) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            resetStreamTimeout();
-
             buffer += decoder.decode(value, { stream: true });
 
             const lines = buffer.split("\n");
@@ -1325,6 +1332,7 @@ async function send(presetText, opts) {
                         }
 
                         if (currentEventType === "done") {
+                            _receivedDone = true;
                             if (parsed.suggest_coaching !== undefined) _suggestCoaching = parsed.suggest_coaching;
                             if (parsed.coaching_topic !== undefined) _coachingTopic = parsed.coaching_topic;
                             if (parsed.coaching_done !== undefined) _coachingDone = parsed.coaching_done;
@@ -1363,21 +1371,10 @@ async function send(presetText, opts) {
                         if (parsed.token !== undefined) {
                             startStreamBubble();
                             _targetText += parsed.token;
-                            if (window.SIMULATE_DISCONNECT && _targetText.length > 100) {
-                                window.SIMULATE_DISCONNECT = false;
-                                window.SIMULATED_ERROR_TO_THROW = new Error("SIMULATED_NETWORK_DROP");
-                            }
                         }
 
                     } catch (parseErr) {
                         console.warn("SSE parse error:", parseErr, jsonStr);
-                    }
-
-                    if (window.SIMULATED_ERROR_TO_THROW) {
-                        const err = window.SIMULATED_ERROR_TO_THROW;
-                        window.SIMULATED_ERROR_TO_THROW = null;
-                        console.warn("[SIMULATION] Intentionally throwing simulated network drop to outer scope!");
-                        throw err;
                     }
 
                     currentEventType = "";
@@ -1390,16 +1387,50 @@ async function send(presetText, opts) {
             }
         }
 
+        // Guard: reader closed without done -> truncation (OpenRouter/MiMo drop). Auto 1x retry else Retry button.
+        if (!_receivedDone && !_streamFailed) {
+            _streamFailed = true;
+            _streamActive = false;
+            removeTyping();
+            if (!_streamStarted) startStreamBubble();
+
+            if (!opts._autoRetry) {
+                console.warn("Stream truncated without done event — auto-retrying once");
+                if (streamWrap && streamWrap.isConnected) streamWrap.remove();
+                isStreaming = false;
+                setSendButtonState(false);
+                currentAbortController = null;
+                setTimeout(() => send(text, { skipBubble: true, _autoRetry: true }), 600);
+                return;
+            }
+
+            if (bubble && contentDiv && _targetText && !_finalized) {
+                _finalized = true;
+                finalizeStreamBubble(contentDiv, bubble, _targetText);
+            }
+            showStreamRetryStatus(streamWrap, () => send(text, { skipBubble: true }));
+            return;
+        }
         // Signal stream logic is finished receiving
         _streamActive = false;
-
-
 
     } catch (err) {
         _streamActive = false; // Ensure stream is flagged as inactive
         if (err.name === 'AbortError' && !_streamFailed) {
             console.log("Request cancelled by user.");
             removeTyping();
+            return;
+        }
+        // Auto 1x retry on transient network errors before showing Retry button
+        const isTransient = err.name !== 'AbortError' && err.message !== 'RATE_LIMIT' && !opts._autoRetry;
+        if (isTransient) {
+            console.warn("Transient stream error — auto-retrying once:", err.message);
+            removeTyping();
+            if (streamWrap && streamWrap.isConnected) streamWrap.remove();
+            isStreaming = false;
+            setSendButtonState(false);
+            currentAbortController = null;
+            setTimeout(() => send(text, { skipBubble: true, _autoRetry: true }), 600);
             return;
         }
         console.error("Stream Error:", err);
@@ -1421,10 +1452,6 @@ async function send(presetText, opts) {
         }
         showStreamRetryStatus(streamWrap, () => send(text, { skipBubble: true }));
     } finally {
-        if (streamTimeout) {
-            clearTimeout(streamTimeout);
-            streamTimeout = null;
-        }
         isStreaming = false;
         setSendButtonState(false);
         currentAbortController = null;

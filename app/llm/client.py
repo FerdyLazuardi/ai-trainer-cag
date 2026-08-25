@@ -20,7 +20,7 @@ async def _strip_openai_ua(request: httpx.Request) -> None:
 @lru_cache(maxsize=1)
 def _shared_http_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(60.0, connect=10.0),
+        timeout=httpx.Timeout(80.0, connect=10.0),
         event_hooks={"request": [_strip_openai_ua]},
     )
 
@@ -74,7 +74,7 @@ def create_llm(
     model_kwargs: dict | None = None,
     streaming: bool = False,
     stream_usage: bool = True,
-    request_timeout: int = 60,
+    request_timeout: int = 80,
 ) -> ChatOpenAI:
     return ChatOpenAI(
         model=model,
@@ -191,7 +191,7 @@ def get_generate_llm() -> ChatOpenAI:
         model=settings.llm_model,
         temperature=settings.generate_llm_temperature,
         max_tokens=settings.llm_max_tokens,
-        request_timeout=60,
+        request_timeout=80,
         streaming=True,
         # stream_usage=True so OpenRouter emits a usage chunk → final AIMessage
         # carries token_usage for _log_cache_usage + chat.py stream accounting.
@@ -217,7 +217,7 @@ def get_generate_llm_nostream() -> ChatOpenAI:
         model=settings.llm_model,
         temperature=settings.generate_llm_temperature,
         max_tokens=settings.llm_max_tokens,
-        request_timeout=60,
+        request_timeout=80,
         streaming=False,
         default_headers={
             "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
