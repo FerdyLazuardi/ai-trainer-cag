@@ -260,8 +260,14 @@ body.chat-open #chat-toggle.pulse::before {
 .bubble .content a {
     color: #7D50A1;
     font-weight: 600;
-    text-decoration: none;
+    text-decoration: underline;
+    text-underline-offset: 2px;
     word-break: break-word;
+    cursor: pointer;
+}
+
+.bubble .content a:hover {
+    color: #5c357b;
 }
 
 .bubble p {

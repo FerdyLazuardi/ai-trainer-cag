@@ -24,12 +24,13 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params={"token": token}, follow_redirects=True, timeout=30.0)
+            response = await client.get(url, params={"token": token}, follow_redirects=True, timeout=300.0)
             response.raise_for_status()
             data = response.json()
     except Exception as exc:
-        logger.error(f"Failed to fetch spreadsheet data from GAS Web App: {exc}")
-        return {"status": "failed", "message": str(exc)}
+        err_msg = f"{type(exc).__name__}: {exc}".strip(": ")
+        logger.error(f"Failed to fetch spreadsheet data from GAS Web App: {err_msg}")
+        return {"status": "failed", "message": err_msg}
 
     users_updated = 0
     branches_updated = 0
