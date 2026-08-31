@@ -95,10 +95,6 @@ let _banCountdownInterval = null;     // setInterval handle for running countdow
 let _banBubbleEl = null;              // the DOM element showing the countdown
 let _banActive = false;
 
-function _shouldAddNgrokHeader(baseUrl) {
-    return typeof baseUrl === "string" && baseUrl.includes("ngrok");
-}
-
 function banStorageKey() {
     const userKey = (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0)
         ? MOODLE_USER_ID
@@ -137,7 +133,6 @@ async function refreshBanStatus() {
     const headers = {
         "Content-Type": "application/json"
     };
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -352,7 +347,6 @@ async function chipTopik() {
     removeWelcome();
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {};
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -391,7 +385,6 @@ async function openSectionPanel() {
     if (document.getElementById("ava-section-panel")) return;  // already open
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {};
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -795,7 +788,6 @@ async function loadHistory() {
     const headers = {
         "Content-Type": "application/json"
     };
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -867,7 +859,6 @@ async function doClearChat() {
     const headers = {
         "Content-Type": "application/json"
     };
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -1207,7 +1198,6 @@ async function send(presetText, opts) {
     const headers = {
         "Content-Type": "application/json"
     };
-    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;

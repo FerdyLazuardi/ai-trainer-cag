@@ -447,13 +447,10 @@ class Settings(BaseSettings):
     # worker capacity re-summarizing the same session.
     ltm_afk_threshold_seconds: int = 36000
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
-    # Default points at the dev/free-tier ngrok tunnel (interstitial warning
-    # page on first visit, random subdomain, no custom domain, 1 tunnel at
-    # a time — see main.py CORS block for what NOT to add that would break it).
-    # Override MOODLE_API_URL in .env for production. Do NOT bake a fixed
-    # production domain here — operators switch tunnels and the URL must
-    # remain env-driven.
-    moodle_api_url: str = "https://semiexpositive-renaldo-unvindictively.ngrok-free.dev/"
+    # Staging default — was ngrok free-tier tunnel (removed 2026-08, now
+    # https://amarthapedia-staging.lifeatamartha.com). Override
+    # MOODLE_API_URL in .env for local/prod as needed.
+    moodle_api_url: str = "https://amarthapedia-staging.lifeatamartha.com/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
 
     # ─── Security ───────────────────────────────────────────────────────────

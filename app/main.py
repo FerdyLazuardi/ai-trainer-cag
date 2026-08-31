@@ -233,29 +233,24 @@ def create_app() -> FastAPI:
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
     # ─── CORS ───────────────────────────────────────────────────────────────
-    # ngrok-free-domain invariants — DO NOT add any of the following without
-    # re-checking the Moodle plugin tunnel flow (settings.moodle_api_url):
-    #   1. Host-header validation: ngrok rotates subdomains, so any allowlist
-    #      tied to a specific Host header breaks the tunnel the moment the
-    #      free-tier subdomain changes.
-    #   2. IP allowlist: ngrok's exit IPs rotate within a wide NAT range;
-    #      allowlists block the tunnel intermittently.
-    #   3. Per-IP rate limit: same — shared ngrok NAT IPs would hammer the
-    #      limit and lock out legitimate Moodle traffic. Global `rate_limit`
-    #      in settings.py is fine; per-IP is not.
-    #   4. CSP / X-Frame-Options / Referrer-Policy: ngrok's first-visit
-    #      interstitial is a same-origin page; aggressive CSP would block
-    #      the click-through. Leave defaults.
-    #   5. Origin reflection (allow_origin_regex=".*"): CSRF exfil vector.
-    #      The explicit allowlist below is the correct posture — Moodle POSTs
-    #      are server-to-server (no Origin header) so they never trip CORS
-    #      anyway; only the dashboard frontend hits CORS preflight.
+    # Moodle is now on a stable domain (https://amarthapedia-staging.
+    # lifeatamartha.com, was ngrok free-tier before 2026-08). General
+    # guidance:
+    #   1. Host-header / IP allowlists and per-IP rate limits are now safe
+    #      to add if needed (ngrok's rotating subdomain / CGNAT no longer
+    #      applies). Global `rate_limit` in settings.py remains fine.
+    #   2. CSP / X-Frame-Options can be tightened — no more ngrok first-visit
+    #      interstitial page to worry about.
+    #   3. Origin reflection (allow_origin_regex=".*") is still a CSRF exfil
+    #      vector — keep the explicit allowlist below.
+    # Moodle POSTs are server-to-server (no Origin header) so they never trip
+    # CORS anyway; only the dashboard frontend hits CORS preflight.
     #
     # The default allowlist below is localhost-only (dev). Production must
     # set CORS_ALLOW_ORIGINS env to the real frontend origins (dashboard,
-    # etc). Tunnel traffic (ngrok → api) is NOT affected by CORS
-    # because the Moodle plugin uses a server-side HTTP client, not a
-    # browser — CORS is a browser-only concern.
+    # Moodle staging domain, etc). Moodle server-to-server traffic is NOT
+    # affected by CORS because the plugin uses a server-side HTTP client —
+    # CORS is a browser-only concern.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,

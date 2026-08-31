@@ -1977,7 +1977,7 @@ async def chat_stream(
             # event that resets the clock.
             _events = cag_graph.astream_events(initial_state, config=config, version="v2")
             # Non-stream generate is atomic — astream_events emits NOTHING for the
-            # 2-9s the LLM call blocks. That idle gap lets ngrok/free proxies cut
+            # 2-9s the LLM call blocks. That idle gap lets reverse proxies cut
             # the SSE connection (and Starlette's own 60s no-yield timeout abort
             # the response). A short wait_for + emit an SSE comment ping (": ping",
             # ignored by the browser EventSource/reader) on each timeout keeps the
@@ -2240,9 +2240,10 @@ async def chat_stream(
         # Fix: re-run the graph via ainvoke (full non-stream, generate_node's
         # 4-attempt retry applies) and emit the result as a single token.
         # ainvoke reads result["messages"][-1].content directly — no dependency
-        # on astream_events event emission. The 2nd run almost always succeeds
-        # because the flake is sub-second transient. Bounded by the graph's
-        # own timeout; the keepalive ping above keeps ngrok alive during it.
+            # on astream_events event emission. The 2nd run almost always succeeds
+            # because the flake is sub-second transient. Bounded by the graph's
+            # own timeout; the keepalive ping above keeps the connection alive
+            # during it.
         if not full_answer.strip():
             logger.warning(
                 "Stream produced empty answer (provider flake OR astream_events "
