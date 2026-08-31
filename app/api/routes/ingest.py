@@ -121,6 +121,8 @@ class SpreadsheetSyncResponse(BaseModel):
     message: str
     users_updated: int
     branches_updated: int
+    users_deleted: int = 0
+    branches_deleted: int = 0
 
 
 @router.post(
@@ -156,7 +158,9 @@ async def spreadsheet_sync(
     return SpreadsheetSyncResponse(
         message="Spreadsheet sync successful.",
         users_updated=result.get("users_updated", 0),
-        branches_updated=result.get("branches_updated", 0)
+        branches_updated=result.get("branches_updated", 0),
+        users_deleted=result.get("users_deleted", 0),
+        branches_deleted=result.get("branches_deleted", 0),
     )
 
 

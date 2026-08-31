@@ -84,7 +84,10 @@ async def test_sync_kpi_from_spreadsheet_success(monkeypatch):
     assert result["status"] == "success"
     assert result["users_updated"] == 1
     assert result["branches_updated"] == 1
-    assert len(session.executed) == 2
+    assert result["users_deleted"] == 0
+    assert result["branches_deleted"] == 0
+    # 2 upserts + 2 orphan deletes
+    assert len(session.executed) == 4
     assert session.committed is True
 
 

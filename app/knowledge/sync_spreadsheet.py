@@ -1,4 +1,5 @@
 import httpx
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 from loguru import logger
@@ -56,6 +57,10 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
         logger.error(f"Invalid spreadsheet data format returned. Expected list or dict, got: {type(data)}")
         return {"status": "failed", "message": "invalid data format"}
 
+    # Collect incoming keys for orphan cleanup (spreadsheet is source of truth)
+    incoming_usernames: set[str] = set()
+    incoming_points: set[str] = set()
+
     # 1. Upsert User KPI Data
     for row in users_list:
         try:
@@ -88,6 +93,7 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
                 }
             )
             await session.execute(stmt)
+            incoming_usernames.add(username)
             users_updated += 1
         except Exception as e:
             logger.warning(f"Error parsing user row {row}: {e}")
@@ -124,16 +130,47 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
                 }
             )
             await session.execute(stmt)
+            incoming_points.add(point)
             branches_updated += 1
         except Exception as e:
             logger.warning(f"Error parsing branch row {row}: {e}")
 
+    # 3. Delete orphans — rows in DB that no longer exist in spreadsheet
+    users_deleted = 0
+    branches_deleted = 0
+    try:
+        if incoming_usernames:
+            res = await session.execute(
+                delete(UserKPIData).where(UserKPIData.username.notin_(incoming_usernames))
+            )
+            users_deleted = int(getattr(res, "rowcount", 0) or 0)
+        elif users_list == [] and branches_list == []:
+            # Both lists empty means payload was empty dict/list — skip delete to avoid wipe
+            logger.warning("Spreadsheet payload empty — skipping orphan delete to avoid wipe")
+        # If users_list was provided but all rows were skipped (e.g. missing username), don't wipe either
+        elif not incoming_usernames and users_list:
+            logger.warning("No valid usernames parsed — skipping user orphan delete")
+
+        if incoming_points:
+            res = await session.execute(
+                delete(BranchData).where(BranchData.point.notin_(incoming_points))
+            )
+            branches_deleted = int(getattr(res, "rowcount", 0) or 0)
+        elif not incoming_points and branches_list:
+            logger.warning("No valid points parsed — skipping branch orphan delete")
+    except Exception as e:
+        logger.warning(f"Failed to delete orphan spreadsheet rows: {e}")
 
     await session.commit()
-    logger.info(f"Spreadsheet sync complete. Users updated: {users_updated}, Branches updated: {branches_updated}")
-    
+    logger.info(
+        f"Spreadsheet sync complete. Users updated: {users_updated} (deleted: {users_deleted}), "
+        f"Branches updated: {branches_updated} (deleted: {branches_deleted})"
+    )
+
     return {
         "status": "success",
         "users_updated": users_updated,
         "branches_updated": branches_updated,
+        "users_deleted": users_deleted,
+        "branches_deleted": branches_deleted,
     }
