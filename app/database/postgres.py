@@ -149,6 +149,27 @@ async def init_db() -> None:
             text("ALTER TABLE user_ltm_memories ADD COLUMN IF NOT EXISTS "
                  "learning_summary TEXT")
         )
+
+        # Spreadsheet mirror columns (Sep 2026 — paginated GAS sync, 10k rows).
+        # create_all won't ALTER existing tables, so add idempotently here.
+        # Dedicated columns avoid JSON->> scans on the chat hot path.
+        await conn.execute(text("ALTER TABLE user_kpi_data ADD COLUMN IF NOT EXISTS periode VARCHAR(32)"))
+        await conn.execute(text("ALTER TABLE user_kpi_data ADD COLUMN IF NOT EXISTS role VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE user_kpi_data ADD COLUMN IF NOT EXISTS point_norm VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE branch_data ADD COLUMN IF NOT EXISTS point_norm VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE branch_data ADD COLUMN IF NOT EXISTS periode VARCHAR(32)"))
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_user_kpi_data_periode ON user_kpi_data (periode)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_user_kpi_data_point_norm ON user_kpi_data (point_norm)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_branch_data_point_norm ON branch_data (point_norm)")
+        )
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_branch_data_periode ON branch_data (periode)")
+        )
         
         # agent_logs predates OpenRouter token tracking. create_all won't ALTER
         # an existing table, so add the token tracking columns idempotently here.

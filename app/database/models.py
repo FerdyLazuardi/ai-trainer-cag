@@ -197,6 +197,12 @@ class UserKPIData(Base):
 
     username: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=True)
+    # Dedicated columns for hot-path filters (chat.py PK lookup stays on
+    # username; these avoid JSON->> scans for periode/role/point filters).
+    # Populated by sync_spreadsheet.py from the GAS row; NULL = not provided.
+    periode: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    point_norm: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -213,6 +219,11 @@ class BranchData(Base):
 
     point: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
     nama_cabang: Mapped[str] = mapped_column(String(255), nullable=True)
+    # Normalized point (lowercase, no spaces) for the chat.py fallback match
+    # without a full-table scan. Periode mirrors the user table for 1:1
+    # spreadsheet-period tracking.
+    point_norm: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    periode: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -28,6 +28,9 @@ class FakeSession:
         self.executed.append(stmt)
         return FakeResult()
 
+    async def flush(self):
+        pass
+
     async def commit(self):
         self.committed = True
 
@@ -41,28 +44,31 @@ async def test_sync_kpi_from_spreadsheet_success(monkeypatch):
 
     monkeypatch.setattr("app.knowledge.sync_spreadsheet.get_settings", lambda: FakeSettings())
 
-    # Mock httpx response
+    USER_ROW = {
+        "user_id": "user1",
+        "full_name": "User One",
+        "KPI 2026": "KPI 1",
+        "Jumlah Mitra Lancar": 10,
+        "Jumlah Mitra Nunggak": 5
+    }
+    BRANCH_ROW = {
+        "point": "cabangA",
+        "nama_cabang": "Cabang A",
+        "target_cabang": "Target A",
+        "total_mitra_aktif": 50,
+        "npl_cabang": "1.2%"
+    }
+
+    # Mock httpx response (paginated GAS: per-scope pages + legacy fallback)
     class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
         def raise_for_status(self):
             pass
 
         def json(self):
-            return [
-                {
-                    "user_id": "user1",
-                    "full_name": "User One",
-                    "KPI 2026": "KPI 1",
-                    "Jumlah Mitra Lancar": 10,
-                    "Jumlah Mitra Nunggak": 5
-                },
-                {
-                    "point": "cabangA",
-                    "nama_cabang": "Cabang A",
-                    "target_cabang": "Target A",
-                    "total_mitra_aktif": 50,
-                    "npl_cabang": "1.2%"
-                }
-            ]
+            return self._payload
 
     class FakeClient:
         async def __aenter__(self):
@@ -73,8 +79,14 @@ async def test_sync_kpi_from_spreadsheet_success(monkeypatch):
 
         async def get(self, url, params, follow_redirects, timeout=30.0):
             assert url == "https://example.com/gas"
-            assert params == {"token": "test_token"}
-            return FakeResponse()
+            assert params.get("token") == "test_token"
+            scope = params.get("scope")
+            if scope == "users":
+                return FakeResponse([USER_ROW])
+            if scope == "branches":
+                return FakeResponse([BRANCH_ROW])
+            # legacy single-shot fallback: combined flat list
+            return FakeResponse([USER_ROW, BRANCH_ROW])
 
     monkeypatch.setattr("httpx.AsyncClient", FakeClient)
 

@@ -61,6 +61,22 @@ async def sync_moodle_task(
         return summary
 
 
+@worker.task(max_tries=1, timeout=900)
+async def sync_spreadsheet_task() -> dict[str, Any]:
+    """Paginated GAS spreadsheet sync (10k users, ~4MB/page, manual trigger only).
+
+    Runs in the worker so the API never holds a request past the Cloudflare
+    120s proxy timeout. Timeout 900s covers ~10 user pages + N branch pages
+    plus staging upserts. No cron — Spreadsheet is synced via manual trigger.
+    """
+    from app.knowledge.sync_spreadsheet import sync_kpi_from_spreadsheet
+
+    async with AsyncSessionLocal() as session:
+        result = await sync_kpi_from_spreadsheet(session)
+        logger.info(f"Spreadsheet sync completed: {result}")
+        return result
+
+
 @worker.task
 async def dummy_task(name: str) -> str:
     logger.info(f"Running dummy task for {name}")

@@ -117,51 +117,80 @@ async def moodle_sync(
     )
 
 
-class SpreadsheetSyncResponse(BaseModel):
+class SpreadsheetSyncEnqueuedResponse(BaseModel):
     message: str
-    users_updated: int
-    branches_updated: int
-    users_deleted: int = 0
-    branches_deleted: int = 0
+    job_id: str
+    status: str = "queued"
+
+
+class SpreadsheetSyncStatusResponse(BaseModel):
+    job_id: str
+    status: str  # queued | started | finished | failed | not_found
+    result: dict | None = None
 
 
 @router.post(
     "/ingest/spreadsheet/sync",
-    response_model=SpreadsheetSyncResponse,
-    summary="Sync weekly Google Spreadsheet KPI and branch data",
+    response_model=SpreadsheetSyncEnqueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue weekly Google Spreadsheet KPI and branch sync (async)",
 )
 async def spreadsheet_sync(
     current_user: User = Depends(get_current_user),
     _admin_key: str = Depends(verify_api_key),
-) -> SpreadsheetSyncResponse:
+) -> SpreadsheetSyncEnqueuedResponse:
     """
-    Trigger manual sync of Google Spreadsheet KPI and branch data.
+    Enqueue the paginated spreadsheet sync to the streaq worker (manual trigger).
+
+    Returns 202 immediately so the request never hits the Cloudflare 120s
+    proxy timeout — the worker fetches GAS page-by-page (limit=1000) with a
+    900s task timeout. Poll ``GET /ingest/spreadsheet/status/{job_id}``.
     """
-    logger.info(f"Spreadsheet sync triggered by user: {current_user.username}")
-    from app.database.postgres import AsyncSessionLocal
-    from app.knowledge.sync_spreadsheet import sync_kpi_from_spreadsheet
+    logger.info(f"Spreadsheet sync enqueued by user: {current_user.username}")
+    from app.worker import sync_spreadsheet_task
 
-    async with AsyncSessionLocal() as session:
-        result = await sync_kpi_from_spreadsheet(session)
+    task = sync_spreadsheet_task.enqueue()
+    await task
 
-    if result.get("status") == "failed":
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {result.get('message')}"
-        )
-    elif result.get("status") == "skipped":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sync skipped: SPREADSHEET_SYNC_URL is not configured."
-        )
-
-    return SpreadsheetSyncResponse(
-        message="Spreadsheet sync successful.",
-        users_updated=result.get("users_updated", 0),
-        branches_updated=result.get("branches_updated", 0),
-        users_deleted=result.get("users_deleted", 0),
-        branches_deleted=result.get("branches_deleted", 0),
+    return SpreadsheetSyncEnqueuedResponse(
+        message="Spreadsheet sync enqueued. Poll GET /ingest/spreadsheet/status/{job_id}.",
+        job_id=task.id,
+        status="queued",
     )
+
+
+@router.get(
+    "/ingest/spreadsheet/status/{job_id}",
+    response_model=SpreadsheetSyncStatusResponse,
+    summary="Get the status of an enqueued spreadsheet sync job",
+)
+async def spreadsheet_sync_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    _admin_key: str = Depends(verify_api_key),
+) -> SpreadsheetSyncStatusResponse:
+    """Poll worker-side status/result for a spreadsheet sync job."""
+    from app.worker import worker
+
+    try:
+        task_status = await worker.status_by_id(job_id)
+        status_str = str(getattr(task_status, "value", task_status))
+    except Exception:
+        return SpreadsheetSyncStatusResponse(job_id=job_id, status="not_found")
+
+    result: dict | None = None
+    if status_str in ("finished", "done", "completed", "success"):
+        try:
+            task_result = await worker.result_by_id(job_id, timeout=0)
+            raw = getattr(task_result, "result", task_result)
+            if isinstance(raw, dict):
+                result = raw
+            else:
+                result = {"result": raw}
+        except Exception:
+            result = None
+
+    return SpreadsheetSyncStatusResponse(job_id=job_id, status=status_str, result=result)
 
 
 
