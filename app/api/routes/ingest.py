@@ -179,14 +179,22 @@ async def spreadsheet_sync_status(
         return SpreadsheetSyncStatusResponse(job_id=job_id, status="not_found")
 
     result: dict | None = None
-    if status_str in ("finished", "done", "completed", "success"):
+    if status_str == "done":
         try:
-            task_result = await worker.result_by_id(job_id, timeout=0)
-            raw = getattr(task_result, "result", task_result)
-            if isinstance(raw, dict):
-                result = raw
+            # Status is already done so the result key exists; a short
+            # timeout only guards the race where it just expired.
+            # NOTE: timeout must be > 0 — timeout=0 raises immediately.
+            task_result = await worker.result_by_id(job_id, timeout=10)
+            try:
+                raw = task_result.result
+            except Exception as exc:
+                # Task ran but failed: surface the worker-side error.
+                result = {"status": "failed", "error": str(getattr(task_result, 'exception', exc))}
             else:
-                result = {"result": raw}
+                if isinstance(raw, dict):
+                    result = raw
+                else:
+                    result = {"result": raw}
         except Exception:
             result = None
 
