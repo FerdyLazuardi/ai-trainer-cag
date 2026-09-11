@@ -1283,14 +1283,15 @@ def _format_user_context_block(uctx: dict) -> str:
 
     standard_keys = {
         "name", "gender", "dept", "position", "grade", "location", "point", 
-        "area", "regional", "username", "full_name", "jabatan", "cakupan"
+        "area", "regional", "pulau", "username", "full_name", "jabatan", "cakupan"
     }
 
     # Extract profile keys case-insensitively while preserving insertion order
     profile_dict = {}
     for k, v in uctx.items():
-        if v is not None and str(k).lower().strip() in standard_keys:
-            profile_dict[str(k).strip()] = v
+        k_norm = str(k).lower().strip()
+        if v is not None and str(v).strip() != "" and k_norm in standard_keys:
+            profile_dict[k_norm] = str(v).strip()
 
     for k, v in profile_dict.items():
         label = k.replace("_", " ").title()
@@ -1298,7 +1299,8 @@ def _format_user_context_block(uctx: dict) -> str:
 
     for k, v in uctx.items():
         k_str = str(k).strip()
-        if k_str in profile_dict or k_str.lower() == "role" or v is None:
+        k_norm = k_str.lower()
+        if k_norm in standard_keys or k_norm in profile_dict or k_norm == "role" or v is None or str(v).strip() == "":
             continue
             
         if " - " in k_str:

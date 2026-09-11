@@ -611,8 +611,18 @@ async def _prepare_cag_context(
             kpi_stmt = select(UserKPIData).where(UserKPIData.username == current_user.username)
             kpi_data = (await db_session.execute(kpi_stmt)).scalars().first()
 
-            # Fetch Branch Data (with normalized fallback match)
-            point_val = str(current_user.point or "").strip()
+            # Prioritize point from spreadsheet (UserKPIData), fallback to Moodle current_user.point
+            point_from_kpi = ""
+            if kpi_data:
+                if isinstance(kpi_data.data, dict):
+                    for k, v in kpi_data.data.items():
+                        if str(k).lower().strip() in ("point", "cabang") and v:
+                            point_from_kpi = str(v).strip()
+                            break
+                if not point_from_kpi and getattr(kpi_data, "point_norm", None):
+                    point_from_kpi = kpi_data.point_norm
+
+            point_val = point_from_kpi or str(current_user.point or "").strip()
             if point_val:
                 branch_stmt = select(BranchData).where(BranchData.point == point_val)
                 branch_data = (await db_session.execute(branch_stmt)).scalars().first()
@@ -641,15 +651,45 @@ async def _prepare_cag_context(
         "gender": current_user.gender,
         "area": current_user.area,
         "regional": current_user.regional,
+        "pulau": "",
     }
 
     if kpi_data and kpi_data.full_name:
         user_context["name"] = kpi_data.full_name
 
+    # Override point, area, regional, pulau from spreadsheet (UserKPIData has priority)
+    if kpi_data and isinstance(kpi_data.data, dict):
+        for k, v in kpi_data.data.items():
+            k_lower = str(k).lower().strip()
+            val_str = str(v).strip() if v is not None else ""
+            if val_str:
+                if k_lower in ("point", "cabang"):
+                    user_context["point"] = val_str
+                elif k_lower in ("area", "wilayah"):
+                    user_context["area"] = val_str
+                elif k_lower in ("regional", "region"):
+                    user_context["regional"] = val_str
+                elif k_lower in ("pulau", "island"):
+                    user_context["pulau"] = val_str
+
+    # Secondary override from BranchData if not yet set by UserKPIData
+    if branch_data and isinstance(branch_data.data, dict):
+        for k, v in branch_data.data.items():
+            k_lower = str(k).lower().strip()
+            val_str = str(v).strip() if v is not None else ""
+            if val_str:
+                if not user_context.get("area") and k_lower in ("area", "wilayah"):
+                    user_context["area"] = val_str
+                elif not user_context.get("regional") and k_lower in ("regional", "region"):
+                    user_context["regional"] = val_str
+                elif not user_context.get("pulau") and k_lower in ("pulau", "island"):
+                    user_context["pulau"] = val_str
+
     # Keys to exclude from raw dynamic injection because they duplicate standard profile fields or internal metadata
     REDUNDANT_KEYS = {
-        "full_name", "Jabatan", "Role", "nama_cabang", "username", 
-        "user_id", "nik", "user_name", "updated_at", "periode", "periode_kpi"
+        "full_name", "jabatan", "role", "nama_cabang", "username", 
+        "user_id", "nik", "user_name", "updated_at", "periode", "periode_kpi",
+        "point", "cabang", "area", "wilayah", "regional", "region", "pulau", "island"
     }
 
     # Special handling for Management Trainee role adaptation from spreadsheet
@@ -664,8 +704,9 @@ async def _prepare_cag_context(
             user_context["role"] = sp_role.upper()
 
         for k, v in kpi_data.data.items():
-            if k not in user_context and k not in REDUNDANT_KEYS and v is not None:
-                user_context[k] = v
+            k_clean = str(k).strip()
+            if k_clean.lower() not in REDUNDANT_KEYS and k_clean not in user_context and v is not None:
+                user_context[k_clean] = v
 
     # Inject branch-specific spreadsheet data dynamically (role-tailored & metadata filtered)
     if branch_data and isinstance(branch_data.data, dict):
@@ -679,7 +720,7 @@ async def _prepare_cag_context(
 
         for k, v in branch_data.data.items():
             k_clean = str(k).strip()
-            if k_clean in REDUNDANT_KEYS or v is None:
+            if k_clean.lower() in REDUNDANT_KEYS or v is None:
                 continue
             if k_clean.lower().endswith("updated_at") or k_clean.lower().endswith("updated at"):
                 continue
