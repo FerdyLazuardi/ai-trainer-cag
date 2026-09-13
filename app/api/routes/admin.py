@@ -416,3 +416,30 @@ async def get_spreadsheet_branches(
     }
 
 
+@router.delete("/spreadsheet/clean", summary="Clean / delete all spreadsheet KPI and branch records from PostgreSQL")
+async def clean_spreadsheet_data(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    """Delete all records from user_kpi_data and branch_data in PostgreSQL."""
+    async with engine.begin() as conn:
+        users_res = await conn.execute(text("DELETE FROM user_kpi_data"))
+        branches_res = await conn.execute(text("DELETE FROM branch_data"))
+        users_deleted = users_res.rowcount if users_res.rowcount is not None else 0
+        branches_deleted = branches_res.rowcount if branches_res.rowcount is not None else 0
+
+    return {
+        "status": "success",
+        "message": f"Successfully deleted {users_deleted} user KPI records and {branches_deleted} branch records.",
+        "users_deleted": users_deleted,
+        "branches_deleted": branches_deleted,
+    }
+
+
+@router.delete("/spreadsheet/users", summary="Clean all user KPI records from PostgreSQL")
+async def clean_spreadsheet_users(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    return await clean_spreadsheet_data(_=_)
+
+
+
