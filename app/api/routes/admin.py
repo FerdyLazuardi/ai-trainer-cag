@@ -249,3 +249,55 @@ async def get_active_kb(
     from app.graph.pipeline import _load_active_cag_kb_text
     content = await _load_active_cag_kb_text()
     return {"content": content}
+
+
+@router.get("/spreadsheet/schedule", summary="Get spreadsheet auto-sync schedule config")
+async def get_spreadsheet_schedule(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+    import json
+    redis = get_redis_client()
+    raw = await redis.get("cag:spreadsheet:schedule")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {
+        "enabled": False,
+        "schedule_type": "daily",
+        "hour": 2,
+        "minute": 0,
+        "day_of_week": 1,
+        "last_run_at": None,
+        "last_status": None,
+        "last_result": None,
+    }
+
+
+@router.post("/spreadsheet/schedule", summary="Update spreadsheet auto-sync schedule config")
+async def update_spreadsheet_schedule(
+    payload: Dict[str, Any],
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+    import json
+    redis = get_redis_client()
+
+    raw = await redis.get("cag:spreadsheet:schedule")
+    existing = json.loads(raw) if raw else {}
+
+    data = {
+        "enabled": bool(payload.get("enabled", False)),
+        "schedule_type": str(payload.get("schedule_type", "daily")),
+        "hour": int(payload.get("hour", 2)),
+        "minute": int(payload.get("minute", 0)),
+        "day_of_week": int(payload.get("day_of_week", 1)),
+        "last_run_at": payload.get("last_run_at") or existing.get("last_run_at"),
+        "last_status": payload.get("last_status") or existing.get("last_status"),
+        "last_result": payload.get("last_result") or existing.get("last_result"),
+    }
+    await redis.set("cag:spreadsheet:schedule", json.dumps(data))
+    return data
+

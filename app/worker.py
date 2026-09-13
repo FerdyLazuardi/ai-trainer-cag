@@ -63,17 +63,40 @@ async def sync_moodle_task(
 
 @worker.task(max_tries=1, timeout=900)
 async def sync_spreadsheet_task() -> dict[str, Any]:
-    """Paginated GAS spreadsheet sync (10k users, ~4MB/page, manual trigger only).
+    """Paginated GAS spreadsheet sync (10k users, ~4MB/page).
 
     Runs in the worker so the API never holds a request past the Cloudflare
     120s proxy timeout. Timeout 900s covers ~10 user pages + N branch pages
-    plus staging upserts. No cron — Spreadsheet is synced via manual trigger.
+    plus staging upserts.
     """
     from app.knowledge.sync_spreadsheet import sync_kpi_from_spreadsheet
+    import json
+    from datetime import datetime
 
     async with AsyncSessionLocal() as session:
         result = await sync_kpi_from_spreadsheet(session)
         logger.info(f"Spreadsheet sync completed: {result}")
+
+        # Update Redis schedule state with last run details
+        try:
+            from app.database.redis_client import get_redis_client
+            redis = get_redis_client()
+            now_iso = datetime.now(JakartaTz).isoformat()
+            raw = await redis.get("cag:spreadsheet:schedule")
+            sched = json.loads(raw) if raw else {
+                "enabled": False,
+                "schedule_type": "daily",
+                "hour": 2,
+                "minute": 0,
+                "day_of_week": 1,
+            }
+            sched["last_run_at"] = now_iso
+            sched["last_status"] = result.get("status", "unknown")
+            sched["last_result"] = result
+            await redis.set("cag:spreadsheet:schedule", json.dumps(sched))
+        except Exception as exc:
+            logger.warning(f"Failed to record spreadsheet sync status to Redis: {exc}")
+
         return result
 
 
@@ -217,6 +240,48 @@ async def _run_agent_logs_prune():
 async def _run_sync_moodle():
     # Sync Moodle KB pack every 6 hours
     await sync_moodle_task(course_id=None, target_sections=None, force_reingest=False)
+
+
+@worker.cron("0 * * * *", timeout=900)
+async def _run_scheduled_spreadsheet_sync():
+    """Check hourly if spreadsheet auto-sync is scheduled and due in WIB."""
+    try:
+        from app.database.redis_client import get_redis_client
+        import json
+        from datetime import datetime
+
+        redis = get_redis_client()
+        schedule_raw = await redis.get("cag:spreadsheet:schedule")
+        if not schedule_raw:
+            return
+
+        sched = json.loads(schedule_raw)
+        if not sched.get("enabled"):
+            return
+
+        now = datetime.now(JakartaTz)
+        target_hour = int(sched.get("hour", 2))
+        if now.hour != target_hour:
+            return
+
+        sched_type = sched.get("schedule_type", "daily")
+        if sched_type == "weekly":
+            target_dow = int(sched.get("day_of_week", 1))  # 0=Monday, 6=Sunday
+            if now.weekday() != target_dow:
+                return
+
+        # Anti-double-run: check if already run within the last 6 hours
+        last_run = sched.get("last_run_at")
+        if last_run:
+            last_dt = datetime.fromisoformat(last_run)
+            if (now - last_dt).total_seconds() < 21600:
+                return
+
+        logger.info(f"Triggering scheduled spreadsheet sync at hour {now.hour} WIB")
+        await sync_spreadsheet_task()
+    except Exception as exc:
+        logger.error(f"Error in scheduled spreadsheet sync check: {exc}")
+
 
 
 async def _eval_turn_task_fn(**kwargs) -> dict[str, Any]:

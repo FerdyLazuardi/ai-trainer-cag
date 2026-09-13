@@ -234,6 +234,27 @@ async def get_current_user(
     return user
 
 
+async def get_admin_or_jwt_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> User:
+    """
+    Allow authentication via X-API-Key (admin portal / worker / scripts) OR
+    Moodle JWT Bearer token.
+    """
+    import secrets
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+    if api_key and settings.admin_api_key and secrets.compare_digest(api_key, settings.admin_api_key):
+        return User(
+            user_id="admin",
+            role="admin",
+            username="admin",
+            fullname="System Administrator",
+        )
+    return await get_current_user(request, credentials)
+
+
+
 # ── Brute-force throttle (H-7) ───────────────────────────────────────────────
 # Sliding-window counter in Redis, keyed on client IP, 60s buckets.
 # Above 30 failed decodes per minute from the same IP, refuse with

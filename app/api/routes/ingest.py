@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.api.schemas import IngestEnqueuedResponse, IngestRequest, IngestStatusResponse
 from app.config.settings import get_settings
 import httpx
-from app.api.auth import get_current_user, User
+from app.api.auth import get_current_user, get_admin_or_jwt_user, User
 from app.api.routes.admin import verify_api_key
 
 router = APIRouter()
@@ -136,8 +136,7 @@ class SpreadsheetSyncStatusResponse(BaseModel):
     summary="Enqueue weekly Google Spreadsheet KPI and branch sync (async)",
 )
 async def spreadsheet_sync(
-    current_user: User = Depends(get_current_user),
-    _admin_key: str = Depends(verify_api_key),
+    current_user: User = Depends(get_admin_or_jwt_user),
 ) -> SpreadsheetSyncEnqueuedResponse:
     """
     Enqueue the paginated spreadsheet sync to the streaq worker (manual trigger).
@@ -166,8 +165,7 @@ async def spreadsheet_sync(
 )
 async def spreadsheet_sync_status(
     job_id: str,
-    current_user: User = Depends(get_current_user),
-    _admin_key: str = Depends(verify_api_key),
+    current_user: User = Depends(get_admin_or_jwt_user),
 ) -> SpreadsheetSyncStatusResponse:
     """Poll worker-side status/result for a spreadsheet sync job."""
     from app.worker import worker
