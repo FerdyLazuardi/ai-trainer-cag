@@ -301,3 +301,114 @@ async def update_spreadsheet_schedule(
     await redis.set("cag:spreadsheet:schedule", json.dumps(data))
     return data
 
+
+@router.get("/spreadsheet/users", summary="Get spreadsheet user KPI records from PostgreSQL")
+async def get_spreadsheet_users(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None),
+    role: str | None = Query(None),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    offset = (page - 1) * limit
+    params: dict = {"limit": limit, "offset": offset}
+    where_clauses = []
+
+    if search:
+        s = f"%{search.strip()}%"
+        params["search"] = s
+        where_clauses.append("(username ILIKE :search OR full_name ILIKE :search OR point_norm ILIKE :search)")
+
+    if role:
+        params["role"] = role.strip()
+        where_clauses.append("role = :role")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    count_sql = f"SELECT COUNT(*) FROM user_kpi_data {where_sql}"
+    data_sql = f"""
+        SELECT username, full_name, periode, role, point_norm, data, updated_at
+        FROM user_kpi_data
+        {where_sql}
+        ORDER BY updated_at DESC, username ASC
+        LIMIT :limit OFFSET :offset
+    """
+
+    async with engine.connect() as conn:
+        total_res = await conn.execute(text(count_sql), params)
+        total = total_res.scalar() or 0
+
+        rows_res = await conn.execute(text(data_sql), params)
+        rows = rows_res.mappings().all()
+
+    users = []
+    for r in rows:
+        d = dict(r.get("data") or {})
+        d["username"] = r["username"]
+        d["full_name"] = r["full_name"]
+        d["periode_kpi"] = r["periode"] or d.get("periode_kpi") or d.get("periode")
+        d["role"] = r["role"] or d.get("role") or d.get("position")
+        d["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
+        users.append(d)
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "users_total": total,
+        "users": users,
+    }
+
+
+@router.get("/spreadsheet/branches", summary="Get branch records from PostgreSQL")
+async def get_spreadsheet_branches(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    offset = (page - 1) * limit
+    params: dict = {"limit": limit, "offset": offset}
+    where_clauses = []
+
+    if search:
+        s = f"%{search.strip()}%"
+        params["search"] = s
+        where_clauses.append("(point ILIKE :search OR nama_cabang ILIKE :search OR point_norm ILIKE :search)")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    count_sql = f"SELECT COUNT(*) FROM branch_data {where_sql}"
+    data_sql = f"""
+        SELECT point, nama_cabang, point_norm, periode, data, updated_at
+        FROM branch_data
+        {where_sql}
+        ORDER BY point ASC
+        LIMIT :limit OFFSET :offset
+    """
+
+    async with engine.connect() as conn:
+        total_res = await conn.execute(text(count_sql), params)
+        total = total_res.scalar() or 0
+
+        rows_res = await conn.execute(text(data_sql), params)
+        rows = rows_res.mappings().all()
+
+    branches = []
+    for r in rows:
+        d = dict(r.get("data") or {})
+        d["point"] = r["point"]
+        d["nama_cabang"] = r["nama_cabang"]
+        d["periode"] = r["periode"] or d.get("periode")
+        d["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
+        branches.append(d)
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "branches_total": total,
+        "branches": branches,
+    }
+
+
