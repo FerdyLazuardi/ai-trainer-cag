@@ -341,6 +341,9 @@ async def get_spreadsheet_users(
         rows_res = await conn.execute(text(data_sql), params)
         rows = rows_res.mappings().all()
 
+        roles_res = await conn.execute(text("SELECT COALESCE(role, 'UNKNOWN'), COUNT(*) FROM user_kpi_data GROUP BY role ORDER BY COUNT(*) DESC"))
+        role_counts = {str(r[0]): int(r[1]) for r in roles_res.fetchall()}
+
     users = []
     for r in rows:
         d = dict(r.get("data") or {})
@@ -356,6 +359,7 @@ async def get_spreadsheet_users(
         "limit": limit,
         "total": total,
         "users_total": total,
+        "role_counts": role_counts,
         "users": users,
     }
 
