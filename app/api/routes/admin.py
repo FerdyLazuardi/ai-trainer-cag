@@ -439,323 +439,34 @@ async def clean_spreadsheet_users(
     return await clean_spreadsheet_data(_=_)
 
 
-@router.get("/prompts", summary="Get active production system prompts and modular blocks")
+@router.get("/prompts", summary="Get active system prompt strings from prompts.py")
 async def get_system_prompts(
     _=Depends(verify_api_key),
 ) -> Dict[str, Any]:
     """Return active production system prompts and modular XML blocks directly from cag-lms-agent."""
-    from app.llm.prompts import (
-        CHIT_CHAT_PROMPT,
-        CONVERSATIONAL_PROMPT,
-        DISAMBIG,
-        GROUNDING,
-        LTM_LEARNING_SUMMARY_PROMPT,
-        MENTORING_VOICE,
-        OUTPUT_CONTRACT,
-        PERSONA,
-        RESPONSE_GUIDELINES,
-        SOCRATIC_MODE,
-        SOCRATIC_OUTPUT_CONTRACT,
-        SOCRATIC_PROMPT,
-        SOCRATIC_RESPONSE_GUIDELINES,
-        STM_SUMMARY_PROMPT,
-    )
-
-    blocks = [
-        {
-            "id": "role",
-            "tag": "<role>",
-            "title": "Persona & Role Tailoring",
-            "actAs": "Senior Learning & Development Trainer at Amartha (Digital Learning team)",
-            "description": "Defines persona, peer-to-peer tone, Field Office (FO) vs Head Office (HO) answer tailoring, and language mirroring.",
-            "content": PERSONA,
-        },
-        {
-            "id": "output_contract",
-            "tag": "<output_contract>",
-            "title": "Output Contract & Safety Rules",
-            "actAs": "Senior colleague speaking from verified internalized memory",
-            "description": "Mandatory format constraints: direct opening, no markdown headings, no Chinese characters (Hanzi), no em-dashes.",
-            "content": OUTPUT_CONTRACT,
-        },
-        {
-            "id": "grounding",
-            "tag": "<grounding>",
-            "title": "Closed-Book Grounding & Truthfulness",
-            "actAs": "Strict closed-book assistant bounded exclusively by Amarthapedia Knowledge Base",
-            "description": "Enforces absolute truthfulness, zero guessing on metrics, and template for unknown terms.",
-            "content": GROUNDING,
-        },
-        {
-            "id": "response_guidelines",
-            "tag": "<response_guidelines>",
-            "title": "Response Guidelines (Caveman/Ponytail Style)",
-            "actAs": "Direct trainer who values extreme brevity and zero filler",
-            "description": "Brevity enforcement: 1-3 sentences max (<50 words) for lookups, bulleted lists for multi-point answers.",
-            "content": RESPONSE_GUIDELINES,
-        },
-        {
-            "id": "mentoring_voice",
-            "tag": "<mentoring_voice>",
-            "title": "Andragogy & Adult Learning Voice",
-            "actAs": "Mentor to adult learners using workplace Andragogy principles",
-            "description": "Adult learning principles: explain the 'why', anchor to field reality, decisive direct answers.",
-            "content": MENTORING_VOICE,
-        },
-        {
-            "id": "socratic_mode",
-            "tag": "<mode>",
-            "title": "Socratic Dialogue Engine",
-            "actAs": "Pure Socratic Coach (facilitator who guides users to construct answers themselves)",
-            "description": "5-stage diagnostic arc with explicit escape hatches for frustration or stalled states.",
-            "content": SOCRATIC_MODE,
-        },
-        {
-            "id": "disambig",
-            "tag": "<disambiguate>",
-            "title": "Disambiguation Gate",
-            "actAs": "Active listener who clarifies vague queries with 1 focused question",
-            "description": "Asks exactly one clarifying question when query is genuinely underspecified.",
-            "content": DISAMBIG,
-        },
-    ]
-
-    prompts = [
-        {
-            "id": "conversational",
-            "title": "Conversational QA Prompt",
-            "actAs": "Senior Learning & Development Trainer at Amartha (Digital Learning Team)",
-            "category": "core_generation",
-            "intentTrigger": "KNOWLEDGE • TOPIC_LIST • SECTION_DRILLDOWN • GENERAL",
-            "pipelineStage": "Production Graph _generate_node (Primary LLM Turn)",
-            "description": "Primary generation prompt for factual, policy, SOP, and operational questions.",
-            "tokensEst": len(CONVERSATIONAL_PROMPT) // 4,
-            "openRouterCached": True,
-            "components": ["<role>", "<output_contract>", "<grounding>", "<response_guidelines>", "<mentoring_voice>", "<disambiguate>"],
-            "content": CONVERSATIONAL_PROMPT,
-        },
-        {
-            "id": "socratic",
-            "title": "Socratic Coaching Prompt",
-            "actAs": "Socratic Coach (Facilitator who never states answers directly)",
-            "category": "core_generation",
-            "intentTrigger": "COACHING (Coaching Mode Active)",
-            "pipelineStage": "Production Graph _generate_node (Socratic Branch)",
-            "description": "Interactive coaching prompt guiding learners via targeted inferential questions.",
-            "tokensEst": len(SOCRATIC_PROMPT) // 4,
-            "openRouterCached": True,
-            "components": ["<role>", "<output_contract (socratic)>", "<grounding>", "<response_guidelines (socratic)>", "<disambiguate>", "<mode>"],
-            "content": SOCRATIC_PROMPT,
-        },
-        {
-            "id": "chit_chat",
-            "title": "Chit-Chat & Guardrail Prompt",
-            "actAs": "Friendly Peer Colleague with Strict Scope Guardrails",
-            "category": "core_generation",
-            "intentTrigger": "GREETING • AMBIGUOUS • OFF_SCOPE (~30% of Traffic)",
-            "pipelineStage": "Production Graph _generate_node (Zero-KB Fast Path)",
-            "description": "Handles informal greetings, vague turns, and declines off-topic queries with [OFFSCOPE].",
-            "tokensEst": len(CHIT_CHAT_PROMPT) // 4,
-            "openRouterCached": True,
-            "components": ["<role>", "<output_contract>", "<instructions>"],
-            "content": CHIT_CHAT_PROMPT,
-        },
-        {
-            "id": "stm_summary",
-            "title": "Short-Term Memory (STM) Dialogue Summarizer",
-            "actAs": "Dialogue Compression Engine",
-            "category": "memory_summarization",
-            "intentTrigger": "Turn threshold exceeded (Rolling Window)",
-            "pipelineStage": "Conversation State Maintenance (Async / Turn Boundary)",
-            "description": "Compresses running conversation history into 2-4 English bullets (max 60 words).",
-            "tokensEst": len(STM_SUMMARY_PROMPT) // 4,
-            "openRouterCached": False,
-            "components": ["STM Compression Directives"],
-            "content": STM_SUMMARY_PROMPT,
-        },
-        {
-            "id": "ltm_analyst",
-            "title": "Long-Term Memory (LTM) Learning Profile Analyst",
-            "actAs": "AI Learning Analyst (Employee Competency Profile Evaluator)",
-            "category": "memory_summarization",
-            "intentTrigger": "Post-Conversation Background Task",
-            "pipelineStage": "Celery / Streaq Worker (Async user_ltm_memories Table Update)",
-            "description": "Analyzes conversation session to maintain long-term competencies (Mastered vs Needs Practice).",
-            "tokensEst": len(LTM_LEARNING_SUMMARY_PROMPT) // 4,
-            "openRouterCached": False,
-            "components": ["LTM Analysis Directives", "JSON Schema Output"],
-            "content": LTM_LEARNING_SUMMARY_PROMPT,
-        },
-    ]
-
-    pipeline_assembly_frame = {
-        "id": "assembly_frame",
-        "tag": "Message Frame",
-        "title": "Prompt Assembly Architecture (_build_generate_messages)",
-        "actAs": "Message Construction & Prefix Cache Sequence",
-        "pipelineStage": "app.graph.pipeline._build_generate_messages",
-        "description": "How the graph runtime orders messages for OpenRouter prefix cache reuse on turn 2+.",
-        "tokensEst": 450,
-        "content": (
-            "# Sequence constructed in app/graph/pipeline.py -> _build_generate_messages():\n\n"
-            "# 1. SystemMessage #1 (Role persona & behavioral laws - Byte-stable prefix anchor)\n"
-            "msgs = [SystemMessage(content=system_prompt_text)]\n\n"
-            "# 2. SystemMessage #2 (Authoritative knowledge document filtered by FO vs HO)\n"
-            "if cag_kb_text:\n"
-            "    msgs.append(SystemMessage(content=cag_kb_text))\n\n"
-            "# 3. HumanMessage #3 (Dynamic Tail: user context, LTM profile, STM summary, topic catalog)\n"
-            "if dynamic_tail:\n"
-            "    msgs.append(HumanMessage(content=dynamic_tail))\n\n"
-            "# 4. Windowed Chat History (Recent user/assistant turns bounded by max_fresh_turns & max_history_ai_chars)\n"
-            "msgs += windowed_messages\n\n"
-            "# Prefix Cache Result:\n"
-            "# Messages #1 and #2 remain byte-stable across conversation turns, achieving ~100% prefix cache hits on OpenRouter."
-        ),
-    }
-
-    pipeline_context_blocks = [
-        pipeline_assembly_frame,
-        {
-            "id": "user_context",
-            "tag": "<user_context>",
-            "title": "User Profile & Branch Context Injection",
-            "actAs": "Injected User Profile (Drives FO vs HO Tailoring)",
-            "pipelineStage": "app.graph.pipeline._format_user_context_block",
-            "description": "Formats employee identity, NIK, role, branch, region, and KPI metrics so the LLM tailors answers directly to their operational realities.",
-            "tokensEst": 90,
-            "content": (
-                "<user_context>\n"
-                "- Name: Siti Rahmawati\n"
-                "- Username: 123456\n"
-                "- Role: BP (Field Office)\n"
-                "- Point: Cikupa\n"
-                "- Area: Banten 1\n"
-                "- Regional: West Java\n"
-                "- Pulau: Jawa\n"
-                "- Cakupan: Cabang\n"
-                "- KPI Repayment Rate: 98.5%\n"
-                "- KPI PAR: 1.2%\n"
-                "- KPI DPD 0: 97.8%\n"
-                "</user_context>"
-            ),
-        },
-        {
-            "id": "user_history",
-            "tag": "<user_history>",
-            "title": "Long-Term Memory (LTM) Profile Injection",
-            "actAs": "Injected Learning History from PostgreSQL",
-            "pipelineStage": "app.graph.pipeline._build_generate_messages (ltm_section)",
-            "description": "Injects the user's persistent learning summary (Mastered topics vs Needs Practice) from user_ltm_memories table into the conversation.",
-            "tokensEst": 45,
-            "content": (
-                "<user_history>\n"
-                "Ringkasan progres & konteks belajar user:\n"
-                "- Mastered: SOP Pencairan Pembiayaan, Validasi Dokumen Mitra\n"
-                "- Needs Practice: Penanganan Komplain Mitra DPD 30+\n"
-                "</user_history>"
-            ),
-        },
-        {
-            "id": "previous_context",
-            "tag": "<previous_context>",
-            "title": "Short-Term Memory (STM) Rolling Dialogue Summary",
-            "actAs": "Injected Conversation Memory Summary",
-            "pipelineStage": "app.graph.pipeline._build_generate_messages (summary_section)",
-            "description": "Injects rolling summary of earlier conversation turns when dialogue exceeds the fresh turn threshold.",
-            "tokensEst": 55,
-            "content": (
-                "<previous_context>\n"
-                "- User asked about procedure for rescheduling mitra payment in branch Cikupa.\n"
-                "- Trainer explained prerequisite: BM approval and verification of DPD status.\n"
-                "</previous_context>"
-            ),
-        },
-        {
-            "id": "available_topics",
-            "tag": "<available_topics>",
-            "title": "Available Topics Catalog Injection",
-            "actAs": "Injected Module Catalog (Intent: TOPIC_LIST)",
-            "pipelineStage": "app.graph.pipeline._build_generate_messages (topics_section)",
-            "description": "Dynamically injected when intent is TOPIC_LIST so the LLM weaves course titles naturally into dialogue without hardcoded lists.",
-            "tokensEst": 40,
-            "content": (
-                "<available_topics>\n"
-                "- Tentang Amartha\n"
-                "- Produk Pembiayaan Modal Kerja\n"
-                "- SOP Operasional Lapangan (FO)\n"
-                "- Manajemen Risiko Kredit & PAR\n"
-                "- Service Excellence & Amartha Care\n"
-                "</available_topics>"
-            ),
-        },
-        {
-            "id": "section_materials",
-            "tag": "<section_materials>",
-            "title": "Section Drilldown Materials Injection",
-            "actAs": "Injected Subtopic Modules (Intent: SECTION_DRILLDOWN)",
-            "pipelineStage": "app.graph.pipeline._build_generate_messages (section_section)",
-            "description": "Dynamically injected when intent is SECTION_DRILLDOWN, listing sub-materials for a specific module.",
-            "tokensEst": 45,
-            "content": (
-                '<section_materials section="SOP Operasional Lapangan">\n'
-                "- Modul 1: Prosedur Majelis Mingguan (MM)\n"
-                "- Modul 2: Verifikasi Lapangan Calon Mitra\n"
-                "- Modul 3: Penagihan dan Penanganan Mitra NPL\n"
-                "</section_materials>"
-            ),
-        },
-        {
-            "id": "knowledge_base",
-            "tag": "<knowledge_base>",
-            "title": "Role-Filtered Amarthapedia Knowledge Pack",
-            "actAs": "Authoritative Ground Truth Container",
-            "pipelineStage": "app.graph.pipeline._load_active_cag_kb_text & _filter_kb_by_role",
-            "description": "The closed-book ground truth for the LLM. Loaded from PostgreSQL active_cag_kb and filtered by user role (FO vs HO). Placed in SystemMessage #2 for OpenRouter prefix cache hit.",
-            "tokensEst": 3500,
-            "content": (
-                "<knowledge_base>\n"
-                "# SOP Penyaluran Pembiayaan\n"
-                "## 1. Persyaratan Pengajuan Mitra\n"
-                "Mitra wajib memiliki usaha mikro produktif yang telah berjalan minimal 6 bulan...\n\n"
-                "## 2. Batas Plafon Awal\n"
-                "Plafon awal pembiayaan kelompok sebesar Rp 3.000.000 hingga Rp 5.000.000...\n"
-                "</knowledge_base>"
-            ),
-        },
-        {
-            "id": "knowledge_base_missing",
-            "tag": "<knowledge_base_missing>",
-            "title": "Missing Knowledge Base Notice",
-            "actAs": "Fallback Warning when KB Pack is Empty",
-            "pipelineStage": "app.graph.pipeline._build_generate_messages (context_section)",
-            "description": "Injected if a KNOWLEDGE or COACHING query arrives but the database has no active KB text.",
-            "tokensEst": 30,
-            "content": (
-                "<knowledge_base_missing>\n"
-                "No active CAG knowledge base pack is available. Ask an admin to run Moodle KB sync first.\n"
-                "</knowledge_base_missing>"
-            ),
-        },
-    ]
+    from app.llm import prompts
 
     return {
         "success": True,
         "source": "backend_live",
-        "total_prompts": len(prompts),
-        "total_blocks": len(blocks),
-        "prompts": prompts,
-        "blocks": blocks,
-        "prompts_py": {
-            "file": "app/llm/prompts.py",
-            "prompts": prompts,
-            "blocks": blocks,
+        "prompts": {
+            "conversational": prompts.CONVERSATIONAL_PROMPT,
+            "socratic": prompts.SOCRATIC_PROMPT,
+            "chit_chat": prompts.CHIT_CHAT_PROMPT,
+            "stm_summary": prompts.STM_SUMMARY_PROMPT,
+            "ltm_analyst": prompts.LTM_LEARNING_SUMMARY_PROMPT,
         },
-        "pipeline_py": {
-            "file": "app/graph/pipeline.py",
-            "assembly_frame": pipeline_assembly_frame,
-            "blocks": pipeline_context_blocks,
+        "blocks": {
+            "role": prompts.PERSONA,
+            "output_contract": prompts.OUTPUT_CONTRACT,
+            "grounding": prompts.GROUNDING,
+            "response_guidelines": prompts.RESPONSE_GUIDELINES,
+            "mentoring_voice": prompts.MENTORING_VOICE,
+            "socratic_mode": prompts.SOCRATIC_MODE,
+            "disambig": prompts.DISAMBIG,
         },
     }
+
 
 
 
