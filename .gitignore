@@ -6,6 +6,8 @@ dist/
 wheels/
 *.egg-info
 .agent/
+.agents/
+skills-lock.json
 docs/
 
 # Virtual environments
