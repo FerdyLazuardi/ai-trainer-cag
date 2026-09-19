@@ -588,6 +588,156 @@ async def get_system_prompts(
         },
     ]
 
+    pipeline_assembly_frame = {
+        "id": "assembly_frame",
+        "tag": "Message Frame",
+        "title": "Prompt Assembly Architecture (_build_generate_messages)",
+        "actAs": "Message Construction & Prefix Cache Sequence",
+        "pipelineStage": "app.graph.pipeline._build_generate_messages",
+        "description": "How the graph runtime orders messages for OpenRouter prefix cache reuse on turn 2+.",
+        "tokensEst": 450,
+        "content": (
+            "# Sequence constructed in app/graph/pipeline.py -> _build_generate_messages():\n\n"
+            "# 1. SystemMessage #1 (Role persona & behavioral laws - Byte-stable prefix anchor)\n"
+            "msgs = [SystemMessage(content=system_prompt_text)]\n\n"
+            "# 2. SystemMessage #2 (Authoritative knowledge document filtered by FO vs HO)\n"
+            "if cag_kb_text:\n"
+            "    msgs.append(SystemMessage(content=cag_kb_text))\n\n"
+            "# 3. HumanMessage #3 (Dynamic Tail: user context, LTM profile, STM summary, topic catalog)\n"
+            "if dynamic_tail:\n"
+            "    msgs.append(HumanMessage(content=dynamic_tail))\n\n"
+            "# 4. Windowed Chat History (Recent user/assistant turns bounded by max_fresh_turns & max_history_ai_chars)\n"
+            "msgs += windowed_messages\n\n"
+            "# Prefix Cache Result:\n"
+            "# Messages #1 and #2 remain byte-stable across conversation turns, achieving ~100% prefix cache hits on OpenRouter."
+        ),
+    }
+
+    pipeline_context_blocks = [
+        pipeline_assembly_frame,
+        {
+            "id": "user_context",
+            "tag": "<user_context>",
+            "title": "User Profile & Branch Context Injection",
+            "actAs": "Injected User Profile (Drives FO vs HO Tailoring)",
+            "pipelineStage": "app.graph.pipeline._format_user_context_block",
+            "description": "Formats employee identity, NIK, role, branch, region, and KPI metrics so the LLM tailors answers directly to their operational realities.",
+            "tokensEst": 90,
+            "content": (
+                "<user_context>\n"
+                "- Name: Siti Rahmawati\n"
+                "- Username: 123456\n"
+                "- Role: BP (Field Office)\n"
+                "- Point: Cikupa\n"
+                "- Area: Banten 1\n"
+                "- Regional: West Java\n"
+                "- Pulau: Jawa\n"
+                "- Cakupan: Cabang\n"
+                "- KPI Repayment Rate: 98.5%\n"
+                "- KPI PAR: 1.2%\n"
+                "- KPI DPD 0: 97.8%\n"
+                "</user_context>"
+            ),
+        },
+        {
+            "id": "user_history",
+            "tag": "<user_history>",
+            "title": "Long-Term Memory (LTM) Profile Injection",
+            "actAs": "Injected Learning History from PostgreSQL",
+            "pipelineStage": "app.graph.pipeline._build_generate_messages (ltm_section)",
+            "description": "Injects the user's persistent learning summary (Mastered topics vs Needs Practice) from user_ltm_memories table into the conversation.",
+            "tokensEst": 45,
+            "content": (
+                "<user_history>\n"
+                "Ringkasan progres & konteks belajar user:\n"
+                "- Mastered: SOP Pencairan Pembiayaan, Validasi Dokumen Mitra\n"
+                "- Needs Practice: Penanganan Komplain Mitra DPD 30+\n"
+                "</user_history>"
+            ),
+        },
+        {
+            "id": "previous_context",
+            "tag": "<previous_context>",
+            "title": "Short-Term Memory (STM) Rolling Dialogue Summary",
+            "actAs": "Injected Conversation Memory Summary",
+            "pipelineStage": "app.graph.pipeline._build_generate_messages (summary_section)",
+            "description": "Injects rolling summary of earlier conversation turns when dialogue exceeds the fresh turn threshold.",
+            "tokensEst": 55,
+            "content": (
+                "<previous_context>\n"
+                "- User asked about procedure for rescheduling mitra payment in branch Cikupa.\n"
+                "- Trainer explained prerequisite: BM approval and verification of DPD status.\n"
+                "</previous_context>"
+            ),
+        },
+        {
+            "id": "available_topics",
+            "tag": "<available_topics>",
+            "title": "Available Topics Catalog Injection",
+            "actAs": "Injected Module Catalog (Intent: TOPIC_LIST)",
+            "pipelineStage": "app.graph.pipeline._build_generate_messages (topics_section)",
+            "description": "Dynamically injected when intent is TOPIC_LIST so the LLM weaves course titles naturally into dialogue without hardcoded lists.",
+            "tokensEst": 40,
+            "content": (
+                "<available_topics>\n"
+                "- Tentang Amartha\n"
+                "- Produk Pembiayaan Modal Kerja\n"
+                "- SOP Operasional Lapangan (FO)\n"
+                "- Manajemen Risiko Kredit & PAR\n"
+                "- Service Excellence & Amartha Care\n"
+                "</available_topics>"
+            ),
+        },
+        {
+            "id": "section_materials",
+            "tag": "<section_materials>",
+            "title": "Section Drilldown Materials Injection",
+            "actAs": "Injected Subtopic Modules (Intent: SECTION_DRILLDOWN)",
+            "pipelineStage": "app.graph.pipeline._build_generate_messages (section_section)",
+            "description": "Dynamically injected when intent is SECTION_DRILLDOWN, listing sub-materials for a specific module.",
+            "tokensEst": 45,
+            "content": (
+                '<section_materials section="SOP Operasional Lapangan">\n'
+                "- Modul 1: Prosedur Majelis Mingguan (MM)\n"
+                "- Modul 2: Verifikasi Lapangan Calon Mitra\n"
+                "- Modul 3: Penagihan dan Penanganan Mitra NPL\n"
+                "</section_materials>"
+            ),
+        },
+        {
+            "id": "knowledge_base",
+            "tag": "<knowledge_base>",
+            "title": "Role-Filtered Amarthapedia Knowledge Pack",
+            "actAs": "Authoritative Ground Truth Container",
+            "pipelineStage": "app.graph.pipeline._load_active_cag_kb_text & _filter_kb_by_role",
+            "description": "The closed-book ground truth for the LLM. Loaded from PostgreSQL active_cag_kb and filtered by user role (FO vs HO). Placed in SystemMessage #2 for OpenRouter prefix cache hit.",
+            "tokensEst": 3500,
+            "content": (
+                "<knowledge_base>\n"
+                "# SOP Penyaluran Pembiayaan\n"
+                "## 1. Persyaratan Pengajuan Mitra\n"
+                "Mitra wajib memiliki usaha mikro produktif yang telah berjalan minimal 6 bulan...\n\n"
+                "## 2. Batas Plafon Awal\n"
+                "Plafon awal pembiayaan kelompok sebesar Rp 3.000.000 hingga Rp 5.000.000...\n"
+                "</knowledge_base>"
+            ),
+        },
+        {
+            "id": "knowledge_base_missing",
+            "tag": "<knowledge_base_missing>",
+            "title": "Missing Knowledge Base Notice",
+            "actAs": "Fallback Warning when KB Pack is Empty",
+            "pipelineStage": "app.graph.pipeline._build_generate_messages (context_section)",
+            "description": "Injected if a KNOWLEDGE or COACHING query arrives but the database has no active KB text.",
+            "tokensEst": 30,
+            "content": (
+                "<knowledge_base_missing>\n"
+                "No active CAG knowledge base pack is available. Ask an admin to run Moodle KB sync first.\n"
+                "</knowledge_base_missing>"
+            ),
+        },
+    ]
+
     return {
         "success": True,
         "source": "backend_live",
@@ -595,6 +745,16 @@ async def get_system_prompts(
         "total_blocks": len(blocks),
         "prompts": prompts,
         "blocks": blocks,
+        "prompts_py": {
+            "file": "app/llm/prompts.py",
+            "prompts": prompts,
+            "blocks": blocks,
+        },
+        "pipeline_py": {
+            "file": "app/graph/pipeline.py",
+            "assembly_frame": pipeline_assembly_frame,
+            "blocks": pipeline_context_blocks,
+        },
     }
 
 
