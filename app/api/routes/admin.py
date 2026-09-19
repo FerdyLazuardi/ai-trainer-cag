@@ -444,7 +444,7 @@ async def get_system_prompts(
     _=Depends(verify_api_key),
 ) -> Dict[str, Any]:
     """Return active production system prompts and modular XML blocks directly from cag-lms-agent."""
-    from app.llm.cag_client import SYSTEM_PROMPT as CAG_BASELINE_PROMPT
+    from app.llm.cag_client import CAG_SYSTEM_PROMPT as CAG_BASELINE_PROMPT
     from app.llm.prompts import (
         CHIT_CHAT_PROMPT,
         CONVERSATIONAL_PROMPT,
