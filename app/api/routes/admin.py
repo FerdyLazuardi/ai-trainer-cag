@@ -444,7 +444,6 @@ async def get_system_prompts(
     _=Depends(verify_api_key),
 ) -> Dict[str, Any]:
     """Return active production system prompts and modular XML blocks directly from cag-lms-agent."""
-    from app.llm.cag_client import CAG_SYSTEM_PROMPT as CAG_BASELINE_PROMPT
     from app.llm.prompts import (
         CHIT_CHAT_PROMPT,
         CONVERSATIONAL_PROMPT,
@@ -586,19 +585,6 @@ async def get_system_prompts(
             "openRouterCached": False,
             "components": ["LTM Analysis Directives", "JSON Schema Output"],
             "content": LTM_LEARNING_SUMMARY_PROMPT,
-        },
-        {
-            "id": "cag_baseline",
-            "title": "Direct CAG Fallback System Prompt",
-            "actAs": "Ava (Amartha LMS Assistant)",
-            "category": "baseline",
-            "intentTrigger": "Direct CAG Client Fallback / Standalone Benchmark",
-            "pipelineStage": "app.llm.cag_client (Standalone Pipeline)",
-            "description": "Baseline minimal prompt for direct CAG client fallback.",
-            "tokensEst": len(CAG_BASELINE_PROMPT) // 4,
-            "openRouterCached": True,
-            "components": ["Ava Minimal Directives"],
-            "content": CAG_BASELINE_PROMPT,
         },
     ]
 
