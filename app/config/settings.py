@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     # Cheap slot for background tasks (memory summarization, pre-processor,
     # generate node). Same model as the main slot.
     cheap_llm_model: str = Field(
-        default="mistralai/mistral-nemo", alias="CHEAP_LLM_MODEL"
+        default="inclusionai/ling-2.6-flash", alias="CHEAP_LLM_MODEL"
     )
 
     # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
