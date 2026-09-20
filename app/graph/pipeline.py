@@ -24,8 +24,8 @@ from loguru import logger
 from app.config.settings import get_settings
 from app.graph.state import CAGState
 from app.llm.cag_client import OpenRouterUsage
-from app.llm.client import _provider_extra_body, _shared_http_client, get_generate_llm_nostream
-from app.llm.prompts import CHIT_CHAT_PROMPT, CONVERSATIONAL_PROMPT, SOCRATIC_PROMPT
+from app.llm.client import _provider_extra_body, _shared_http_client, get_generate_llm_nostream, get_intent_llm
+from app.llm.prompts import CHIT_CHAT_PROMPT, CONVERSATIONAL_PROMPT, SOCRATIC_PROMPT, INTENT_CLASSIFIER_PROMPT
 from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections
 
 _settings = get_settings()
@@ -422,6 +422,48 @@ def _infer_provider(model: str) -> str:
     return "openrouter"
 
 
+_VALID_INTENTS = {"KNOWLEDGE", "GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"}
+
+
+async def _classify_intent_cheap_llm(text: str) -> str | None:
+    """Tier-2 Intent Classification using Cheap LLM (mistralai/mistral-nemo).
+
+    Runs only when Tier-1 regex returns None. Classifies conversational/filler/informal
+    queries (e.g. 'Sudah lapar', 'kmi lagi treaning') into no-lookup intents
+    to save ~49k input tokens and prevent false Knowledge Gap reports.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return "AMBIGUOUS"
+
+    try:
+        llm = get_intent_llm()
+        messages = [
+            SystemMessage(content=INTENT_CLASSIFIER_PROMPT),
+            HumanMessage(content=cleaned),
+        ]
+        response = await asyncio.wait_for(llm.ainvoke(messages), timeout=2.5)
+        raw_content = response.content if hasattr(response, "content") else str(response)
+
+        # Normalize token: uppercase, strip quotes/punctuation
+        token = raw_content.strip().upper().replace('"', "").replace("'", "").replace(".", "")
+        words = token.split()
+        for w in words:
+            if w in _VALID_INTENTS:
+                return w
+        return None
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Tier-2 intent classifier timed out (>2.5s) for query: {cleaned[:40]!r}, falling back to None"
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            f"Tier-2 intent classifier failed ({type(exc).__name__}: {exc}), falling back to None"
+        )
+        return None
+
+
 async def _pre_processor(state: CAGState, config: RunnableConfig):
     """Lightweight pre-step — NO LLM call. Decides retrieval vs no-retrieval.
 
@@ -523,6 +565,20 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
         logger.info(f"Pre-processor: {rule_intent} → no retrieval, straight to generate")
         return {
             "intent": rule_intent,
+            "rewritten_query": user_msg_str,
+            "retrieval_query": user_msg_str,
+            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
+            "gate_score": None,
+        }
+
+    # ── Tier-2 Intent Classification (Cheap LLM: mistralai/mistral-nemo) ───
+    # Catches informal remarks, slang, venting, or non-work comments missed by regex.
+    # Prevents injecting the 49k-token KB pack and avoids false Knowledge Gap records.
+    llm_intent = await _classify_intent_cheap_llm(user_msg_str)
+    if llm_intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE", "TOPIC_LIST"):
+        logger.info(f"Pre-processor (Tier-2 LLM): {llm_intent} → no retrieval, straight to generate")
+        return {
+            "intent": llm_intent,
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},

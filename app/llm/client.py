@@ -62,6 +62,13 @@ def _provider_extra_body(model: str, *, include_usage: bool = True) -> dict:
         # of max_tokens goes to the visible answer.
         if m.startswith("deepseek/") or m.startswith("xiaomi/"):
             body["reasoning"] = {"effort": "none", "exclude": True}
+
+    elif m.startswith("mistralai/"):
+        body["provider"] = {
+            "order": ["dekallm", "deepinfra", "parasail"],
+            "allow_fallbacks": True,
+        }
+        body["reasoning"] = {"effort": "none", "exclude": True}
     return body
 
 
@@ -120,6 +127,24 @@ def get_cheap_llm() -> ChatOpenAI:
         default_headers={
             "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
             "X-Title": "CAG AI TRAINER (Background Worker)",
+        },
+    )
+
+
+@lru_cache(maxsize=1)
+def get_intent_llm() -> ChatOpenAI:
+    _eb = _provider_extra_body(settings.cheap_llm_model)
+    if isinstance(_eb.get("provider"), dict):
+        _eb["provider"]["allow_fallbacks"] = True
+    return create_llm(
+        model=settings.cheap_llm_model,
+        temperature=0.0,
+        max_tokens=15,
+        request_timeout=5,
+        extra_body=_eb,
+        default_headers={
+            "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
+            "X-Title": "CAG AI TRAINER (Intent Classifier)",
         },
     )
 
