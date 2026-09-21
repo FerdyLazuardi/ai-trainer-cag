@@ -366,6 +366,61 @@ async def test_stream_empty_answer_fallback_persists_final_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stream_does_not_regenerate_after_answer_was_emitted(monkeypatch):
+    from app.graph import pipeline
+
+    class Chunk:
+        content = "Jawaban pertama"
+
+    class Graph:
+        fallback_calls = 0
+
+        def astream_events(self, *args, **kwargs):
+            async def gen():
+                yield {
+                    "event": "on_chat_model_stream",
+                    "metadata": {"langgraph_node": "generate_node"},
+                    "data": {"chunk": Chunk()},
+                }
+
+            return gen()
+
+        async def ainvoke(self, *args, **kwargs):
+            self.fallback_calls += 1
+            return {"messages": [AIMessage(content="Jawaban kedua")]}
+
+    class Guard:
+        leak_detected = True
+
+        def feed(self, token):
+            return token
+
+        def flush(self):
+            return ""
+
+    graph = Graph()
+    chat = _patch_stream_basics(monkeypatch, graph)
+    monkeypatch.setattr(pipeline, "StreamLeakGuard", Guard)
+
+    async def fake_log(row):
+        return None
+
+    monkeypatch.setattr(chat.batch_logger, "add_log", fake_log)
+
+    response = await chat.chat_stream(
+        chat.ChatRequest(query="siapa prabowo?", conversation_id="conv-duplicate"),
+        _DummyRequest(),
+        chat.User(user_id="u-1", role="moodle_user", username="User"),
+    )
+
+    events = _sse_events(await _collect_sse(response))
+    tokens = [payload["token"] for name, payload in events if name == "message" and "token" in payload]
+
+    assert tokens == ["Jawaban pertama"]
+    assert graph.fallback_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_stream_dedupes_provider_restart_tokens(monkeypatch):
     class Chunk:
         def __init__(self, content):
