@@ -1513,6 +1513,7 @@ async def chat_stream(
         stream_off_scope_detected = False
         leak_guard = StreamLeakGuard()
         token_count = 0
+        answer_emitted = False
         stream_max_score = None
         is_low_relevance_stream = False
         _logged = False
@@ -1617,6 +1618,7 @@ async def chat_stream(
                 content = getattr(msgs[-1], "content", "") if msgs else ""
                 if content:
                     full_answer += content
+                    answer_emitted = True
                     yield f"data: {json.dumps({'token': content})}\n\n"
             else:
                 # Robust OpenRouter stream: periodic keepalive pings + 1x transient retry.
@@ -1674,6 +1676,7 @@ async def chat_stream(
                                 safe = leak_guard.feed(emit)
                                 if safe:
                                     safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
+                                    answer_emitted = True
                                     yield f"data: {json.dumps({'token': safe})}\n\n"
                                 if token_count % 5 == 0 and await req.is_disconnected():
                                     logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
@@ -1727,6 +1730,7 @@ async def chat_stream(
 
             tail = leak_guard.flush()
             if tail:
+                answer_emitted = True
                 yield f"data: {json.dumps({'token': tail})}\n\n"
             if leak_guard.leak_detected:
                 full_answer = tail
@@ -1737,7 +1741,9 @@ async def chat_stream(
             if "[OFFSCOPE]" in full_answer.upper():
                 stream_off_scope_detected = True
 
-            if not full_answer.strip():
+            # The leak guard may clear full_answer after text has already reached
+            # the client. Re-generating here would append a second full answer.
+            if not answer_emitted and not full_answer.strip():
                 logger.warning(
                     "Raw OpenRouter stream produced empty answer; retrying graph ainvoke",
                     conversation_id=conversation_id,
