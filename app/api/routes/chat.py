@@ -40,11 +40,7 @@ _META_CONVO_RE = re.compile(
     r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
     r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:tadi|barusan|kita|kami|sebelumnya)\s+(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
-    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
-    r"|(?:yg|yang)\s+(?:mana|tadi|yg\s+tadi|sebelumnya|sebelum|yg\s+sebelumnya)\b"
-    r"|(?:yg|yang)\s+(?:mana|tadi|sebelumnya)\s*[?.!\s]*$"
-    r"|(?:gimana|gmana|gmn|how)\s+(?:caranya|carany)(?:\s+(?:ya|yaa|dong|donk|sih))?\s*[?.!\s]*$"
-    r"|(?:terus|trus|lanjut|next)\s+(?:gimana|gmn|apa|apanya)\b",
+    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)",
     re.IGNORECASE,
 )
 

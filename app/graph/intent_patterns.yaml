@@ -404,6 +404,8 @@ thanks_tokens:
 - makasihh
 - mksh
 - mkasih
+- terimakasih
+- trimakasih
 - trims
 - trim
 - suwun
@@ -416,34 +418,6 @@ thanks_tokens:
 - tengkiu
 - tq
 - ty
-- terima
-- kasih
-- ok
-- oke
-- sip
-- yaudah
-- ya udah
-- terus
-- trs
-- trus
-- yg mana
-- yang mana
-- hah
-- hmm
-- hm
-- ohh
-- oh
-- gitu
-- oh gitu
-- ah
-- ahh
-- yoi
-- mantap
-- keren
-- asyik
-- asik
-- menarik
-- k
 thanks_fluff:
 - ya
 - yaa

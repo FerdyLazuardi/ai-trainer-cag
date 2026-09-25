@@ -137,13 +137,7 @@ _META_CONVO_RE = re.compile(
     r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
     r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:tadi|barusan|kita|kami|sebelumnya)\s+(?:di)?(?:bahas|omongin|diskusi)"
     r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
-    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)"
-    # Short deictic follow-ups: "which one?" / "the earlier one?" /
-    # "how do I do it?" need clarification, not KB retrieval.
-    r"|(?:yg|yang)\s+(?:mana|tadi|yg\s+tadi|sebelumnya|sebelum|yg\s+sebelumnya)\b"
-    r"|(?:yg|yang)\s+(?:mana|tadi|sebelumnya)\s*[?.!\s]*$"
-    r"|(?:gimana|gmana|gmn|how)\s+(?:caranya|carany)(?:\s+(?:ya|yaa|dong|donk|sih))?\s*[?.!\s]*$"
-    r"|(?:terus|trus|lanjut|next)\s+(?:gimana|gmn|apa|apanya)\b",
+    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)",
     re.IGNORECASE,
 )
 _AMARTHA_GLOSSARY = {
@@ -456,22 +450,6 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
         logger.info("Pre-processor: injection detected → MALICIOUS")
         return {
             "intent": "MALICIOUS",
-            "rewritten_query": user_msg_str,
-            "retrieval_query": user_msg_str,
-            "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
-            "gate_score": None,
-        }
-
-    # ── Meta-conversation question → answer from HISTORY, never the KB ───────
-    # "kita udah bahas apa aja", "tadi ngomongin apa", "what did we discuss" —
-    # the answer is the conversation itself, NOT a knowledge-base lookup. If we
-    # retrieved, random chunks crossing the dense floor would be described as
-    # "what we discussed" (the fabrication bug). Route to the no-retrieval path
-    # so generate_node answers purely from the windowed message history.
-    if _META_CONVO_RE.search(user_msg_str):
-        logger.info("Pre-processor: meta-conversation question → no retrieval (answer from history)")
-        return {
-            "intent": "AMBIGUOUS",  # no-retrieval bucket; excluded from cache/eval in chat.py
             "rewritten_query": user_msg_str,
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},

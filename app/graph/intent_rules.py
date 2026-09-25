@@ -267,6 +267,7 @@ def _is_thanks_closer(low: str) -> bool:
     """
     if len(low) > 40:
         return False
+    low = re.sub(r"\bterima\s+kasih\b", "terimakasih", low)
     tokens = re.findall(r"[a-zA-ZÀ-ſ]+", low)
     if not tokens:
         return False

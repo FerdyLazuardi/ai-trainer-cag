@@ -9,6 +9,12 @@ from langchain_core.messages import AIMessage, HumanMessage
     "Gimana caranya menangani mitra yang telat bayar cicilan?",
     "gimana caranya aku melindungi data mitra ya",
     "apa saja yang harus dibahas dibreafing pagi",
+    "Link perform kpi yang mana",
+    "gimana caranya?",
+    "kasih infonya dong",
+    "kasih penjelasannya ya kak",
+    "terus?",
+    "oke",
 ])
 async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, query):
     from app.graph import pipeline
@@ -19,18 +25,6 @@ async def test_meta_convo_regex_does_not_swallow_how_to_knowledge(monkeypatch, q
     )
 
     assert result["intent"] == "KNOWLEDGE"
-
-
-@pytest.mark.asyncio
-async def test_meta_convo_regex_keeps_bare_how_to_ambiguous(monkeypatch):
-    from app.graph import pipeline
-
-    result = await pipeline._pre_processor(
-        {"messages": [HumanMessage(content="gimana caranya?")]},
-        {},
-    )
-
-    assert result["intent"] == "AMBIGUOUS"
 
 
 @pytest.mark.asyncio
