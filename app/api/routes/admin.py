@@ -66,6 +66,105 @@ async def _run_one(sql: str, params: dict | None = None):
         return await conn.execute(text(sql), params or {})
 
 
+def _extract_geo_from_json(data: dict | None) -> dict[str, str]:
+    out = {"point": "", "area": "", "regional": "", "pulau": ""}
+    if not isinstance(data, dict):
+        return out
+    for k, v in data.items():
+        if v in (None, ""):
+            continue
+        kl = str(k).lower().strip()
+        vs = str(v).strip()
+        if not vs:
+            continue
+        if kl in ("point", "cabang") and not out["point"]:
+            out["point"] = vs
+        elif kl in ("area", "wilayah") and not out["area"]:
+            out["area"] = vs
+        elif kl in ("regional", "region") and not out["regional"]:
+            out["regional"] = vs
+        elif kl in ("pulau", "island") and not out["pulau"]:
+            out["pulau"] = vs
+    return out
+
+
+def _parse_session_id_meta(session_id: str) -> dict[str, str]:
+    """Parse {user_id}_{fullname}_{location}_{position}_{point} from session_id."""
+    if not session_id or session_id in ("Unknown", "dev_user_123") or "_" not in session_id:
+        return {"full_name": "", "position": "", "point": "", "point_norm": ""}
+    parts = session_id.split("_")
+    role_markers = {
+        "fo", "ho", "admin", "bm", "bp", "am", "rm", "hmb",
+        "area", "manager", "staff", "lead", "business", "officer",
+    }
+    marker_idx = -1
+    for i in range(1, len(parts)):
+        if parts[i].lower() in role_markers:
+            marker_idx = i
+            break
+    if marker_idx > 1:
+        name_parts = [p for p in parts[1:marker_idx] if p.lower() not in ("na", "n/a")]
+        full_name = " ".join(p.capitalize() for p in name_parts)
+        remainder = [p for p in parts[marker_idx:] if p.lower() not in ("na", "n/a")]
+        terminal_words = {
+            "manager", "partner", "officer", "leader", "staff", "admin",
+            "coordinator", "specialist", "analyst", "head", "lead", "trainee",
+        }
+        term_idx = -1
+        for j, tok in enumerate(remainder):
+            if tok.lower() in terminal_words:
+                term_idx = j
+                break
+        if term_idx != -1:
+            role_tokens = remainder[: term_idx + 1]
+            point_tokens = remainder[term_idx + 1 :]
+        else:
+            role_tokens = remainder[:3]
+            point_tokens = remainder[3:]
+    else:
+        name_parts = [p for p in parts[1:] if p.lower() not in ("na", "n/a")]
+        full_name = " ".join(p.capitalize() for p in name_parts)
+        role_tokens = []
+        point_tokens = []
+
+    acronyms = {"fo", "ho", "bm", "bp", "am", "rm", "hmb"}
+    position = " ".join(
+        t.upper() if t.lower() in acronyms else t.capitalize()
+        for t in role_tokens
+    )
+    point = " ".join(t.upper() for t in point_tokens)
+    point_norm = "".join(t.lower() for t in point_tokens)
+    return {
+        "full_name": full_name,
+        "position": position,
+        "point": point,
+        "point_norm": point_norm,
+    }
+
+
+async def _backfill_agent_logs(updates: list[dict[str, Any]]) -> None:
+    if not updates:
+        return
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    UPDATE agent_logs
+                    SET username = COALESCE(username, :username),
+                        full_name = COALESCE(full_name, :full_name),
+                        position = COALESCE(position, :position),
+                        point = COALESCE(point, :point),
+                        area = COALESCE(area, :area),
+                        regional = COALESCE(regional, :regional),
+                        pulau = COALESCE(pulau, :pulau)
+                    WHERE id = :id
+                """),
+                updates,
+            )
+    except Exception:
+        pass
+
+
 @router.get("/logs", summary="Get aggregated logs for Dashboard")
 async def get_dashboard_logs(
     limit: int = Query(default=100, ge=1, le=500),
@@ -112,7 +211,8 @@ async def get_dashboard_logs(
                    conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
                    retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
-                   rewritten_query, or_cost, or_generation_id
+                   rewritten_query, or_cost, or_generation_id,
+                   username, full_name, position, point, area, regional, pulau
             FROM agent_logs
             WHERE {chat_where}
               {cursor_clause}
@@ -175,8 +275,142 @@ async def get_dashboard_logs(
     if has_more:
         log_rows = log_rows[:limit]
 
-    logs = [
-        {
+    # Enrich historical logs missing geo/spreadsheet fields by matching
+    # session_id -> user_kpi_data (by username or full_name) & branch_data (by point_norm).
+    parsed_by_row: list[dict[str, str]] = []
+    lookup_names: set[str] = set()
+    lookup_usernames: set[str] = set()
+    lookup_points: set[str] = set()
+
+    for row in log_rows:
+        sid = str(row[7]) if row[7] else ""
+        meta = _parse_session_id_meta(sid)
+        parsed_by_row.append(meta)
+        db_username = str(row[22]).strip() if len(row) > 22 and row[22] else ""
+        db_fullname = str(row[23]).strip() if len(row) > 23 and row[23] else ""
+        db_point = str(row[25]).strip() if len(row) > 25 and row[25] else ""
+        db_area = str(row[26]).strip() if len(row) > 26 and row[26] else ""
+        db_reg = str(row[27]).strip() if len(row) > 27 and row[27] else ""
+        if not db_area or not db_reg or not db_username:
+            if db_username:
+                lookup_usernames.add(db_username)
+            name_cand = (db_fullname or meta["full_name"]).lower().strip()
+            if name_cand:
+                lookup_names.add(name_cand)
+            pt_cand = (db_point or meta["point"]).lower().replace(" ", "").replace("_", "")
+            if pt_cand:
+                lookup_points.add(pt_cand)
+
+    user_by_username: dict[str, dict[str, str]] = {}
+    user_by_name: dict[str, dict[str, str]] = {}
+    branch_by_point: dict[str, dict[str, str]] = {}
+
+    if lookup_usernames or lookup_names or lookup_points:
+        try:
+            async with engine.connect() as conn:
+                if lookup_usernames or lookup_names:
+                    u_res = await conn.execute(
+                        text("""
+                            SELECT username, full_name, role, point_norm, data
+                            FROM user_kpi_data
+                            WHERE username = ANY(:unames)
+                               OR LOWER(full_name) = ANY(:fnames)
+                        """),
+                        {
+                            "unames": list(lookup_usernames) or [""],
+                            "fnames": list(lookup_names) or [""],
+                        },
+                    )
+                    for ur in u_res.fetchall():
+                        geo = _extract_geo_from_json(ur[4])
+                        u_info = {
+                            "username": str(ur[0] or ""),
+                            "full_name": str(ur[1] or ""),
+                            "role": str(ur[2] or ""),
+                            "point_norm": str(ur[3] or ""),
+                            **geo,
+                        }
+                        if u_info["username"]:
+                            user_by_username[u_info["username"]] = u_info
+                        if u_info["full_name"]:
+                            user_by_name[u_info["full_name"].lower().strip()] = u_info
+                        if u_info["point_norm"]:
+                            lookup_points.add(u_info["point_norm"])
+
+                if lookup_points:
+                    b_res = await conn.execute(
+                        text("""
+                            SELECT point, point_norm, data
+                            FROM branch_data
+                            WHERE point_norm = ANY(:pts)
+                        """),
+                        {"pts": list(lookup_points)},
+                    )
+                    for br in b_res.fetchall():
+                        geo = _extract_geo_from_json(br[2])
+                        pnorm = str(br[1] or "").strip() or str(br[0] or "").lower().replace(" ", "")
+                        if pnorm:
+                            branch_by_point[pnorm] = {
+                                "point": str(br[0] or "") or geo["point"],
+                                "area": geo["area"],
+                                "regional": geo["regional"],
+                                "pulau": geo["pulau"],
+                            }
+        except Exception:
+            pass
+
+    logs = []
+    backfill_updates: list[dict[str, Any]] = []
+
+    for row, meta in zip(log_rows, parsed_by_row):
+        row_id = int(row[1])
+        db_username = str(row[22]).strip() if len(row) > 22 and row[22] else ""
+        db_fullname = str(row[23]).strip() if len(row) > 23 and row[23] else ""
+        db_position = str(row[24]).strip() if len(row) > 24 and row[24] else ""
+        db_point = str(row[25]).strip() if len(row) > 25 and row[25] else ""
+        db_area = str(row[26]).strip() if len(row) > 26 and row[26] else ""
+        db_regional = str(row[27]).strip() if len(row) > 27 and row[27] else ""
+        db_pulau = str(row[28]).strip() if len(row) > 28 and row[28] else ""
+
+        u_match = (
+            user_by_username.get(db_username)
+            or user_by_name.get((db_fullname or meta["full_name"]).lower().strip())
+            or {}
+        )
+        pt_norm = (
+            (db_point or u_match.get("point") or meta["point"])
+            .lower()
+            .replace(" ", "")
+            .replace("_", "")
+        )
+        b_match = branch_by_point.get(pt_norm) or {}
+
+        final_username = db_username or u_match.get("username") or ""
+        final_fullname = db_fullname or u_match.get("full_name") or meta["full_name"] or ""
+        final_position = db_position or meta["position"] or u_match.get("role") or ""
+        final_point = db_point or u_match.get("point") or b_match.get("point") or meta["point"] or ""
+        final_area = db_area or u_match.get("area") or b_match.get("area") or ""
+        final_regional = db_regional or u_match.get("regional") or b_match.get("regional") or ""
+        final_pulau = db_pulau or u_match.get("pulau") or b_match.get("pulau") or ""
+
+        if (
+            (final_point and not db_point)
+            or (final_area and not db_area)
+            or (final_regional and not db_regional)
+            or (final_username and not db_username)
+        ):
+            backfill_updates.append({
+                "id": row_id,
+                "username": final_username[:64] or None,
+                "full_name": final_fullname[:255] or None,
+                "position": final_position[:128] or None,
+                "point": final_point[:64] or None,
+                "area": final_area[:64] or None,
+                "regional": final_regional[:64] or None,
+                "pulau": final_pulau[:64] or None,
+            })
+
+        logs.append({
             "created_at": str(row[0]),
             "intent": str(row[2]) if row[2] else "UNKNOWN",
             "latency_ms": float(row[3]) if row[3] is not None else 0.0,
@@ -201,9 +435,17 @@ async def get_dashboard_logs(
             "rewritten_query": str(row[19]) if len(row) > 19 and row[19] else None,
             "cost": float(row[20]) if len(row) > 20 and row[20] is not None else 0.0,
             "or_generation_id": str(row[21]) if len(row) > 21 and row[21] else None,
-        }
-        for row in log_rows
-    ]
+            "username": final_username,
+            "full_name": final_fullname,
+            "position": final_position,
+            "point": final_point,
+            "area": final_area,
+            "regional": final_regional,
+            "pulau": final_pulau,
+        })
+
+    if backfill_updates:
+        asyncio.create_task(_backfill_agent_logs(backfill_updates))
 
     next_cursor = None
     if has_more and log_rows:

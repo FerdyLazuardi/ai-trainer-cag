@@ -178,6 +178,16 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_completion_tokens INTEGER"))
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_provider VARCHAR(100)"))
         await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS or_cost DOUBLE PRECISION"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS username VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS position VARCHAR(128)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS point VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS area VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS regional VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE agent_logs ADD COLUMN IF NOT EXISTS pulau VARCHAR(64)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_logs_point ON agent_logs (point)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_logs_area ON agent_logs (area)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_logs_regional ON agent_logs (regional)"))
 
 
 @asynccontextmanager

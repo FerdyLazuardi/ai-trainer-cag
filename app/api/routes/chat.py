@@ -375,6 +375,26 @@ async def _enqueue_eval(
         logger.warning(f"Failed to enqueue eval task: {e}")
 
 
+def _user_log_fields(current_user: User, context: Optional[dict] = None) -> dict:
+    """Extract user & branch hierarchy columns (username, full_name, position, point, area, regional, pulau)."""
+    ctx = context or {}
+    uctx = ctx.get("user_context") or (ctx.get("initial_state") or {}).get("user_context") or {}
+
+    def _s(val: object, max_len: int) -> Optional[str]:
+        s = str(val or "").strip()
+        return s[:max_len] if s else None
+
+    return {
+        "username": _s(current_user.username, 64),
+        "full_name": _s(uctx.get("name") or current_user.fullname, 255),
+        "position": _s(uctx.get("position") or current_user.position, 128),
+        "point": _s(uctx.get("point") or current_user.point, 64),
+        "area": _s(uctx.get("area") or current_user.area, 64),
+        "regional": _s(uctx.get("regional") or current_user.regional, 64),
+        "pulau": _s(uctx.get("pulau"), 64),
+    }
+
+
 def _quality_log_fields(
     intent: Optional[str],
     intent_scores: Optional[dict],
@@ -797,7 +817,8 @@ async def _prepare_cag_context(
         return {
             "cached": cached,
             "query_embedding": None,
-            "initial_state": {},
+            "initial_state": {"user_context": user_context},
+            "user_context": user_context,
             "was_personalized": False,
             "skip_cache": skip_cache,
         }
@@ -1002,6 +1023,7 @@ async def _run_chat(
                 "chunks_retrieved": 0,
                 "latency_ms": round(latency_ms, 2),
                 "cache_hit": True,
+                **_user_log_fields(current_user, context),
             }
         )
         await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
@@ -1216,6 +1238,7 @@ async def _execute_chat_flow(
             "or_cost": or_cost,
             "cache_hit": False,
             "retrieved_context": retrieved_context,
+            **_user_log_fields(current_user, context),
             **_quality_log_fields(
                 intent,
                 result.get("intent_scores"),
@@ -1581,6 +1604,7 @@ async def chat_stream(
                     "or_cost": stream_cost,
                     "cache_hit": False,
                     "retrieved_context": retrieved_context,
+                    **_user_log_fields(current_user, context),
                     **_quality_log_fields(
                         intent,
                         stream_intent_scores,
@@ -1983,6 +2007,7 @@ async def chat_stream(
                     "or_cost": stream_cost,
                     "cache_hit": False,
                     "retrieved_context": retrieved_context,
+                    **_user_log_fields(current_user, context),
                     **_quality_log_fields(
                         intent,
                         stream_intent_scores,
