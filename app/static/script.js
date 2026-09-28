@@ -15,10 +15,22 @@
     }
 
     const html = `
-        <button id="chat-toggle">
-            <i class="fas fa-comment-dots chat-toggle-icon icon-messenger"></i>
+        <button id="chat-toggle" aria-label="Ask AI Trainer">
+            <span class="chat-toggle-icon icon-messenger ava-spark" aria-hidden="true">&#10022;</span>
             <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
+            <span id="chat-badge" hidden>1</span>
         </button>
+
+        <!-- Welcome launcher: greeting bubble + 3 KB materi chips (shown after 1s when Redis chat is empty) -->
+        <div id="ava-launcher" class="ava-launcher" hidden>
+            <button id="ava-launcher-close" class="ava-launcher-close" type="button" aria-label="Tutup sapaan" title="Tutup">
+                <i class="fas fa-times"></i>
+            </button>
+            <div id="ava-launcher-bubble" class="ava-launcher-bubble" role="button" tabindex="0">
+                <span id="ava-launcher-text"></span>
+            </div>
+            <div id="ava-launcher-chips" class="ava-launcher-chips"></div>
+        </div>
 
         <!-- Pending-response popup (see index.html for full comment) -->
         <div id="ava-popup" class="ava-popup" hidden>
@@ -40,8 +52,14 @@
                     </div>
                 </div>
                 <div style="display:flex; gap:20px; align-items:center;">
-                    <button id="coach-cta-btn" class="coach-cta-btn" title="Aktifkan Coaching Mode">
-                        <i class="fas fa-lightbulb"></i> Coaching
+                    <button id="coach-cta-btn" class="mode-switch" role="switch" aria-checked="false" title="Ganti mode: Mentoring / Coaching">
+                        <span class="mode-switch-label" id="mode-switch-label">Mentoring</span>
+                        <span class="mode-switch-track">
+                            <span class="mode-switch-thumb">
+                                <i class="fas fa-graduation-cap mode-ico-mentor"></i>
+                                <i class="fas fa-person-chalkboard mode-ico-coach"></i>
+                            </span>
+                        </span>
                     </button>
                     <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat" style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
                 </div>
@@ -89,11 +107,22 @@ const textarea = document.getElementById("prompt");
 let introduced = false;
 let isStreaming = false; // Prevent double-sends during streaming
 let currentAbortController = null;
+// Monotonic token. Each send() bumps it; async workers from an older send()
+// compare against it and stop touching the DOM once superseded (e.g. after an
+// auto-retry). Fixes the "answer printed twice" bug on reconnect: the truncated
+// stream's typing worker would keep rendering into a stale bubble while the
+// retry rendered the same answer into a fresh one.
+let _streamGeneration = 0;
 
 // ── Ban countdown state ──────────────────────────────────────────────────────
 let _banCountdownInterval = null;     // setInterval handle for running countdown
 let _banBubbleEl = null;              // the DOM element showing the countdown
 let _banActive = false;
+
+// Only send ngrok header when backend URL actually uses ngrok (local dev tunnels).
+function _shouldAddNgrokHeader(baseUrl) {
+    return typeof baseUrl === "string" && baseUrl.includes("ngrok");
+}
 
 function banStorageKey() {
     const userKey = (typeof MOODLE_USER_ID !== 'undefined' && MOODLE_USER_ID > 0)
@@ -133,6 +162,7 @@ async function refreshBanStatus() {
     const headers = {
         "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -316,17 +346,16 @@ function setCoaching(on, showMsg) {
     window.COACHING_MODE = !!on;
     document.body.classList.toggle("coaching-active", !!on);
 
-    // Sync the CTA button
-    const ctaBtn = document.getElementById("coach-cta-btn");
-    if (ctaBtn) {
-        if (on) {
-            ctaBtn.classList.add("active");
-            ctaBtn.innerHTML = '<i class="fas fa-times"></i> Exit Coaching';
-        } else {
-            ctaBtn.classList.remove("active");
-            ctaBtn.innerHTML = '<i class="fas fa-lightbulb"></i> Coaching';
-        }
+    // Sync the mode switch (label + aria + on-state). The switch shares
+    // #coach-cta-btn so every existing caller — text command, auto-hook,
+    // welcome chip — drives the same control.
+    const sw = document.getElementById("coach-cta-btn");
+    const lbl = document.getElementById("mode-switch-label");
+    if (sw) {
+        sw.classList.toggle("active", !!on);
+        sw.setAttribute("aria-checked", on ? "true" : "false");
     }
+    if (lbl) lbl.textContent = on ? "Coaching" : "Mentoring";
 
     if (showMsg) {
         if (on) {
@@ -347,6 +376,7 @@ async function chipTopik() {
     removeWelcome();
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {};
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -385,6 +415,7 @@ async function openSectionPanel() {
     if (document.getElementById("ava-section-panel")) return;  // already open
     const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
     const headers = {};
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
     }
@@ -691,14 +722,46 @@ function dismissPendingPopup() {
     }
 }
 
+function hideChatBadge() {
+    const badge = document.getElementById("chat-badge");
+    if (badge) {
+        badge.hidden = true;
+        badge.style.display = "none";
+    }
+}
+
+function showChatBadge() {
+    const badge = document.getElementById("chat-badge");
+    if (badge) {
+        badge.hidden = false;
+        badge.style.display = "flex";
+    }
+}
+
+function hideWelcomeLauncher(instant) {
+    const launcher = document.getElementById("ava-launcher");
+    if (!launcher || launcher.hidden) return;
+    if (instant) {
+        launcher.hidden = true;
+        launcher.classList.remove("fadeout");
+        return;
+    }
+    launcher.classList.add("fadeout");
+    setTimeout(() => {
+        launcher.hidden = true;
+        launcher.classList.remove("fadeout");
+    }, 220);
+}
+
 function toggleChat() {
     const toggleBtn = document.getElementById("chat-toggle");
 
     if (chatBox.style.display === "none" || chatBox.style.display === "") {
         // ===== OPEN =====
-        // Opening the chatbox also dismisses any pending popup — the user is
-        // looking at the full chat now, the popup is redundant.
+        // Opening the chatbox dismisses any pending popup and welcome launcher.
         dismissPendingPopup();
+        hideWelcomeLauncher(true);
+        hideChatBadge();
 
         chatBox.style.display = "flex";
         chatBox.classList.remove("animate__fadeOutDown");
@@ -706,10 +769,8 @@ function toggleChat() {
 
         // FAB stays visible but morphs into a CLOSE (X) icon. The morph
         // is driven by .chat-open class on <body> (see CSS — both icons
-        // cross-fade + rotate). Hide the unread badge.
+        // cross-fade + rotate).
         document.body.classList.add("chat-open");
-        const badge = document.getElementById("chat-badge");
-        if (badge) badge.style.display = "none";
 
         if (!introduced) {
             loadHistory();
@@ -774,49 +835,62 @@ function showIntro() {
     welcome.innerHTML = `
         <div style="text-align: center; padding: 20px 0;">
             <h2 class="ava-welcome-title">${getGreeting()}, ${nama}</h2>
-            <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini terkait materi Amarthapedia?</p>
+            <p class="ava-welcome-subtitle">Ada yang bisa aku bantu hari ini?</p>
         </div>
     `;
 
     messages.appendChild(welcome);
 }
 
+let _historyLoadPromise = null;
+
 async function loadHistory() {
-    restoreStoredBanCountdown();
+    if (_historyLoadPromise) return _historyLoadPromise;
+    _historyLoadPromise = (async () => {
+        introduced = true;
+        restoreStoredBanCountdown();
 
-    const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
-    const headers = {
-        "Content-Type": "application/json"
-    };
+        const baseUrl = (typeof API_BASE_URL !== 'undefined' && API_BASE_URL) ? API_BASE_URL : "";
+        const headers = {
+            "Content-Type": "application/json"
+        };
+        if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
-    if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
-        headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
-    }
-
-    try {
-        const sessionId = getSessionId();
-        const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
-            method: "GET",
-            headers: headers
-        });
-
-        if (!res.ok) throw new Error("No history found");
-
-        const history = await res.json();
-
-        if (history && history.length > 0) {
-            history.forEach(msg => {
-                const role = msg.role === 'user' ? 'user' : 'ai';
-                const content = msg.content || msg.text || "";
-                addMessage(content, role);
-            });
+        if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
+            headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
         }
-    } catch (err) {
-        console.error("Failed to load history:", err);
-    }
 
-    const banned = await refreshBanStatus();
-    if (!banned) setTimeout(showIntro, 100);
+        let hasHistory = false;
+        try {
+            const sessionId = getSessionId();
+            const res = await fetch(`${baseUrl}/api/v1/chat/history/${sessionId}`, {
+                method: "GET",
+                headers: headers
+            });
+
+            if (!res.ok) throw new Error("No history found");
+
+            const history = await res.json();
+
+            if (Array.isArray(history) && history.length > 0) {
+                hasHistory = true;
+                if (!messages.querySelector(".msg")) {
+                    history.forEach(msg => {
+                        const role = msg.role === 'user' ? 'user' : 'ai';
+                        const content = msg.content || msg.text || "";
+                        addMessage(content, role);
+                    });
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load history:", err);
+        }
+
+        const banned = await refreshBanStatus();
+        if (!banned && !hasHistory) setTimeout(showIntro, 100);
+        return { hasHistory, banned };
+    })();
+    return _historyLoadPromise;
 }
 
 function clearChat() {
@@ -859,6 +933,7 @@ async function doClearChat() {
     const headers = {
         "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -870,8 +945,10 @@ async function doClearChat() {
             headers: headers
         });
         messages.innerHTML = '';
-        introduced = false;
+        _historyLoadPromise = null;
+        introduced = true;
         window._lastReflectiveQ = null;
+        setCoaching(false, false);   // clear = balik ke default Mentoring (silent)
         const banned = await refreshBanStatus();
         if (!banned) showIntro();
     } catch (e) {
@@ -917,11 +994,9 @@ function showTyping() {
     let randomPhrase = loadingPhrases[Math.floor(Math.random() * loadingPhrases.length)];
 
     typingDiv.innerHTML = `
-        <div class="bubble ai" style="display: flex; align-items: center; gap: 8px;">
+        <div class="bubble ai" style="display: flex; align-items: center; gap: 9px;">
+            <span class="ava-think-spark" aria-hidden="true">&#10022;</span>
             <div id="typing-text-id" style="font-size: 0.85em; font-style: italic; opacity: 0.8; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform: translateY(0) scale(1);">${randomPhrase}</div>
-            <div class="typing" style="margin-top: 0; padding-top: 3px;">
-                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-            </div>
         </div>
     `;
     messages.appendChild(typingDiv);
@@ -1023,9 +1098,6 @@ function resetChat() {
     window.location.reload();
 }
 
-restoreStoredBanCountdown();
-refreshBanStatus();
-
 // ============================================================
 // STREAMING BUBBLE HELPERS
 // ============================================================
@@ -1060,6 +1132,9 @@ function createStreamBubble() {
 
             const typingDiv = bubble.querySelector(".typing");
             if (typingDiv) typingDiv.remove();
+
+            const thinkSpark = bubble.querySelector(".ava-think-spark");
+            if (thinkSpark) thinkSpark.remove();
 
             bubble.appendChild(contentDiv);
         }
@@ -1153,6 +1228,7 @@ async function send(presetText, opts) {
     showTyping();
     isStreaming = true;
     currentAbortController = new AbortController();
+    const _myGen = ++_streamGeneration;   // this send()'s identity; stale workers bail
     setSendButtonState(true);
     let streamWrap = null;
     let contentDiv = null;
@@ -1163,23 +1239,10 @@ async function send(presetText, opts) {
     let _streamActive = true;
     let _finalized = false;
     let _streamFailed = false;
+    let _receivedDone = false;
     let _suggestCoaching = null;
     let _coachingTopic = null;
     let _coachingDone = false;
-    let _receivedDone = false;
-
-    let streamTimeout = null;
-    const STREAM_TIMEOUT_MS = 15000;
-    function resetStreamTimeout() {
-        if (streamTimeout) clearTimeout(streamTimeout);
-        streamTimeout = setTimeout(() => {
-            console.warn("Stream stalled, aborting...");
-            _streamFailed = true;
-            if (currentAbortController) {
-                currentAbortController.abort();
-            }
-        }, STREAM_TIMEOUT_MS);
-    }
 
     function startStreamBubble() {
         if (!_streamStarted) {
@@ -1198,6 +1261,7 @@ async function send(presetText, opts) {
     const headers = {
         "Content-Type": "application/json"
     };
+    if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
 
     if (typeof MOODLE_JWT !== 'undefined' && MOODLE_JWT) {
         headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
@@ -1226,8 +1290,6 @@ async function send(presetText, opts) {
             throw new Error(`Server returned ${res.status}`);
         }
 
-        resetStreamTimeout();
-
         // ── Init SSE reader ──
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1247,6 +1309,11 @@ async function send(presetText, opts) {
         _coachingDone = false;     // backend signal: Socratic loop wrapped up (set in done event)
 
         function smoothStreamWorker() {
+            // Superseded by a newer send() (e.g. auto-retry)? Stop dead — do not
+            // touch the DOM. Prevents the truncated stream from rendering its
+            // partial answer into a bubble while the retry renders the full one.
+            if (_myGen !== _streamGeneration) return;
+
             if (!_streamStarted) {
                 if (_streamActive) setTimeout(smoothStreamWorker, 20);
                 return;
@@ -1254,20 +1321,22 @@ async function send(presetText, opts) {
 
             if (_displayedText.length < _targetText.length) {
                 const remaining = _targetText.length - _displayedText.length;
-                // Reveal chunk by chunk to catch up smoothly
-                const chunkSize = Math.max(1, Math.floor(remaining / 4));
+                // Reveal chunk by chunk smoothly (capped so burst/cache chunks still animate)
+                const chunkSize = Math.min(14, Math.max(2, Math.ceil(remaining / 12)));
                 _displayedText += _targetText.substring(_displayedText.length, _displayedText.length + chunkSize);
 
                 // Add inline cursor BEFORE parsing markdown so it stays inside paragraph blocks <p>
-                const renderText = _displayedText + '<span class="streaming-cursor-inline">▍</span>';
+                const renderText = _displayedText + '<span class="streaming-cursor-inline" aria-hidden="true">✦</span>';
 
                 contentDiv.innerHTML = renderMarkdownSafe(renderText);
+                if (messages) messages.scrollTop = messages.scrollHeight;
             }
 
             if (_streamActive || _displayedText.length < _targetText.length) {
                 setTimeout(smoothStreamWorker, 20); // Fast but smooth 20ms frame
             } else if (!_finalized) {
                 _finalized = true;
+                // If stream ended without done event, this is a truncation (MiMo/ngrok drop) — do not render partial as success.
                 const finalText = _receivedDone ? (_targetText || (_streamFailed ? "" : "Hmm, jawabanku barusan nggak kekirim nih, kayaknya ada gangguan sebentar. Coba ketik ulang pertanyaannya dengan kalimat yang agak beda ya 🙏")) : (_streamFailed ? _targetText : "");
                 if (!_receivedDone && !_streamFailed) return;
                 finalizeStreamBubble(contentDiv, bubble, finalText);
@@ -1386,6 +1455,13 @@ async function send(presetText, opts) {
 
             if (!opts._autoRetry) {
                 console.warn("Stream truncated without done event — auto-retrying once");
+                // Tear the truncated attempt down completely BEFORE retrying so
+                // nothing from it can render. Bumping _streamGeneration (via the
+                // next send()) already neuters this worker; we also drop the
+                // bubble and reset the shared display state defensively.
+                _streamActive = false;
+                _targetText = "";
+                _displayedText = "";
                 if (streamWrap && streamWrap.isConnected) streamWrap.remove();
                 isStreaming = false;
                 setSendButtonState(false);
@@ -1394,6 +1470,7 @@ async function send(presetText, opts) {
                 return;
             }
 
+            // Finalize partial as failed so cursor disappears, but keep text for context
             if (bubble && contentDiv && _targetText && !_finalized) {
                 _finalized = true;
                 finalizeStreamBubble(contentDiv, bubble, _targetText);
@@ -1416,6 +1493,9 @@ async function send(presetText, opts) {
         if (isTransient) {
             console.warn("Transient stream error — auto-retrying once:", err.message);
             removeTyping();
+            _streamActive = false;
+            _targetText = "";
+            _displayedText = "";
             if (streamWrap && streamWrap.isConnected) streamWrap.remove();
             isStreaming = false;
             setSendButtonState(false);
@@ -1477,7 +1557,7 @@ function streamMessageFallback(fullText, type) {
             currentText += fullText.substring(i, i + chunkSize);
             i += chunkSize;
 
-            const renderText = currentText + '<span class="streaming-cursor-inline">▍</span>';
+            const renderText = currentText + '<span class="streaming-cursor-inline" aria-hidden="true">✦</span>';
             contentDiv.innerHTML = renderMarkdownSafe(renderText);
             setTimeout(typeChar, speed);
         } else {
@@ -1511,4 +1591,151 @@ if (promptNode) {
     });
 }
 
+
+
+// ============================================================
+// WELCOME LAUNCHER — Badge "1" + Greeting Bubble + 3 KB Chips
+// Shown after 1s delay on page load when Redis chat history is empty.
+// ============================================================
+(function initWelcomeLauncher() {
+    const enterTs   = Date.now();
+    const launcher  = document.getElementById("ava-launcher");
+    const closeBtn  = document.getElementById("ava-launcher-close");
+    const bubbleEl  = document.getElementById("ava-launcher-bubble");
+    const textEl    = document.getElementById("ava-launcher-text");
+    const chipsEl   = document.getElementById("ava-launcher-chips");
+    const fab       = document.getElementById("chat-toggle");
+
+    if (!launcher || !bubbleEl || !textEl || !chipsEl || !fab) return;
+
+    function openFromLauncher() {
+        hideWelcomeLauncher(true);
+        hideChatBadge();
+        if (_isChatboxHidden()) toggleChat();
+        if (textarea) textarea.focus();
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            hideWelcomeLauncher(false);
+        });
+    }
+
+    bubbleEl.addEventListener("click", openFromLauncher);
+    bubbleEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openFromLauncher();
+        }
+    });
+
+    function _shuffle(arr) {
+        const a = arr.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = a[i];
+            a[i] = a[j];
+            a[j] = tmp;
+        }
+        return a;
+    }
+
+    function _truncateChip(str, maxLen) {
+        const s = String(str || "").trim();
+        return s.length > maxLen ? s.slice(0, maxLen - 3).trimEnd() + "..." : s;
+    }
+
+    async function fetchWelcomeTopics() {
+        const baseUrl = (typeof API_BASE_URL !== "undefined" && API_BASE_URL) ? API_BASE_URL : "";
+        const headers = {};
+        if (_shouldAddNgrokHeader(baseUrl)) headers["ngrok-skip-browser-warning"] = "true";
+        if (typeof MOODLE_JWT !== "undefined" && MOODLE_JWT) {
+            headers["Authorization"] = `Bearer ${MOODLE_JWT}`;
+        }
+
+        const items = [];
+        try {
+            const res = await fetch(`${baseUrl}/api/v1/chat/sections`, { method: "GET", headers });
+            if (res.ok) {
+                const data = await res.json();
+                const h2List = (data && Array.isArray(data.h2_topics)) ? data.h2_topics : [];
+                for (const h2 of h2List) {
+                    if (h2 && !items.includes(h2)) items.push(h2);
+                }
+                if (!items.length) {
+                    const sections = (data && data.sections) || {};
+                    for (const sec of Object.keys(sections)) {
+                        for (const it of (sections[sec] || [])) {
+                            if (it && !items.includes(it)) items.push(it);
+                        }
+                    }
+                    if (!items.length) {
+                        for (const sec of Object.keys(sections)) {
+                            if (sec && !items.includes(sec)) items.push(sec);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn("fetchWelcomeTopics sections failed:", e);
+        }
+
+        if (!items.length) {
+            try {
+                const res = await fetch(`${baseUrl}/api/v1/chat/topics`, { method: "GET", headers });
+                if (res.ok) {
+                    const data = await res.json();
+                    const list = (data && Array.isArray(data.h2_topics) && data.h2_topics.length)
+                        ? data.h2_topics
+                        : ((data && data.topics) || []);
+                    for (const t of list) {
+                        if (t && !items.includes(t)) items.push(t);
+                    }
+                }
+            } catch (e) {
+                console.warn("fetchWelcomeTopics topics fallback failed:", e);
+            }
+        }
+
+        return _shuffle(items).slice(0, 3);
+    }
+
+    Promise.all([loadHistory(), fetchWelcomeTopics()]).then(([histRes, topics]) => {
+        if (!histRes || histRes.hasHistory || histRes.banned) return;
+
+        const elapsed = Date.now() - enterTs;
+        const waitMs  = Math.max(0, 1000 - elapsed);
+
+        setTimeout(() => {
+            if (!_isChatboxHidden() || _banActive) return;
+
+            const nama = (typeof MOODLE_USER_NAME !== "undefined" && MOODLE_USER_NAME)
+                ? MOODLE_USER_NAME.split(" ")[0]
+                : "A-Team";
+
+            textEl.textContent = `\uD83D\uDC4B Hi, ${nama}. Aku Ai Trainer, mau refresh pengetahuan atau brainstorming masalah hari ini?`;
+
+            chipsEl.innerHTML = "";
+            (topics || []).slice(0, 3).forEach((topic) => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "ava-launcher-chip";
+                btn.textContent = _truncateChip(topic, 35);
+                btn.title = topic;
+                btn.addEventListener("click", () => {
+                    hideWelcomeLauncher(true);
+                    hideChatBadge();
+                    if (_isChatboxHidden()) toggleChat();
+                    send(`Jelaskan tentang ${topic}`);
+                });
+                chipsEl.appendChild(btn);
+            });
+
+            showChatBadge();
+            launcher.classList.remove("fadeout");
+            launcher.hidden = false;
+        }, waitMs);
+    });
+})();
 

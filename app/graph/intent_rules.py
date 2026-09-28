@@ -297,15 +297,16 @@ def _is_math(text: str) -> bool:
     return word_count <= 3
 
 
+_OFF_SCOPE_KEYWORDS_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _OFF_SCOPE_KEYWORDS) + r")\b"
+) if _OFF_SCOPE_KEYWORDS else None
+
+
 def _is_off_scope_keyword(low: str) -> bool:
-    """Match any off-scope keyword. Uses regex word boundary (\b) so single-
-    word tokens like "iphone" match "iphone 15" (trailing digit is not a
-    word boundary) and multi-word phrases like "mobile legend" match
-    "main mobile legend yuk" (boundary at space)."""
-    for kw in _OFF_SCOPE_KEYWORDS:
-        if re.search(rf"\b{re.escape(kw)}\b", low):
-            return True
-    return False
+    """Match any off-scope keyword using a single pre-compiled word-boundary regex."""
+    if not _OFF_SCOPE_KEYWORDS_RE:
+        return False
+    return bool(_OFF_SCOPE_KEYWORDS_RE.search(low))
 
 
 def _is_identity_question(low: str) -> bool:

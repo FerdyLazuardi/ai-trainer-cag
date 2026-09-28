@@ -138,7 +138,7 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     from app.knowledge.kb_pack import extract_h2_headings
     from app.llm.client import get_cheap_llm
 
-    redis = await get_redis_client()
+    redis = get_redis_client()
     history, stm_summary = await get_history_and_summary(redis, conversation_id)
 
     if not history and not stm_summary:

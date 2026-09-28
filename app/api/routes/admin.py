@@ -193,10 +193,17 @@ async def get_dashboard_logs(
     # Fetch limit+1 to detect has_more without a separate COUNT(*).
     recent_limit = limit + 1
 
-    total_q, avg_lat, cache_hits, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
-        _run_one(f"SELECT COUNT(*) FROM agent_logs WHERE {chat_where}"),
-        _run_one(f"SELECT AVG(latency_ms) FROM agent_logs WHERE latency_ms IS NOT NULL AND {chat_where}"),
-        _run_one(f"SELECT SUM(or_prompt_tokens), SUM(or_cached_tokens), SUM(or_completion_tokens), SUM(or_cost) FROM agent_logs WHERE {chat_where}"),
+    kpi_q, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
+        _run_one(f"""
+            SELECT COUNT(*),
+                   AVG(latency_ms),
+                   SUM(or_prompt_tokens),
+                   SUM(or_cached_tokens),
+                   SUM(or_completion_tokens),
+                   SUM(or_cost)
+            FROM agent_logs
+            WHERE {chat_where}
+        """),
         _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {chat_where} GROUP BY intent"),
         _run_one(f"""
             SELECT DATE(created_at) AS date, COUNT(*) AS queries
@@ -244,13 +251,13 @@ async def get_dashboard_logs(
         """, {"faith_min": settings.faithfulness_min}),
     )
 
-    total = int(total_q.scalar() or 0)
-    avg_latency = float(avg_lat.scalar() or 0.0)
-    or_stats = cache_hits.fetchone()
-    or_prompt = int(or_stats[0] or 0) if or_stats else 0
-    or_cached = int(or_stats[1] or 0) if or_stats else 0
-    or_completion = int(or_stats[2] or 0) if or_stats else 0
-    total_cost = float(or_stats[3] or 0.0) if or_stats else 0.0
+    kpi_row = kpi_q.fetchone()
+    total = int(kpi_row[0] or 0) if kpi_row else 0
+    avg_latency = float(kpi_row[1] or 0.0) if kpi_row else 0.0
+    or_prompt = int(kpi_row[2] or 0) if kpi_row else 0
+    or_cached = int(kpi_row[3] or 0) if kpi_row else 0
+    or_completion = int(kpi_row[4] or 0) if kpi_row else 0
+    total_cost = float(kpi_row[5] or 0.0) if kpi_row else 0.0
     hit_rate = (or_cached / or_prompt * 100.0) if or_prompt > 0 else 0.0
 
     perf = perf_q.fetchone()
@@ -721,6 +728,9 @@ async def clean_spreadsheet_data(
     """Truncate user_kpi_data and branch_data in PostgreSQL matching the Proxmox admin command."""
     async with engine.begin() as conn:
         await conn.execute(text("TRUNCATE TABLE user_kpi_data, branch_data RESTART IDENTITY;"))
+
+    from app.api.routes.chat_helpers import clear_user_context_cache
+    clear_user_context_cache()
 
     return {
         "status": "success",

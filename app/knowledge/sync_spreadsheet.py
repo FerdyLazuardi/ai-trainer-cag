@@ -357,6 +357,11 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
         logger.warning(f"Failed to delete orphan spreadsheet rows: {e}")
 
     await session.commit()
+    try:
+        from app.api.routes.chat_helpers import clear_user_context_cache
+        clear_user_context_cache()
+    except Exception:
+        pass
     logger.info(
         f"Spreadsheet sync complete. Users updated: {users_updated} (deleted: {users_deleted}), "
         f"Branches updated: {branches_updated} (deleted: {branches_deleted})"

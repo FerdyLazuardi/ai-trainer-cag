@@ -109,18 +109,30 @@ def _apply_glossary(text: str) -> str:
     return _GLOSSARY_RE.sub(lambda m: _AMARTHA_GLOSSARY[m.group(0).upper()], text)
 
 
+_BOLD_EM_DASH_RE = re.compile(r"\*\*\s*—\s*")
+_EM_DASH_NORM_RE = re.compile(r"\s*—\s*")
+_CLOSING_REF_RE = re.compile(
+    r"Untuk\s+detail\s+[^.!?]+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process(?:[^.!?]*Amarthapedia)?\.?",
+    re.IGNORECASE,
+)
+_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+_PARA_SPLIT_RE = re.compile(r"\n\s*\n")
+
+
 def _normalize_dashes(text: str) -> str:
-    text = re.sub(r"\*\*\s*—\s*", "**: ", text)
-    text = re.sub(r"\s*—\s*", ", ", text)
-    return text.replace("–", "-")
+    if "—" in text:
+        text = _BOLD_EM_DASH_RE.sub("**: ", text)
+        text = _EM_DASH_NORM_RE.sub(", ", text)
+    if "–" in text:
+        text = text.replace("–", "-")
+    return text
 
 
 def _sanitize_answer(text: str) -> str:
     """Strip any leaked instruction-block content / tags from an LLM reply."""
     if not text:
         return text
-    cleaned = re.sub(
-        r"(?i)Untuk\s+detail\s+[^.!?]+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process(?:[^.!?]*Amarthapedia)?\.?",
+    cleaned = _CLOSING_REF_RE.sub(
         "Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku.",
         text,
     )
@@ -131,13 +143,13 @@ def _sanitize_answer(text: str) -> str:
     cleaned = _DIRECTIVE_LINE_RE.sub("", cleaned)
     cleaned = _OFFSCOPE_RE.sub("", cleaned)
     cleaned = _COURSE_NUM_RE.sub("", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = _MULTI_NEWLINE_RE.sub("\n\n", cleaned)
 
     matches = list(_LEAK_CITATION_HEAD_RE.finditer(cleaned))
     if matches:
         last_end = matches[-1].end()
         tail = cleaned[last_end:].strip()
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", tail) if p.strip()]
+        paragraphs = [p.strip() for p in _PARA_SPLIT_RE.split(tail) if p.strip()]
         if len(paragraphs) >= 2:
             cleaned = "\n\n".join(paragraphs[1:])
         elif paragraphs:
@@ -177,14 +189,24 @@ class StreamLeakGuard:
     def feed(self, token: str) -> str:
         """Push a streamed token. Returns the safe text to emit (may be "")."""
         self._buffer += token
-        if any(p.search(self._buffer) for p in self._LEAK_PATTERNS):
-            self._mode = "buffered"
-            return ""
+        buf = self._buffer
+        if self._mode == "buffered":
+            if any(p.search(buf) for p in self._LEAK_PATTERNS):
+                return ""
+        else:
+            has_leak = (
+                ("<" in buf and _LEAK_OPEN_TAG_RE.search(buf))
+                or ("[" in buf and (_INLINE_CITE_RE.search(buf) or _OFFSCOPE_PARTIAL_RE.search(buf)))
+                or (":" in buf and _LEAK_CITATION_HEAD_RE.search(buf))
+                or _DIRECTIVE_LINE_RE.search(buf)
+            )
+            if has_leak:
+                self._mode = "buffered"
+                return ""
 
         self._mode = "passthrough"
-        out = self._buffer
         self._buffer = ""
-        return out
+        return buf
 
     def flush(self) -> str:
         """Called at end-of-stream. Returns sanitized trailing text."""

@@ -246,7 +246,7 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
     # "product amartha apaan" -> SECTION_DRILLDOWN. If the shape matches AND we
     # can resolve the section from query (token match) OR history (deictic ordinal),
     # route to SECTION_DRILLDOWN immediately, regardless of the initial rule_intent.
-    if _is_section_drilldown_shape(user_msg_str):
+    if _is_section_drilldown_shape(user_msg_str) and _extract_topic_list_from_history(messages):
         try:
             resolved_role = resolve_user_role(state.get("user_context"))
             _sm = await _load_section_map(resolved_role)
@@ -543,37 +543,72 @@ async def _load_h2_topics(user_role: str = "ALL") -> list[str]:
     return await _load_role_kb_cache(_h2_topics_cache, user_role, extract_kb_h2_headings, list, "H2-topics")
 
 
-_active_kb_cache: dict[str, Any] = {"hash": "", "content": ""}
+_active_kb_cache: dict[str, Any] = {"hash": "", "content": "", "expires_at": 0.0}
+_role_kb_cache: dict[tuple[int, str], str] = {}
+_kb_cache_lock: asyncio.Lock | None = None
+
+
+def _get_kb_cache_lock() -> asyncio.Lock:
+    global _kb_cache_lock
+    if _kb_cache_lock is None:
+        _kb_cache_lock = asyncio.Lock()
+    return _kb_cache_lock
 
 
 def clear_cag_kb_cache() -> None:
-    _active_kb_cache.update({"hash": "", "content": ""})
+    _active_kb_cache.update({"hash": "", "content": "", "expires_at": 0.0})
+    _role_kb_cache.clear()
     _course_cache.update({"courses": [], "expires_at": 0.0})
     _section_map_cache.update({"map": {}, "expires_at": 0.0})
     _h2_topics_cache.update({"map": {}, "expires_at": 0.0})
 
 
+_KB_HASH_CHECK_TTL_SECONDS = 15.0
+
 
 async def _load_active_cag_kb_text() -> str:
     from app.database.postgres import AsyncSessionLocal
-    from app.knowledge.store import get_active_kb_pack
+    from app.knowledge.store import get_active_kb_hash, get_active_kb_pack
 
-    try:
-        async with AsyncSessionLocal() as session:
-            active = await get_active_kb_pack(session, source=_settings.cag_kb_source)
-            if active:
-                if _active_kb_cache.get("hash") != active.kb_hash:
-                    clear_cag_kb_cache()
-                    _active_kb_cache.update({
-                        "hash": active.kb_hash,
-                        "content": active.content,
-                    })
-                return _active_kb_cache["content"]
-    except Exception as exc:
-        logger.warning(f"Failed to load active cag kb text: {exc}")
-    return _active_kb_cache.get("content", "")
+    now = time.time()
+    cached_hash = _active_kb_cache.get("hash")
+    cached_content = _active_kb_cache.get("content")
+    if cached_hash and cached_content and now < _active_kb_cache.get("expires_at", 0.0):
+        return cached_content
+
+    async with _get_kb_cache_lock():
+        now = time.time()
+        cached_hash = _active_kb_cache.get("hash")
+        cached_content = _active_kb_cache.get("content")
+        if cached_hash and cached_content and now < _active_kb_cache.get("expires_at", 0.0):
+            return cached_content
+
+        try:
+            async with AsyncSessionLocal() as session:
+                if cached_hash and cached_content:
+                    current_hash = await get_active_kb_hash(session, source=_settings.cag_kb_source)
+                    if current_hash == cached_hash:
+                        _active_kb_cache["expires_at"] = now + _KB_HASH_CHECK_TTL_SECONDS
+                        return cached_content
+
+                active = await get_active_kb_pack(session, source=_settings.cag_kb_source)
+                if active:
+                    if _active_kb_cache.get("hash") != active.kb_hash:
+                        clear_cag_kb_cache()
+                        _active_kb_cache.update({
+                            "hash": active.kb_hash,
+                            "content": active.content,
+                            "expires_at": now + _KB_HASH_CHECK_TTL_SECONDS,
+                        })
+                    else:
+                        _active_kb_cache["expires_at"] = now + _KB_HASH_CHECK_TTL_SECONDS
+                    return _active_kb_cache["content"]
+        except Exception as exc:
+            logger.warning(f"Failed to load active cag kb text: {exc}")
+        return _active_kb_cache.get("content", "")
 
 
+@lru_cache(maxsize=64)
 def _openrouter_prompt_session_id(*parts: str) -> str:
     stable_prefix = "\n".join(part for part in parts if part)
     if not stable_prefix:
@@ -636,20 +671,29 @@ def resolve_user_role(user_context: dict | None) -> str:
     return "ALL"
 
 
+_ROLES_ATTR_Q_RE = re.compile(r'roles=["\']([^"\']*)["\']', re.IGNORECASE)
+_ROLE_BLOCK_RE = re.compile(r'<role_block\s+([^>]*?)>(.*?)</role_block>', re.DOTALL | re.IGNORECASE)
+_COMMENT_ROLE_RE = re.compile(r'<!--\s*role:\s*([^>]*?)\s*-->(.*?)<!--\s*/role\s*-->', re.DOTALL | re.IGNORECASE)
+_DOC_BLOCK_RE = re.compile(r'(<doc\s+([^>]*?)>)(.*?)(</doc>)', re.DOTALL)
+_ROLES_ATTR_DQ_RE = re.compile(r'roles="([^"]*)"')
+_ID_ATTR_DQ_RE = re.compile(r'id="([^"]*)"')
+_KB_INDEX_RE = re.compile(r'<kb_index>(.*?)</kb_index>', re.DOTALL)
+_KB_INDEX_ENTRY_RE = re.compile(r'(-\s+\[(DOC-\d+)\](?:(?!-\s+\[DOC-).)*)', re.DOTALL)
+_KB_VERSION_RE = re.compile(r'<knowledge_base\s+([^>]*?)>')
+
+
 def _filter_inner_role_blocks(text: str, role: str) -> str:
     """Filter inner <role_block roles="..."> and <!-- role: ... --> blocks inside text."""
     if not text or not role:
         return text
         
     role = role.upper().strip()
-    roles_attr_pattern = re.compile(r'roles=["\']([^"\']*)["\']', re.IGNORECASE)
 
     # 1. Handle <role_block roles="...">...</role_block>
-    role_block_pattern = re.compile(r'<role_block\s+([^>]*?)>(.*?)</role_block>', re.DOTALL | re.IGNORECASE)
     def _replace_role_block(m: re.Match) -> str:
         attrs = m.group(1)
         content = m.group(2)
-        match = roles_attr_pattern.search(attrs)
+        match = _ROLES_ATTR_Q_RE.search(attrs)
         if match:
             block_roles = [r.strip().upper() for r in match.group(1).split(",")]
             if role in ("ALL", "HO") or "ALL" in block_roles or role in block_roles:
@@ -657,10 +701,9 @@ def _filter_inner_role_blocks(text: str, role: str) -> str:
             return ""
         return content.strip()
 
-    text = role_block_pattern.sub(_replace_role_block, text)
+    text = _ROLE_BLOCK_RE.sub(_replace_role_block, text)
 
     # 2. Handle <!-- role: BP,BM --> ... <!-- /role -->
-    comment_role_pattern = re.compile(r'<!--\s*role:\s*([^>]*?)\s*-->(.*?)<!--\s*/role\s*-->', re.DOTALL | re.IGNORECASE)
     def _replace_comment_block(m: re.Match) -> str:
         roles_str = m.group(1)
         content = m.group(2)
@@ -669,7 +712,7 @@ def _filter_inner_role_blocks(text: str, role: str) -> str:
             return content.strip()
         return ""
 
-    text = comment_role_pattern.sub(_replace_comment_block, text)
+    text = _COMMENT_ROLE_RE.sub(_replace_comment_block, text)
     return text
 
 
@@ -678,23 +721,25 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
         return kb_text
     
     role = user_role.upper().strip()
+    cache_key = (hash(kb_text), role)
+    cached_filtered = _role_kb_cache.get(cache_key)
+    if cached_filtered is not None:
+        return cached_filtered
     
     # 1. Find and filter the <doc> blocks first to collect allowed doc IDs
-    doc_pattern = re.compile(r'(<doc\s+([^>]*?)>)(.*?)(</doc>)', re.DOTALL)
-    roles_attr_pattern = re.compile(r'roles="([^"]*)"')
-    id_attr_pattern = re.compile(r'id="([^"]*)"')
-    
-    docs_found = doc_pattern.findall(kb_text)
+    docs_found = _DOC_BLOCK_RE.findall(kb_text)
     if not docs_found:
-        return _filter_inner_role_blocks(kb_text, role)
+        res = _filter_inner_role_blocks(kb_text, role)
+        _role_kb_cache[cache_key] = res
+        return res
 
     filtered_docs = []
     allowed_doc_ids = set()
     for header, attrs, content, footer in docs_found:
-        id_match = id_attr_pattern.search(attrs)
+        id_match = _ID_ATTR_DQ_RE.search(attrs)
         doc_id = id_match.group(1) if id_match else ""
         
-        match = roles_attr_pattern.search(attrs)
+        match = _ROLES_ATTR_DQ_RE.search(attrs)
         if match:
             doc_roles = [r.strip().upper() for r in match.group(1).split(",")]
             if "ALL" in doc_roles or role in doc_roles:
@@ -709,16 +754,12 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
                 allowed_doc_ids.add(doc_id)
                 
     # 2. Extract and filter the <kb_index> block based on allowed_doc_ids
-    kb_index_match = re.search(r'<kb_index>(.*?)</kb_index>', kb_text, re.DOTALL)
+    kb_index_match = _KB_INDEX_RE.search(kb_text)
     kb_index = ""
     if kb_index_match:
         index_content = kb_index_match.group(1)
-        entry_pattern = re.compile(
-            r'(-\s+\[(DOC-\d+)\](?:(?!-\s+\[DOC-).)*)',
-            re.DOTALL
-        )
         filtered_entries = []
-        for entry, doc_id in entry_pattern.findall(index_content):
+        for entry, doc_id in _KB_INDEX_ENTRY_RE.findall(index_content):
             if doc_id in allowed_doc_ids:
                 filtered_entries.append(entry.strip())
         
@@ -726,7 +767,7 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
             kb_index = "<kb_index>\n" + "\n".join(filtered_entries) + "\n</kb_index>"
             
     # 3. Get the version attribute if present to reconstruct the root tag
-    version_match = re.search(r'<knowledge_base\s+([^>]*?)>', kb_text)
+    version_match = _KB_VERSION_RE.search(kb_text)
     root_attrs = version_match.group(1) if version_match else ""
     
     # Reassemble
@@ -736,7 +777,11 @@ def _filter_kb_by_role(kb_text: str, user_role: str) -> str:
     out.extend(filtered_docs)
     out.append("</knowledge_base>")
     
-    return "\n".join(out)
+    res = "\n".join(out)
+    if len(_role_kb_cache) >= 64:
+        _role_kb_cache.pop(next(iter(_role_kb_cache)), None)
+    _role_kb_cache[cache_key] = res
+    return res
 
 
 def _format_user_context_block(uctx: dict) -> str:

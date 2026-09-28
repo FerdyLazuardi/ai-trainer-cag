@@ -105,31 +105,29 @@ async def fetch_openrouter_generation_usage(
             timeout=10,
         )
 
-    owns_client = client is None
     if client is None:
-        client = httpx.AsyncClient()
+        from app.llm.client import _shared_http_client
+        client = _shared_http_client()
 
-    try:
-        for delay in (0, 0.25, 0.75):
-            if delay:
-                await sleep(delay)
-            response = await _get(client)
-            if response.status_code == 404:
-                continue
-            if response.status_code != 200:
-                return OpenRouterUsage(generation_id=generation_id)
-            data = (response.json() or {}).get("data") or {}
-            return OpenRouterUsage(
-                prompt_tokens=int(data.get("tokens_prompt") or data.get("native_tokens_prompt") or 0),
-                cached_tokens=int(data.get("native_tokens_cached") or 0),
-                completion_tokens=int(data.get("tokens_completion") or data.get("native_tokens_completion") or 0),
-                provider=data.get("model") or data.get("provider_name"),
-                cost=float(data.get("total_cost") or data.get("usage") or 0.0),
-                generation_id=data.get("id") or generation_id,
-            )
-    finally:
-        if owns_client:
-            await client.aclose()
+    for delay in (0, 0.25, 0.75):
+        if delay:
+            r = sleep(delay)
+            if r is not None:
+                await r
+        response = await _get(client)
+        if response.status_code == 404:
+            continue
+        if response.status_code != 200:
+            return OpenRouterUsage(generation_id=generation_id)
+        data = (response.json() or {}).get("data") or {}
+        return OpenRouterUsage(
+            prompt_tokens=int(data.get("tokens_prompt") or data.get("native_tokens_prompt") or 0),
+            cached_tokens=int(data.get("native_tokens_cached") or 0),
+            completion_tokens=int(data.get("tokens_completion") or data.get("native_tokens_completion") or 0),
+            provider=data.get("model") or data.get("provider_name"),
+            cost=float(data.get("total_cost") or data.get("usage") or 0.0),
+            generation_id=data.get("id") or generation_id,
+        )
 
     return OpenRouterUsage(generation_id=generation_id)
 

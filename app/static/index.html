@@ -14,60 +14,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link rel="stylesheet" href="/static/style.css">
-
 </head>
 
 <body>
-
-    <button id="chat-toggle">
-        <i class="fas fa-comment-dots chat-toggle-icon icon-messenger"></i>
-        <i class="fas fa-xmark chat-toggle-icon icon-close"></i>
-    </button>
-
-    <!-- Pending-response popup. Shows the latest AI answer ABOVE the FAB when
-         the chatbox is closed at done-time. Single slot — new responses
-         REPLACE the previous preview, not stack. -->
-    <div id="ava-popup" class="ava-popup" hidden>
-        <div class="ava-popup-body">
-            <div class="ava-popup-text"></div>
-            <button class="ava-popup-close" title="Dismiss">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-    </div>
-
-    <div id="chat-box" class="animate__animated">
-        <div id="chat-header">
-            <div class="header-info">
-                <div class="online-dot"></div>
-                <div style="display:flex; flex-direction:column;">
-                    <span>AI Trainer</span>
-                    <small style="font-size:11px; opacity:.8;">AI Trainer can make mistake</small>
-                </div>
-            </div>
-            <div style="display:flex; gap:20px; align-items:center;">
-                <button id="coach-cta-btn" class="coach-cta-btn" title="Aktifkan Coaching Mode">
-                    <i class="fas fa-lightbulb"></i> Coaching
-                </button>
-                <i class="fas fa-trash-alt header-icon" onclick="clearChat()" title="Clear chat"
-                    style="cursor:pointer; font-size:14px; opacity:0.8;"></i>
-            </div>
-        </div>
-
-        <div id="chat-messages"></div>
-
-        <div id="chat-input">
-            <button id="topics-btn" class="topics-btn" onclick="openSectionPanel()" title="Daftar topik">
-                <i class="fas fa-book"></i>
-            </button>
-            <textarea id="prompt" rows="1" placeholder="Ketik pesan..." onkeydown="handleKey(event)"></textarea>
-            <button id="send-btn" class="send-btn" onclick="handleSendClick()">
-                <i class="fas fa-paper-plane"></i>
-            </button>
-        </div>
-    </div>
-
-
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/static/script.js"></script>
 </body>

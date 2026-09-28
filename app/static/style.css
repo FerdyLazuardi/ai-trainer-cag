@@ -45,19 +45,19 @@ body {
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 50px;
-    height: 50px;
+    width: 64px;
+    height: 64px;
     border-radius: 50%;
     background: var(--primary-color);
     color: white;
     border: none;
-    font-size: 21px;
+    font-size: 26px;
     cursor: pointer;
-    box-shadow: 0 4px 15px var(--primary-color-shadow);
+    box-shadow: 0 6px 20px var(--primary-color-shadow);
     z-index: 10000;
     /* NO overflow:hidden here — that was clipping the pulse ring.
        The morph icons are positioned absolute and stay within the
-       button naturally (22px inside a 50px circle). */
+       button naturally. */
     transition: background-color 0.35s ease, box-shadow 0.35s ease;
 }
 
@@ -67,8 +67,8 @@ body {
     position: absolute;
     inset: 0;
     margin: auto;
-    width: 22px;
-    height: 22px;
+    width: 32px;
+    height: 32px;
     line-height: 1;
     display: flex;
     align-items: center;
@@ -78,7 +78,7 @@ body {
     pointer-events: none;
 }
 .icon-messenger { opacity: 1; transform: rotate(0deg) scale(1); }
-.icon-close     { opacity: 0; transform: rotate(-90deg) scale(0.5); }
+.icon-close     { opacity: 0; transform: rotate(-90deg) scale(0.5); font-size: 24px; }
 
 body.chat-open .icon-messenger { opacity: 0; transform: rotate(90deg) scale(0.5); }
 body.chat-open .icon-close     { opacity: 1; transform: rotate(0deg) scale(1); }
@@ -123,20 +123,26 @@ body.chat-open #chat-toggle.pulse::before {
 /* BADGE */
 #chat-badge {
     position: absolute;
-    top: -5px;
-    right: -5px;
-    background: #ef4444;
+    top: -4px;
+    right: -4px;
+    background: #dc2626;
     color: white;
-    font-size: 12px;
-    width: 22px;
-    height: 22px;
+    font-size: 13px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
+    border: 2px solid #ffffff;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: bold;
+    font-weight: 700;
     animation: pulseBadge 2.2s ease-in-out infinite;
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.55);
+    pointer-events: none;
+}
+#chat-badge[hidden],
+body.chat-open #chat-badge {
+    display: none !important;
 }
 
 @keyframes pulseBadge {
@@ -157,7 +163,7 @@ body.chat-open #chat-toggle.pulse::before {
 /* ================= CHAT BOX ================= */
 #chat-box {
     position: fixed;
-    bottom: 85px;
+    bottom: 96px;
     right: 20px;
     width: min(400px, 90vw);
     height: min(600px, 80vh);
@@ -428,19 +434,68 @@ body.chat-open #chat-toggle.pulse::before {
 #chat-messages::-webkit-scrollbar { width: 4px; }
 #chat-messages::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-/* ================= STREAMING CURSOR ================= */
+/* ================= STREAMING CURSOR (sparkle ✦) =================
+   Bintang kecil yang "menulis" di ujung teks saat jawaban streaming.
+   Twinkle: pulse scale + shimmer opacity + rotasi halus — bukan blink kaku. */
 .streaming-cursor-inline {
     display: inline-block;
-    animation: blink-cursor 0.8s step-end infinite;
     color: var(--primary-color);
-    font-weight: 800;
-    margin-left: 2px;
+    font-weight: 400;
+    font-style: normal;
+    font-family: 'Inter', -apple-system, sans-serif;
+    margin-left: 3px;
     vertical-align: baseline;
+    animation: spark-write 0.9s ease-in-out infinite;
+    transform-origin: center;
 }
 
-@keyframes blink-cursor {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
+@keyframes spark-write {
+    0%   { opacity: 0.35; transform: scale(0.8)  rotate(0deg); }
+    50%  { opacity: 1;    transform: scale(1.15) rotate(90deg); }
+    100% { opacity: 0.35; transform: scale(0.8)  rotate(180deg); }
+}
+
+/* ================= THINKING SPARKLE (✦ di indikator loading) =================
+   Gantiin 3 dots bounce: satu bintang purple yang berputar + bernafas,
+   dengan dua kelip kecil (::before/::after) biar hidup — gaya AI modern. */
+.ava-think-spark {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: var(--primary-color);
+    font-size: 16px;
+    line-height: 1;
+    font-style: normal;
+    font-family: 'Inter', -apple-system, sans-serif;
+    animation: spark-think 1.6s ease-in-out infinite;
+    transform-origin: center;
+    flex: 0 0 auto;
+}
+
+@keyframes spark-think {
+    0%   { transform: rotate(0deg)   scale(1);    opacity: 0.85; }
+    50%  { transform: rotate(180deg) scale(1.22); opacity: 1;    }
+    100% { transform: rotate(360deg) scale(1);    opacity: 0.85; }
+}
+
+/* Dua kelip mini di sudut, nyala bergantian */
+.ava-think-spark::before,
+.ava-think-spark::after {
+    content: "\2726";
+    position: absolute;
+    font-size: 7px;
+    color: var(--primary-color);
+    animation: spark-twinkle 1.6s ease-in-out infinite;
+}
+.ava-think-spark::before { top: -4px;    right: -5px; }
+.ava-think-spark::after  { bottom: -4px; left: -5px; animation-delay: -0.8s; }
+
+@keyframes spark-twinkle {
+    0%, 100% { opacity: 0;   transform: scale(0.4); }
+    50%      { opacity: 0.9; transform: scale(1);   }
 }
 
 /* Smooth bubble growth during streaming */
@@ -637,7 +692,7 @@ body.chat-open #chat-toggle.pulse::before {
     #chat-box {
         width: calc(100vw - 20px) !important;
         right: 10px !important;
-        bottom: 75px !important;
+        bottom: 84px !important;
         height: 75vh !important;
         max-height: 550px !important;
     }
@@ -655,11 +710,11 @@ body.chat-open #chat-toggle.pulse::before {
         height: 36px !important;
     }
     #chat-toggle {
-        width: 44px;
-        height: 44px;
+        width: 56px;
+        height: 56px;
         bottom: 15px;
         right: 15px;
-        font-size: 18px;
+        font-size: 22px;
     }
 }
 
@@ -679,62 +734,85 @@ body.chat-open #chat-toggle.pulse::before {
 .kebab-btn:hover { background: rgba(255, 255, 255, 0.12); }
 
 /* ================= COACHING CTA BUTTON ================= */
-.coach-cta-btn {
-    background: rgba(0, 0, 0, 0.15); /* Darker purple / sunken look */
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 6px 14px;
-    border-radius: 20px;
-    cursor: pointer;
+/* ════════════════════════════════════════════════════════════════════
+   MODE SWITCH — toggle Mentoring (default) ↔ Coaching di header chatbox.
+   Reuse #coach-cta-btn supaya semua caller lama tetap jalan. Label
+   dinamis ngikut mode aktif; thumb geser + ganti ikon (topi wisuda /
+   peluit) buat 3 lapis petunjuk: posisi + warna + ikon + teks.
+   ════════════════════════════════════════════════════════════════════ */
+.mode-switch {
     display: flex;
     align-items: center;
-    gap: 6px;
-    position: relative;
-    overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
+    gap: 8px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
     outline: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
-.coach-cta-btn::before {
-    content: '';
+.mode-switch-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    min-width: 66px;
+    text-align: right;
+    letter-spacing: 0.2px;
+    transition: color 0.25s ease;
+}
+
+.mode-switch-track {
+    position: relative;
+    width: 42px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.30);
+    border-radius: 999px;
+    transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    flex: 0 0 auto;
+}
+
+.mode-switch-thumb {
     position: absolute;
-    top: 0;
-    left: -100%;
-    width: 50%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-    transform: skewX(-20deg);
-    animation: shimmer 6s infinite; /* 6s total loop */
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-@keyframes shimmer {
-    0% { left: -100%; }
-    40% { left: 200%; }
-    100% { left: 200%; }
+.mode-switch-thumb i {
+    font-size: 9px;
+    line-height: 1;
 }
+.mode-ico-mentor { color: var(--primary-color); display: inline; }
+.mode-ico-coach  { color: #fff; display: none; }
 
-.coach-cta-btn:hover {
-    background: rgba(0, 0, 0, 0.25);
-    color: white;
+/* ── State: Coaching aktif ── */
+.mode-switch.active .mode-switch-track {
+    background: #fff;
 }
-
-.coach-cta-btn.active {
-    background: white;
-    color: var(--primary-color);
-    border-color: white;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+.mode-switch.active .mode-switch-thumb {
+    transform: translateX(20px);
+    background: var(--primary-color);
 }
+.mode-switch.active .mode-ico-mentor { display: none; }
+.mode-switch.active .mode-ico-coach  { display: inline; }
 
-.coach-cta-btn.active::before {
-    display: none;
+.mode-switch:hover .mode-switch-track {
+    background: rgba(255, 255, 255, 0.45);
 }
-
-.coach-cta-btn i {
-    font-size: 14px;
-    margin-right: 2px;
+.mode-switch.active:hover .mode-switch-track {
+    background: rgba(255, 255, 255, 0.88);
+}
+.mode-switch:focus-visible .mode-switch-track {
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.6);
 }
 
 
@@ -869,7 +947,7 @@ body.chat-open #chat-toggle.pulse::before {
    Click anywhere on the popup (or ×) opens the chatbox + dismisses. */
 .ava-popup {
     position: fixed;
-    bottom: 80px;
+    bottom: 94px;
     right: 20px;
     width: 280px;
     max-width: calc(100vw - 60px);
@@ -1182,3 +1260,182 @@ body.chat-open #chat-toggle.intensify::before {
 #ava-tour-tooltip,
 #ava-tour-overlay,
 #ava-tour-cutout { z-index: 20000; }
+
+/* ════════════════════════════════════════════════════════════════════
+   LAYOUT FIX — blocks-column diam-diam makan ruang meski isinya cuma
+   block AI Trainer yang di-`display:none`. Moodle/tema Space tetap
+   menghitung region ini "ada" secara grid, jadi konten utama halaman
+   ikut menyempit dan muncul gap kosong di kanan.
+
+   Fix: kalau blocks-column HANYA berisi block_ai_trainer (nggak ada
+   block lain), collapse total kolomnya jadi width:0 dan lebarkan
+   konten utama. Pakai :has()+:not() supaya kalau nanti ada block lain
+   ditaruh di region yang sama (mis. Calendar), kolom itu tetap tampil
+   normal — fix ini nggak nyentuh kasus itu.
+   ════════════════════════════════════════════════════════════════════ */
+section[data-region="blocks-column"]:has(> aside .block_ai_trainer):not(:has(> aside .block:not(.block_ai_trainer))) {
+    display: none !important;
+    width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+section[data-region="blocks-column"]:has(> aside .block_ai_trainer):not(:has(> aside .block:not(.block_ai_trainer))) ~ * {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+}
+
+/* Rule KRUSIAL yang sebelumnya kelewat: konten utama (#region-main) berada
+   SEBELUM blocks-column di DOM, bukan sesudahnya, jadi combinator `~` di atas
+   tidak menyentuhnya. Tema Space memberi class .has-blocks pada #region-main
+   dan mengunci lebarnya (mis. 872px) selama halaman "punya block" — walaupun
+   kolomnya sendiri sudah 0px. Selector di bawah menarget sibling PERSIS
+   SEBELUM kolom yang sudah kita collapse, dan melebarkannya kembali. */
+*:has(+ section[data-region="blocks-column"]:has(> aside .block_ai_trainer):not(:has(> aside .block:not(.block_ai_trainer)))) {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+}
+
+*:has(> section[data-region="blocks-column"]:has(> aside .block_ai_trainer):not(:has(> aside .block:not(.block_ai_trainer)))) {
+    /* pastikan parent flex/grid-nya tidak menyisakan gap gutter kosong */
+    gap: 0 !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SPARKLE ICON (✦) di FAB — pengganti fa-comment-dots.
+   Span glyph, bukan icon font, jadi bebas dari rule Font Awesome.
+   ════════════════════════════════════════════════════════════════════ */
+.ava-spark {
+    font-size: 34px;
+    font-weight: 400;
+    font-family: 'Inter', -apple-system, sans-serif !important;
+}
+
+@media (max-width: 600px) {
+    .ava-spark {
+        font-size: 28px;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   WELCOME LAUNCHER — Greeting Bubble + Close (×) + 3 KB Materi Chips
+   Muncul otomatis setelah 1s jika riwayat chat di Redis masih kosong.
+   ════════════════════════════════════════════════════════════════════ */
+.ava-launcher {
+    position: fixed;
+    bottom: 96px;
+    right: 20px;
+    width: min(330px, calc(100vw - 40px));
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    z-index: 10001;
+    transform-origin: bottom right;
+    animation: ava-launcher-in 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    user-select: none;
+}
+.ava-launcher[hidden],
+body.chat-open .ava-launcher {
+    display: none !important;
+}
+
+.ava-launcher.fadeout {
+    animation: ava-launcher-out 0.22s ease-out forwards;
+}
+
+@keyframes ava-launcher-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.92); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+@keyframes ava-launcher-out {
+    from { opacity: 1; transform: translateY(0)   scale(1);    }
+    to   { opacity: 0; transform: translateY(8px) scale(0.95); }
+}
+
+.ava-launcher-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #ffffff;
+    color: #1e293b;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.18s ease, transform 0.18s ease;
+}
+.ava-launcher-close:hover {
+    background: #f1f5f9;
+    transform: scale(1.06);
+}
+
+.ava-launcher-bubble {
+    width: 100%;
+    background: #ffffff;
+    color: #0f172a;
+    border-radius: 16px 16px 4px 16px;
+    padding: 15px 18px;
+    box-shadow: 0 8px 26px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ava-launcher-bubble:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16), 0 3px 8px rgba(15, 23, 42, 0.08);
+}
+
+.ava-launcher-chips {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    width: 100%;
+    margin-top: 2px;
+}
+
+.ava-launcher-chip {
+    background: #ffffff;
+    color: var(--primary-color);
+    border: 1.5px solid var(--primary-color);
+    border-radius: 10px;
+    padding: 9px 16px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    text-align: right;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 3px 10px rgba(125, 80, 161, 0.10);
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+.ava-launcher-chip:hover {
+    background: var(--primary-color);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 5px 14px var(--primary-color-shadow);
+}
+
+@media (max-width: 600px) {
+    .ava-launcher {
+        bottom: 84px;
+        right: 15px;
+        width: min(300px, calc(100vw - 30px));
+    }
+}
+

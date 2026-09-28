@@ -25,38 +25,73 @@ _REDUNDANT_KPI_KEYS = {
 _CACHE_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE"}
 
 
+_USER_CTX_CACHE_TTL = 60.0
+_user_ctx_db_cache: dict[tuple[str, str], tuple[float, Any, Any]] = {}
+_branch_db_cache: dict[str, tuple[float, Any]] = {}
+
+
+def clear_user_context_cache() -> None:
+    _user_ctx_db_cache.clear()
+    _branch_db_cache.clear()
+
+
 async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
     """Build Moodle user profile enriched with UserKPIData and BranchData from Postgres."""
+    import time as _time
+    from sqlalchemy import func
+
     kpi_data = None
     branch_data = None
-    try:
-        async with AsyncSessionLocal() as db_session:
-            kpi_stmt = select(UserKPIData).where(UserKPIData.username == current_user.username)
-            kpi_data = (await db_session.execute(kpi_stmt)).scalars().first()
+    cache_key = (str(current_user.username or ""), str(current_user.point or ""))
+    now = _time.monotonic()
+    cached_entry = _user_ctx_db_cache.get(cache_key)
 
-            point_from_kpi = ""
-            if kpi_data:
-                if isinstance(kpi_data.data, dict):
-                    for k, v in kpi_data.data.items():
-                        if str(k).lower().strip() in ("point", "cabang") and v:
-                            point_from_kpi = str(v).strip()
-                            break
-                if not point_from_kpi and getattr(kpi_data, "point_norm", None):
-                    point_from_kpi = kpi_data.point_norm
+    if cached_entry and now < cached_entry[0]:
+        _, kpi_data, branch_data = cached_entry
+    else:
+        try:
+            async with AsyncSessionLocal() as db_session:
+                kpi_stmt = select(UserKPIData).where(UserKPIData.username == current_user.username)
+                kpi_data = (await db_session.execute(kpi_stmt)).scalars().first()
 
-            point_val = point_from_kpi or str(current_user.point or "").strip()
-            if point_val:
-                branch_stmt = select(BranchData).where(BranchData.point == point_val)
-                branch_data = (await db_session.execute(branch_stmt)).scalars().first()
-                if not branch_data:
+                point_from_kpi = ""
+                if kpi_data:
+                    if isinstance(kpi_data.data, dict):
+                        for k, v in kpi_data.data.items():
+                            if str(k).lower().strip() in ("point", "cabang") and v:
+                                point_from_kpi = str(v).strip()
+                                break
+                    if not point_from_kpi and getattr(kpi_data, "point_norm", None):
+                        point_from_kpi = kpi_data.point_norm
+
+                point_val = point_from_kpi or str(current_user.point or "").strip()
+                if point_val:
                     norm_point = point_val.lower().replace(" ", "")
-                    all_branches = (await db_session.execute(select(BranchData))).scalars().all()
-                    for b in all_branches:
-                        if (b.point or "").lower().replace(" ", "") == norm_point:
-                            branch_data = b
-                            break
-    except Exception as exc:
-        logger.warning(f"Failed to load spreadsheet data from database: {exc}")
+                    cached_branch = _branch_db_cache.get(norm_point)
+                    if cached_branch and now < cached_branch[0]:
+                        branch_data = cached_branch[1]
+                    else:
+                        branch_stmt = (
+                            select(BranchData)
+                            .where((BranchData.point == point_val) | (BranchData.point_norm == norm_point))
+                            .limit(1)
+                        )
+                        branch_data = (await db_session.execute(branch_stmt)).scalars().first()
+                        if not branch_data:
+                            fallback_stmt = (
+                                select(BranchData)
+                                .where(func.lower(func.replace(BranchData.point, " ", "")) == norm_point)
+                                .limit(1)
+                            )
+                            branch_data = (await db_session.execute(fallback_stmt)).scalars().first()
+                        if len(_branch_db_cache) >= 2048:
+                            _branch_db_cache.pop(next(iter(_branch_db_cache)), None)
+                        _branch_db_cache[norm_point] = (now + _USER_CTX_CACHE_TTL, branch_data)
+            if len(_user_ctx_db_cache) >= 2048:
+                _user_ctx_db_cache.pop(next(iter(_user_ctx_db_cache)), None)
+            _user_ctx_db_cache[cache_key] = (now + _USER_CTX_CACHE_TTL, kpi_data, branch_data)
+        except Exception as exc:
+            logger.warning(f"Failed to load spreadsheet data from database: {exc}")
 
     user_context: dict[str, Any] = {
         "name": current_user.fullname or current_user.username,

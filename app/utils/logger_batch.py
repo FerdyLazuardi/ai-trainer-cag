@@ -19,20 +19,40 @@ def _redact_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
             out[col] = redact_pii(out[col])
     return out
 
+_VALID_LOG_COLS = {c.name for c in AgentLog.__table__.columns}
+
+
+def _clean_row(log_data: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = {k: v for k, v in log_data.items() if k in _VALID_LOG_COLS}
+    if "or_provider" in cleaned and isinstance(cleaned["or_provider"], str):
+        cleaned["or_provider"] = cleaned["or_provider"][:64]
+    return cleaned
+
+
 async def _do_insert(log_data: Dict[str, Any]):
     try:
-        valid_cols = {c.name for c in AgentLog.__table__.columns}
-        cleaned = {k: v for k, v in log_data.items() if k in valid_cols}
-        
-        # Prevent StringDataRightTruncationError for provider strings
-        if "or_provider" in cleaned and isinstance(cleaned["or_provider"], str):
-            cleaned["or_provider"] = cleaned["or_provider"][:64]
-            
+        cleaned = _clean_row(log_data)
         async with AsyncSessionLocal() as session:
             await session.execute(insert(AgentLog).values(**cleaned))
             await session.commit()
     except Exception as e:
         logger.error(f"Failed to insert log directly to DB: {e}")
+
+
+async def _do_insert_batch(rows: list[Dict[str, Any]]):
+    if len(rows) == 1:
+        await _do_insert(rows[0])
+        return
+    try:
+        cleaned_rows = [_clean_row(r) for r in rows]
+        async with AsyncSessionLocal() as session:
+            await session.execute(insert(AgentLog), cleaned_rows)
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"Batch log insert failed ({e}); falling back to single-row insert")
+        for r in rows:
+            await _do_insert(r)
+
 
 class BatchLogger:
     def __init__(self):
@@ -59,11 +79,18 @@ class BatchLogger:
     async def _run(self):
         assert self._queue is not None
         while True:
-            row = await self._queue.get()
+            first = await self._queue.get()
+            batch = [first]
+            while len(batch) < 50:
+                try:
+                    batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
             try:
-                await _do_insert(row)
+                await _do_insert_batch(batch)
             finally:
-                self._queue.task_done()
+                for _ in batch:
+                    self._queue.task_done()
 
     async def add_log(self, log_entry: Dict[str, Any]):
         if "created_at" not in log_entry:

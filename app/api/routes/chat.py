@@ -69,6 +69,9 @@ _OPINION_REGEX = re.compile(
     re.IGNORECASE,
 )
 
+_STREAM_DASH_RE = re.compile(r"[ \t]*[—–][ \t]*")
+_ltm_profile_cache: dict[str, tuple[float, dict[str, str]]] = {}
+
 
 def get_cag_graph():
     from app.graph.pipeline import get_cag_graph as _get_cag_graph
@@ -314,9 +317,9 @@ async def _prepare_cag_context(
 
     user_id = current_user.user_id
     ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
-    user_context = await _build_enriched_user_context(current_user)
 
     if _skip_embedding:
+        user_context = await _build_enriched_user_context(current_user)
         return {
             "cached": None,
             "initial_state": {
@@ -334,16 +337,18 @@ async def _prepare_cag_context(
 
     logger.debug(f"[TIMING] pre-history: {time.perf_counter()-_t0:.2f}s")
     _t_hist = time.perf_counter()
-    summary, recent_history = await get_or_summarize_history(
-        conversation_id=conversation_id,
-        llm=get_cheap_llm(),
-        max_fresh_turns=settings.max_fresh_turns,
-        persist=False,
+    user_context, (summary, recent_history), seen_chunk_ids = await asyncio.gather(
+        _build_enriched_user_context(current_user),
+        get_or_summarize_history(
+            conversation_id=conversation_id,
+            llm=get_cheap_llm(),
+            max_fresh_turns=settings.max_fresh_turns,
+            persist=False,
+        ),
+        get_seen_chunk_ids(conversation_id),
     )
     asyncio.create_task(_schedule_summary_refresh(conversation_id))
-
-    seen_chunk_ids = await get_seen_chunk_ids(conversation_id)
-    logger.debug(f"[TIMING] history: {time.perf_counter()-_t_hist:.2f}s")
+    logger.debug(f"[TIMING] history+user_ctx: {time.perf_counter()-_t_hist:.2f}s")
     if (recent_history or summary) and len(resolved_query.split()) <= 3:
         skip_cache = True
         logger.debug("Cache lookup skipped - short follow-up query (context-dependent)")
@@ -387,10 +392,18 @@ async def _prepare_cag_context(
 
     ltm_profile = {"learning_summary": ""}
     if ltm_eligible:
-        async with AsyncSessionLocal() as session:
-            user_profile_obj = await session.get(UserLTMMemory, user_id)
-        if user_profile_obj is not None:
-            ltm_profile = {"learning_summary": user_profile_obj.learning_summary or ""}
+        now_ltm = time.monotonic()
+        cached_ltm = _ltm_profile_cache.get(user_id)
+        if cached_ltm and now_ltm < cached_ltm[0]:
+            ltm_profile = cached_ltm[1]
+        else:
+            async with AsyncSessionLocal() as session:
+                user_profile_obj = await session.get(UserLTMMemory, user_id)
+            if user_profile_obj is not None:
+                ltm_profile = {"learning_summary": user_profile_obj.learning_summary or ""}
+            if len(_ltm_profile_cache) >= 2048:
+                _ltm_profile_cache.pop(next(iter(_ltm_profile_cache)), None)
+            _ltm_profile_cache[user_id] = (now_ltm + 60.0, ltm_profile)
 
     initial_state = {
         "messages": messages,
@@ -483,9 +496,10 @@ async def _run_chat(
 ) -> ChatResponse:
     start_time = time.perf_counter()
     conversation_id = request.conversation_id or str(uuid.uuid4())
-    await _verify_conversation_ownership(conversation_id, current_user)
-
-    ban_ttl = await _get_ban_ttl(current_user.user_id)
+    _, ban_ttl = await asyncio.gather(
+        _verify_conversation_ownership(conversation_id, current_user),
+        _get_ban_ttl(current_user.user_id),
+    )
     if ban_ttl > 0:
         latency_ms = (time.perf_counter() - start_time) * 1000
         return ChatResponse(
@@ -570,6 +584,20 @@ async def _process_off_scope_status(
     return answer, off_scope_ban_ttl
 
 
+async def _log_chat_turn_with_usage(final_message: Any, base_log: dict[str, Any]) -> None:
+    usage_data = await _extract_message_token_usage(final_message)
+    base_log.update({
+        "llm_tokens_used": usage_data["llm_tokens_used"],
+        "or_prompt_tokens": usage_data["or_prompt_tokens"],
+        "or_cached_tokens": usage_data["or_cached_tokens"],
+        "or_completion_tokens": usage_data["or_completion_tokens"],
+        "or_provider": usage_data["or_provider"],
+        "or_generation_id": usage_data["or_generation_id"],
+        "or_cost": usage_data["or_cost"],
+    })
+    await batch_logger.add_log(base_log)
+
+
 async def _execute_chat_flow(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
@@ -600,7 +628,6 @@ async def _execute_chat_flow(
         answer, off_scope_ban_ttl = await _process_off_scope_status(
             off_scope_detected, current_user.user_id, cfg, sanitized
         )
-        usage_data = await _extract_message_token_usage(final_message)
 
     except asyncio.TimeoutError as exc:
         logger.error(
@@ -661,7 +688,8 @@ async def _execute_chat_flow(
         logger.debug(f"seen chunk tracking skipped: {seen_err}")
 
     background_tasks.add_task(
-        batch_logger.add_log,
+        _log_chat_turn_with_usage,
+        final_message,
         {
             "turn_id": turn_id,
             "endpoint": "chat",
@@ -671,13 +699,6 @@ async def _execute_chat_flow(
             "answer": answer,
             "chunks_retrieved": actual_chunks,
             "latency_ms": round(latency_ms, 2),
-            "llm_tokens_used": usage_data["llm_tokens_used"],
-            "or_prompt_tokens": usage_data["or_prompt_tokens"],
-            "or_cached_tokens": usage_data["or_cached_tokens"],
-            "or_completion_tokens": usage_data["or_completion_tokens"],
-            "or_provider": usage_data["or_provider"],
-            "or_generation_id": usage_data["or_generation_id"],
-            "or_cost": usage_data["or_cost"],
             "cache_hit": False,
             "retrieved_context": retrieved_context,
             **_user_log_fields(current_user, context),
@@ -784,12 +805,14 @@ async def list_topics(
 ) -> dict:
     from app.graph.pipeline import _load_course_names, _load_h2_topics, resolve_user_role
     try:
-        topics = await _load_course_names()
         user_ctx = {
             "location": current_user.location if current_user else "",
             "grade": current_user.grade if current_user else "",
         }
-        h2_topics = await _load_h2_topics(resolve_user_role(user_ctx))
+        topics, h2_topics = await asyncio.gather(
+            _load_course_names(),
+            _load_h2_topics(resolve_user_role(user_ctx)),
+        )
     except Exception as exc:
         logger.warning(f"/chat/topics load failed: {exc}")
         topics = []
@@ -808,8 +831,10 @@ async def list_sections(
             "grade": current_user.grade if current_user else "",
         }
         resolved_role = resolve_user_role(user_ctx)
-        sections = await _load_section_map(resolved_role)
-        h2_topics = await _load_h2_topics(resolved_role)
+        sections, h2_topics = await asyncio.gather(
+            _load_section_map(resolved_role),
+            _load_h2_topics(resolved_role),
+        )
     except Exception as exc:
         logger.warning(f"/chat/sections load failed: {exc}")
         sections = {}
@@ -835,9 +860,10 @@ async def chat_stream(
     try:
         start_time = time.perf_counter()
         conversation_id = request.conversation_id or str(uuid.uuid4())
-        await _verify_conversation_ownership(conversation_id, current_user)
-
-        stream_ban_ttl = await _get_ban_ttl(current_user.user_id)
+        _, stream_ban_ttl = await asyncio.gather(
+            _verify_conversation_ownership(conversation_id, current_user),
+            _get_ban_ttl(current_user.user_id),
+        )
         if stream_ban_ttl > 0:
             sem_release()
             _stream_ban_ttl = stream_ban_ttl
@@ -875,13 +901,13 @@ async def chat_stream(
                 sem_release()
 
                 words = cached["answer"].split(" ")
-                chunk_size = 4
+                chunk_size = 16
                 for i in range(0, len(words), chunk_size):
                     chunk = " ".join(words[i:i + chunk_size])
                     if i > 0:
                         chunk = " " + chunk
                     yield f"data: {json.dumps({'token': chunk})}\n\n"
-                    await asyncio.sleep(0.02)
+                    await asyncio.sleep(0.002)
 
                 sources_list = list(cached.get("sources", []))
                 yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
@@ -1061,11 +1087,13 @@ async def chat_stream(
                                 token_count += 1
                                 safe = leak_guard.feed(emit)
                                 if safe:
-                                    safe = re.sub(r"[ \t]*[—–][ \t]*", ", ", safe)
+                                    if "—" in safe or "–" in safe:
+                                        safe = _STREAM_DASH_RE.sub(", ", safe)
                                     answer_emitted = True
                                     yield f"data: {json.dumps({'token': safe})}\n\n"
                                 if token_count % 5 == 0 and await req.is_disconnected():
                                     logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
+                                    sem_release()
                                     deduper.full_answer = ""
                                     await _emit_log()
                                     return
@@ -1144,6 +1172,10 @@ async def chat_stream(
                 except Exception as fb_exc:
                     logger.warning(f"Fallback ainvoke failed after empty raw stream: {type(fb_exc).__name__}: {fb_exc}")
 
+            # Release the LLM pipeline slot immediately once generation finishes
+            # so post-stream logging / OpenRouter cost lookup never blocks other users.
+            sem_release()
+
             if not deduper.full_answer.strip():
                 yield f"event: error\ndata: {json.dumps({'error': 'empty response, please retry'})}\n\n"
                 await _emit_log()
@@ -1199,6 +1231,11 @@ async def chat_stream(
             yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
 
             try:
+                post_tasks = [
+                    _emit_log(),
+                    _schedule_afk_ltm_sync(conversation_id, current_user.user_id),
+                    _track_session_courses(conversation_id, retrieved_context),
+                ]
                 if _should_write_response_cache(
                     intent=intent,
                     is_low_relevance=is_low_relevance_stream,
@@ -1206,16 +1243,15 @@ async def chat_stream(
                     skip_cache=context.get("skip_cache", False),
                 ):
                     ns = cache_namespace_for(was_personalized=was_personalized, user_id=current_user.user_id)
-                    await set_cached_response(
-                        query=_raw_query_for_cache,
-                        answer=deduper.full_answer,
-                        sources=sources,
-                        course_id=request.course_id,
-                        cache_namespace=ns,
+                    post_tasks.append(
+                        set_cached_response(
+                            query=_raw_query_for_cache,
+                            answer=deduper.full_answer,
+                            sources=sources,
+                            course_id=request.course_id,
+                            cache_namespace=ns,
+                        )
                     )
-                await _emit_log()
-                await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
-                await _track_session_courses(conversation_id, retrieved_context)
                 if _should_eval_turn(
                     intent=intent,
                     intent_scores=stream_intent_scores,
@@ -1223,23 +1259,27 @@ async def chat_stream(
                     answer=deduper.full_answer,
                     is_low_relevance=is_low_relevance_stream,
                 ):
-                    await _enqueue_eval(
-                        turn_id=turn_id,
-                        query=resolved_query,
-                        answer=deduper.full_answer,
-                        retrieved_context=retrieved_context,
-                        intent=intent,
-                        intent_scores=stream_intent_scores,
+                    post_tasks.append(
+                        _enqueue_eval(
+                            turn_id=turn_id,
+                            query=resolved_query,
+                            answer=deduper.full_answer,
+                            retrieved_context=retrieved_context,
+                            intent=intent,
+                            intent_scores=stream_intent_scores,
+                        )
                     )
+                await asyncio.gather(*post_tasks)
             except Exception as bg_err:
                 logger.warning(f"Stream background task error: {bg_err}")
         except Exception:
+            sem_release()
             logger.exception("Raw OpenRouter stream error", query=request.query[:60])
             yield f"event: error\ndata: {json.dumps({'error': 'CAG pipeline failed'})}\n\n"
             await _emit_log()
         finally:
-            await _emit_log()
             sem_release()
+            await _emit_log()
 
     return StreamingResponse(
         _stream_cag_raw(),

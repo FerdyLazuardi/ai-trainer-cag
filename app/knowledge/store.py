@@ -4,6 +4,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import KnowledgeBasePack
 
 
+async def get_active_kb_hash(
+    session: AsyncSession,
+    *,
+    source: str = "moodle",
+) -> str | None:
+    result = await session.execute(
+        select(KnowledgeBasePack.kb_hash)
+        .where(KnowledgeBasePack.source == source, KnowledgeBasePack.is_active.is_(True))
+        .order_by(KnowledgeBasePack.created_at.desc(), KnowledgeBasePack.id.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
 async def get_active_kb_pack(
     session: AsyncSession,
     *,

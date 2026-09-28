@@ -19,18 +19,25 @@ _DOC_TAG_RE = re.compile(
     r'<doc\s+[^>]*section="([^"]*)"[^>]*file="([^"]*)"',
     re.IGNORECASE,
 )
+_ROLES_COMMENT_RE = re.compile(r"<!--\s*roles:\s*([^\-]+?)\s*-->", re.IGNORECASE)
+_ROLES_FM_RE = re.compile(r"^roles:\s*\[?([^\]\n]+)\]?", re.MULTILINE)
+_H123_LINE_RE = re.compile(r"^(?:AI:\s*|User:\s*)?#{1,3}\s+(.+)$", re.MULTILINE)
+_BOLD_TITLE_RE = re.compile(r"\*\*([^*]{3,50})\*\*")
+_H2_LINE_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_MD_EMPH_RE = re.compile(r"[*_`~]+")
 
 
 def _extract_roles(content: str) -> list[str]:
     # Match: <!-- roles: HO, HMB, AM, RM -->
-    match = re.search(r'(?i)<!--\s*roles:\s*([^\-]+?)\s*-->', content)
+    match = _ROLES_COMMENT_RE.search(content)
     if match:
         return [r.strip().upper() for r in match.group(1).split(",")]
     
     # Check frontmatter:
     # roles: [BP, BM]
     # roles: BP, BM
-    match_fm = re.search(r'(?m)^roles:\s*\[?([^\]\n]+)\]?', content)
+    match_fm = _ROLES_FM_RE.search(content)
     if match_fm:
         return [r.strip().upper() for r in match_fm.group(1).split(",")]
         
@@ -139,13 +146,13 @@ def extract_h2_headings(markdown_text: str) -> list[str]:
     """Extract headings (#, ##, ###) or bold titles from markdown content."""
     if not markdown_text:
         return []
-    headings = re.findall(r"(?m)^(?:AI:\s*|User:\s*)?#{1,3}\s+(.+)$", markdown_text)
-    bolds = re.findall(r"\*\*([^*]{3,50})\*\*", markdown_text)
+    headings = _H123_LINE_RE.findall(markdown_text)
+    bolds = _BOLD_TITLE_RE.findall(markdown_text)
     candidates = headings + bolds
     cleaned = []
     ignore_words = {"user", "ai", "note", "catatan", "perhatian", "penting", "sumber", "ringkasan"}
     for c in candidates:
-        clean = re.sub(r"<[^>]+>", "", c).strip().strip(":#*-_")
+        clean = _HTML_TAG_RE.sub("", c).strip().strip(":#*-_")
         if clean and len(clean) >= 3 and clean.lower() not in ignore_words and clean not in cleaned:
             cleaned.append(clean)
     return cleaned[:10]
@@ -155,12 +162,12 @@ def extract_kb_h2_headings(kb_text: str) -> list[str]:
     """Extract all unique level-2 (## ) markdown headings from active KB text."""
     if not kb_text:
         return []
-    raw_h2 = re.findall(r"(?m)^##\s+(.+)$", kb_text)
+    raw_h2 = _H2_LINE_RE.findall(kb_text)
     ignore_words = {"note", "catatan", "perhatian", "penting", "sumber", "ringkasan"}
     headings: list[str] = []
     for h in raw_h2:
-        clean = re.sub(r"<[^>]+>", "", h)
-        clean = re.sub(r"[*_`~]+", "", clean).strip().strip(":#*-_")
+        clean = _HTML_TAG_RE.sub("", h)
+        clean = _MD_EMPH_RE.sub("", clean).strip().strip(":#*-_")
         if clean and len(clean) >= 3 and clean.lower() not in ignore_words and clean not in headings:
             headings.append(clean)
     return headings
