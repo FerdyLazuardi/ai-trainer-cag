@@ -75,7 +75,7 @@ def _extract_geo_from_json(data: dict | None) -> dict[str, str]:
             continue
         kl = str(k).lower().strip()
         vs = str(v).strip()
-        if not vs:
+        if not vs or vs.lower() in ("n/a", "na", "none", "null", "-"):
             continue
         if kl in ("point", "cabang") and not out["point"]:
             out["point"] = vs
@@ -362,15 +362,19 @@ async def get_dashboard_logs(
     logs = []
     backfill_updates: list[dict[str, Any]] = []
 
+    def _clean_na(val: Any) -> str:
+        s = str(val).strip() if val else ""
+        return "" if s.lower() in ("n/a", "na", "none", "null", "-") else s
+
     for row, meta in zip(log_rows, parsed_by_row):
         row_id = int(row[1])
-        db_username = str(row[22]).strip() if len(row) > 22 and row[22] else ""
-        db_fullname = str(row[23]).strip() if len(row) > 23 and row[23] else ""
-        db_position = str(row[24]).strip() if len(row) > 24 and row[24] else ""
-        db_point = str(row[25]).strip() if len(row) > 25 and row[25] else ""
-        db_area = str(row[26]).strip() if len(row) > 26 and row[26] else ""
-        db_regional = str(row[27]).strip() if len(row) > 27 and row[27] else ""
-        db_pulau = str(row[28]).strip() if len(row) > 28 and row[28] else ""
+        db_username = _clean_na(row[22]) if len(row) > 22 else ""
+        db_fullname = _clean_na(row[23]) if len(row) > 23 else ""
+        db_position = _clean_na(row[24]) if len(row) > 24 else ""
+        db_point = _clean_na(row[25]) if len(row) > 25 else ""
+        db_area = _clean_na(row[26]) if len(row) > 26 else ""
+        db_regional = _clean_na(row[27]) if len(row) > 27 else ""
+        db_pulau = _clean_na(row[28]) if len(row) > 28 else ""
 
         u_match = (
             user_by_username.get(db_username)
@@ -388,10 +392,10 @@ async def get_dashboard_logs(
         final_username = db_username or u_match.get("username") or ""
         final_fullname = db_fullname or u_match.get("full_name") or meta["full_name"] or ""
         final_position = db_position or meta["position"] or u_match.get("role") or ""
-        final_point = db_point or u_match.get("point") or b_match.get("point") or meta["point"] or ""
-        final_area = db_area or u_match.get("area") or b_match.get("area") or ""
-        final_regional = db_regional or u_match.get("regional") or b_match.get("regional") or ""
-        final_pulau = db_pulau or u_match.get("pulau") or b_match.get("pulau") or ""
+        final_point = _clean_na(db_point or u_match.get("point") or b_match.get("point") or meta["point"] or "")
+        final_area = _clean_na(db_area or u_match.get("area") or b_match.get("area") or "")
+        final_regional = _clean_na(db_regional or u_match.get("regional") or b_match.get("regional") or "")
+        final_pulau = _clean_na(db_pulau or u_match.get("pulau") or b_match.get("pulau") or "")
 
         if (
             (final_point and not db_point)
@@ -461,6 +465,32 @@ async def get_dashboard_logs(
         for row in users_q.fetchall()
     ]
 
+    adoption_meta: dict[str, Any] = {}
+    if not cursor:
+        try:
+            async with engine.connect() as conn:
+                pt_hc_res = await conn.execute(
+                    text("""
+                        SELECT point_norm, COUNT(*)
+                        FROM user_kpi_data
+                        WHERE point_norm IS NOT NULL AND point_norm != '' AND LOWER(point_norm) NOT IN ('na', 'n/a')
+                        GROUP BY point_norm
+                    """)
+                )
+                role_hc_res = await conn.execute(
+                    text("""
+                        SELECT COALESCE(role, 'UNKNOWN'), COUNT(*)
+                        FROM user_kpi_data
+                        GROUP BY role
+                    """)
+                )
+                adoption_meta = {
+                    "headcount_by_point": {str(r[0]): int(r[1]) for r in pt_hc_res.fetchall() if r[0]},
+                    "headcount_by_role": {str(r[0]): int(r[1]) for r in role_hc_res.fetchall() if r[0]},
+                }
+        except Exception:
+            pass
+
     return {
         "kpis": {
             "total_queries": total,
@@ -481,6 +511,7 @@ async def get_dashboard_logs(
         "logs": logs,
         "next_cursor": next_cursor,
         "users": users,
+        "adoption": adoption_meta,
     }
 
 
