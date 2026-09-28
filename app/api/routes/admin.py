@@ -484,9 +484,33 @@ async def get_dashboard_logs(
                         GROUP BY role
                     """)
                 )
+                roster_res = await conn.execute(
+                    text("""
+                        SELECT
+                            UPPER(TRIM(COALESCE(data->>'pulau', data->>'Pulau', ''))) AS pulau,
+                            UPPER(TRIM(COALESCE(data->>'regional', data->>'Regional', ''))) AS regional,
+                            UPPER(TRIM(COALESCE(data->>'area', data->>'Area', ''))) AS area,
+                            UPPER(TRIM(COALESCE(data->>'point', data->>'Point', ''))) AS point,
+                            COALESCE(role, 'UNKNOWN') AS role,
+                            COUNT(*) AS cnt
+                        FROM user_kpi_data
+                        GROUP BY 1, 2, 3, 4, 5
+                    """)
+                )
+                roster_groups = []
+                for rr in roster_res.fetchall():
+                    roster_groups.append([
+                        _clean_na(rr[0]),
+                        _clean_na(rr[1]),
+                        _clean_na(rr[2]),
+                        _clean_na(rr[3]),
+                        _clean_na(rr[4]) or "UNKNOWN",
+                        int(rr[5] or 0),
+                    ])
                 adoption_meta = {
                     "headcount_by_point": {str(r[0]): int(r[1]) for r in pt_hc_res.fetchall() if r[0]},
                     "headcount_by_role": {str(r[0]): int(r[1]) for r in role_hc_res.fetchall() if r[0]},
+                    "roster_groups": roster_groups,
                 }
         except Exception:
             pass

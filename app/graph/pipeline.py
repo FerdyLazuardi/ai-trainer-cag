@@ -24,9 +24,9 @@ from loguru import logger
 from app.config.settings import get_settings
 from app.graph.state import CAGState
 from app.llm.cag_client import OpenRouterUsage
-from app.llm.client import _provider_extra_body, _shared_http_client, get_generate_llm_nostream
+from app.llm.client import _provider_extra_body, _shared_http_client, get_generate_llm, get_generate_llm_nostream
 from app.llm.prompts import CHIT_CHAT_PROMPT, CONVERSATIONAL_PROMPT, SOCRATIC_PROMPT
-from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections
+from app.knowledge.kb_pack import extract_kb_topics, extract_kb_sections, extract_kb_h2_headings
 
 _settings = get_settings()
 _MOODLE_BASE = _settings.moodle_api_url.rstrip("/")
@@ -36,249 +36,26 @@ _MOODLE_BASE = _settings.moodle_api_url.rstrip("/")
 
 # ─── Nodes ───────────────────────────────────────────────────────────────────
 
-# Strips leaked instruction blocks from the LLM response. Some models
-# (Gemini Flash Lite especially) occasionally echo the literal contents of
-# <retrieved_context> / <user_history> / etc. as part of their output —
-# leading to giant <h1>-rendered context dumps in the UI. We catch that
-# server-side as a defensive net even after prompt-level guards.
-_LEAK_BLOCK_RE = re.compile(
-    r"<(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|disambiguate|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>"
-    r".*?"
-    r"</\1>\s*",
-    re.DOTALL | re.IGNORECASE,
+from app.graph.sanitizer import (
+    StreamLeakGuard,
+    _AMARTHA_GLOSSARY,
+    _COURSE_NUM_RE,
+    _DIRECTIVE_LINE_RE,
+    _GLOSSARY_PATTERN,
+    _GLOSSARY_RE,
+    _INLINE_CITE_RE,
+    _LEAK_BLOCK_RE,
+    _LEAK_CITATION_HEAD_RE,
+    _LEAK_OPEN_TAG_RE,
+    _MD_HEADING_RE,
+    _META_CONTEXT_LINE_RE,
+    _META_CONVO_RE,
+    _OFFSCOPE_PARTIAL_RE,
+    _OFFSCOPE_RE,
+    _apply_glossary,
+    _normalize_dashes,
+    _sanitize_answer,
 )
-_LEAK_OPEN_TAG_RE = re.compile(
-    r"</?(retrieved_context|user_history|previous_context|user_preferences|user_context|response_shape|conversation_signals|capabilities|mode|output_contract|role|rules|how_to_talk|length|grounding|disambiguate|no_context|when_to_ask_vs_answer|how_to_ask|during_the_loop|wrap_up|scope|available_topics)>",
-    re.IGNORECASE,
-)
-_OFFSCOPE_RE = re.compile(r"\[OFFSCOPE\]", re.IGNORECASE)
-_OFFSCOPE_PARTIAL_RE = re.compile(
-    r"\[(?:O(?:F(?:F(?:S(?:C(?:O(?:P(?:E\]?)?)?)?)?)?)?)?)?$",
-    re.IGNORECASE
-)
-_COURSE_NUM_RE = re.compile(r"\bCourse\s+\d+(?:\s*:\s*|\s+)?", re.IGNORECASE)
-# Citation header from context formatter — "[N] Course: <name> (ID:<id>)".
-# Distinctive pattern; never appears in legitimate prose.
-_LEAK_CITATION_HEAD_RE = re.compile(
-    r"^\s*(?:[>\-*]\s*)?(?:\d+[.)]\s*)?(?:\[\d+\]\s*)?Course:\s*[^\n]*",
-    re.MULTILINE | re.IGNORECASE,
-)
-_META_CONTEXT_LINE_RE = re.compile(
-    r"^\s*>?\s*\*\*\[Meta-(?:Context|Konteks)\]\*\*[^\n]*",
-    re.MULTILINE | re.IGNORECASE,
-)
-# ATX markdown headings — "# Foo", "## Bar". Stripping these from chunk text
-# before sending to the LLM prevents the giant-font rendering disaster if
-# the LLM later echoes chunk content verbatim.
-_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+", re.MULTILINE)
-# Inline source citations like "[[1]]" or "[[1]][[2]]" that the LLM
-# sometimes emits from the persona's old example format. Sources are
-# rendered separately in the UI — never inline in the user-facing reply.
-_INLINE_CITE_RE = re.compile(r"\[\[\d+\]\]")
-# Layer-4 leak: lines that look like LITERAL prompt directives (the LLM
-# drifts into reciting its conditioning when it has no good answer). They
-# start with rule-list words ("Default:", "Go LONGER", "EXCEPTION", "NEVER
-# ...", "Open with", "End with", "Talk like", etc.) and are NOT natural
-# prose. This catches the case where the LLM echoes block CONTENTS without
-# the wrapping tags (Layers 1-3 only catch tagged leaks).
-_DIRECTIVE_LINE_RE = re.compile(
-    r"^[ \t]*(?:"
-    r"Default\s*:\s*SHORT|"
-    r"Go LONGER and more structured|"
-    r"EXCEPTION\s*[—–-]|"
-    r"NEVER\s+(?:echo|pull|use|close|start|emit|start|open)|"
-    r"ALWAYS\s+(?:open|close|preserve|use|emit|start)|"
-    r"Open with the answer|"
-    r"End with substance|"
-    r"No hedging|"
-    r"Use complete sentences|"
-    r"Use bullets for lists|"
-    r"Mirror the user's language|"
-    r"If <context> is absent|"
-    r"When the context (?:IS|is) relevant|"
-    r"When the user asks about (?:a SET|the set)|"
-    r"CRITICAL\s*[—–-]|"
-    r"Talk like a senior|"
-    r"Answer factual (?:lookups|questions)|"
-    r"Format examples \(Indonesian\)|"
-    r"STYLE\s*[—–-]|"
-    r"MENTOR MINDSET|"
-    r"In COACHING mode|"
-    r"FRUSTRATION OVERRIDE|"
-    r"COACHING CONDUCT|"
-    r"First check RELEVANCE|"
-    r"When the context IS relevant|"
-    # Leaked <available_topics> instruction + <disambiguate> prose (Flash Lite
-    # recites these when the block is output-shaped). Whole-line strip.
-    r"(?:The )?[Uu]ser asked what topics|"
-    r"List ONLY the topics|"
-    r"Runs before answering|"
-    r"Check if the turn is UNDERSPECIFIED|"
-    r"Ask ONE short clarifying question|"
-    r"Irrelevant with the user question|"
-    r"\(\d\)\s+A (?:broad|bare|reference|BARE)"
-    r")"
-    # Eat the rest of the line (often continues with quoted examples / em-dash rules)
-    r"[^\n]*",
-    re.MULTILINE | re.IGNORECASE,
-)
-
-# Meta-conversation recall questions ("udah bahas apa aja", "yang kita bahas",
-# "emng itu aja yang kita bahas", "what did we discuss"). The answer is the
-# conversation history, NOT the knowledge base — so _pre_processor routes these
-# to the no-retrieval path. Without this, the question gets embedded + retrieved,
-# random chunks cross the dense floor, and the model describes THOSE as "what we
-# discussed" (the fabrication bug). Deliberately biased toward catching meta
-# questions (a false positive merely answers from history; a false negative
-# brings back the fabrication). A missed phrasing falls through to KNOWLEDGE,
-# where the prompt's relevance gate + the wider history window are the backstop.
-_META_CONVO_RE = re.compile(
-    r"(?:udah|sudah|udh|tadi|barusan|kita|kami)\b[^.?!\n]{0,30}"
-    r"(?:bahas|dibahas|ngomong|omongin|diskusi|obrol)"
-    r"|(?:yang|apa)\b[^.?!\n]{0,20}(?:tadi|barusan|kita|kami|sebelumnya)\s+(?:di)?(?:bahas|omongin|diskusi)"
-    r"|itu aja[^.?!\n]{0,25}(?:bahas|omongin)"
-    r"|what (?:did|have|were) we (?:discuss|talk|cover|go over|chat)",
-    re.IGNORECASE,
-)
-_AMARTHA_GLOSSARY = {
-    "BM": "Business Manager",
-    "BP": "Business Partner",
-    "PAR": "Portfolio at Risk",
-    "OS": "Outstanding",
-    "BTC": "Back to Current",
-    "DPD": "Days Past Due",
-    "NPL": "Non-Performing Loan",
-    "RR": "Repayment Rate",
-    "PJ": "Penanggung Jawab"
-}
-
-_GLOSSARY_PATTERN = r'\b(' + '|'.join(_AMARTHA_GLOSSARY.keys()) + r')\b'
-_GLOSSARY_RE = re.compile(_GLOSSARY_PATTERN, flags=re.IGNORECASE)
-
-def _apply_glossary(text: str) -> str:
-    """Replaces Amartha acronyms with their full terms using exact word boundaries."""
-    if not text:
-        return text
-    return _GLOSSARY_RE.sub(lambda m: _AMARTHA_GLOSSARY[m.group(0).upper()], text)
-
-
-def _normalize_dashes(text: str) -> str:
-    # Em-dash reads as AI-generated. After a bold label it's a colon
-    # ("**Listen** — x" → "**Listen**: x"); elsewhere a comma. En-dash just
-    # becomes a hyphen so numeric/day ranges ("0–7", "Senin–Sabtu") survive.
-    text = re.sub(r"\*\*\s*—\s*", "**: ", text)
-    text = re.sub(r"\s*—\s*", ", ", text)
-    return text.replace("–", "-")
-
-
-def _sanitize_answer(text: str) -> str:
-    """Strip any leaked instruction-block content / tags from an LLM reply.
-
-    Layer 1: balanced XML wrappers (when LLM echoes the whole tag block).
-    Layer 2: orphan tags (when only one half leaked).
-    Layer 3: bare context dump (when LLM dropped XML wrapper but kept the
-             "[N] Course: <name> (ID:<id>)" citation headers and chunk text).
-             Heuristic: if any citation header is present, assume everything
-             before the LAST one is leak. Take the tail after the last header
-             and drop the first paragraph (chunk text) — keep the rest as
-             the actual answer. Falls back to a generic retry message if
-             nothing usable remains.
-    """
-    if not text:
-        return text
-    # Adjust specific closing reference to the general reference
-    cleaned = re.sub(
-        r"(?i)Untuk\s+detail\s+[^.!?]+silakan\s+cek\s+langsung\s+di\s+modul\s+Business\s+Process(?:[^.!?]*Amarthapedia)?\.?",
-        "Kamu bisa pelajari lebih lanjut di Amarthapedia atau bertanya langsung denganku.",
-        text
-    )
-    cleaned = _LEAK_BLOCK_RE.sub("", cleaned)
-    cleaned = _LEAK_OPEN_TAG_RE.sub("", cleaned)
-    cleaned = _INLINE_CITE_RE.sub("", cleaned)
-    cleaned = _META_CONTEXT_LINE_RE.sub("", cleaned)
-    # Layer 4: strip prompt-directive echoes (untagged prompt content the
-    # LLM recites when it has no good answer — e.g. "Default: SHORT — 2-4
-    # sentences..." from the <length> block, leaked without its wrapper).
-    cleaned = _DIRECTIVE_LINE_RE.sub("", cleaned)
-    cleaned = _OFFSCOPE_RE.sub("", cleaned)
-    cleaned = _COURSE_NUM_RE.sub("", cleaned)
-    # Collapse 3+ consecutive blank lines that the stripping may leave behind
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-
-    matches = list(_LEAK_CITATION_HEAD_RE.finditer(cleaned))
-    if matches:
-        last_end = matches[-1].end()
-        tail = cleaned[last_end:].strip()
-        # The chunk text right after the last citation header is still leak.
-        # Drop the first paragraph; keep whatever follows.
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", tail) if p.strip()]
-        if len(paragraphs) >= 2:
-            cleaned = "\n\n".join(paragraphs[1:])
-        elif paragraphs:
-            # Only one paragraph — could be the answer OR could be just the
-            # chunk text. Heuristic: if it's longer than 80 chars and doesn't
-            # start with a bullet/dash, assume it's the answer.
-            only = paragraphs[0]
-            if len(only) > 80 and not only.startswith(("-", "*", "•")):
-                cleaned = only
-            else:
-                cleaned = "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
-        else:
-            cleaned = "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
-
-    cleaned = _normalize_dashes(cleaned.lstrip())
-    if text.strip() and not cleaned.strip():
-        if _OFFSCOPE_RE.search(text):
-            return cleaned
-        return "Maaf, ada kendala merangkum jawaban. Coba tanya ulang ya."
-    return cleaned
-
-
-class StreamLeakGuard:
-    """Stream-time leak detector. Buffers the generated reply only when a leak
-    signature (like "[1] Course: X" or "<retrieved_context>") is detected,
-    otherwise passes clean tokens through immediately to eliminate startup latency.
-    """
-
-    _LEAK_PATTERNS = (
-        _LEAK_CITATION_HEAD_RE,
-        _LEAK_OPEN_TAG_RE,
-        _INLINE_CITE_RE,
-        _DIRECTIVE_LINE_RE,
-        _OFFSCOPE_PARTIAL_RE,
-    )
-
-    def __init__(self) -> None:
-        self._buffer = ""
-        self._mode = "passthrough"
-
-    def feed(self, token: str) -> str:
-        """Push a streamed token. Returns the safe text to emit (may be "")."""
-        self._buffer += token
-        if any(p.search(self._buffer) for p in self._LEAK_PATTERNS):
-            self._mode = "buffered"
-            return ""
-        
-        # If we were buffered but the buffer no longer matches any leak pattern,
-        # we can safely flush it and return to passthrough mode.
-        self._mode = "passthrough"
-        out = self._buffer
-        self._buffer = ""
-        return out
-
-    def flush(self) -> str:
-        """Called at end-of-stream. Returns sanitized trailing text."""
-        if self._mode == "buffered":
-            cleaned = _sanitize_answer(self._buffer)
-            self._buffer = ""
-            return cleaned
-        out = self._buffer
-        self._buffer = ""
-        return out
-
-    @property
-    def leak_detected(self) -> bool:
-        return self._mode == "buffered"
 
 
 async def _incr_parse_failure_metric() -> None:
@@ -692,368 +469,78 @@ def _get_section_map_lock() -> asyncio.Lock:
     return _section_map_lock
 
 
-# ════════════════════════════════════════════════════════════════════════════════
-# Section Drilldown helpers (Jun 2026)
-# ════════════════════════════════════════════════════════════════════════════════
-# "topic apa aja"         → TOPIC_LIST       (handled in `_pre_processor`).
-# "bisnis proses ada apa" → SECTION_DRILLDOWN: resolve WHICH section from query,
-#                             then list ALL items inside that section from
-#                             `section_map` (Postgres-cached).
-#
-# Design constraints:
-#   - 100% dynamic: section_map comes from Postgres, no hardcoded alias dict.
-#   - Zero new LLM call. Zero new embedding call. Pure regex + dict lookup.
-#   - Graceful deictic resolution: "yang kedua" / "topik B" / "yang tadi"
-#     resolve from the most recent TOPIC_LIST response in conversation history.
-# ════════════════════════════════════════════════════════════════════════════════
+from app.graph.drilldown import (
+    _ORDINAL_TO_INT,
+    _SECTION_DRILLDOWN_PHRASES,
+    _SECTION_NAME_STOPWORDS,
+    _detect_section_from_query,
+    _extract_sections_from_topic_list,
+    _extract_topic_list_from_history,
+    _flatten_message_content,
+    _fuzzy_token_match,
+    _has_topic_list_marker,
+    _is_section_drilldown_shape,
+    _levenshtein,
+    _normalize_section_tokens,
+    _resolve_drilldown_section,
+    _resolve_section_ordinal,
+    _score_query_against_section,
+)
 
-_SECTION_NAME_STOPWORDS = frozenset({
-    "ada", "apa", "aja", "saja", "di", "dari", "ke", "yang", "itu",
-    "ini", "tadi", "tuh", "nih", "kan", "ya", "ga", "gak", "nggak",
-    "kok", "sih", "dong", "kak", "bang", "mas", "mbak", "bu", "pak",
-    "tolong", "mau", "ingin", "bisa", "dapat", "lihat", "tampil",
-    "list", "daftar", "show", "tampilkan", "lihatin",
-    "materi", "materinya", "dokumen", "dokumennya", "judul", "judulnya",
-    "file", "filenya", "topik", "topiknya", "topic", "section",
-    "course", "kursus", "pelajaran", "ajar", "nya", "aja",
-})
-
-try:
-    import yaml as _yaml_drilldown
-    _DRILLDOWN_PATTERNS_PATH = Path(__file__).parent / "intent_patterns.yaml"
-    _DRILLDOWN_PATTERNS = _yaml_drilldown.safe_load(
-        _DRILLDOWN_PATTERNS_PATH.read_text(encoding="utf-8")
-    ) or {}
-    _SECTION_DRILLDOWN_PHRASES = tuple(_DRILLDOWN_PATTERNS.get("section_drilldown_phrases", []))
-except Exception:
-    _SECTION_DRILLDOWN_PHRASES = (
-        "ada apa aja", "ada apa", "apa aja", "apa saja", "apa isinya",
-        "isinya apa", "di dalamnya apa", "dalamnya apa", "materinya apa",
-        "materi apa", "dokumennya apa", "judulnya apa", "list materi",
-        "list dokumen", "list judul", "daftar materi",
-        "tolong lihat", "lihat materi", "tampilkan materi",
-        "tampilkan dokumen",
-    )
-
-_ORDINAL_TO_INT = {
-    "1": 1, "satu": 1, "pertama": 1, "kesatu": 1, "a": 1,
-    "2": 2, "dua": 2, "kedua": 2, "kedu": 2, "b": 2,
-    "3": 3, "tiga": 3, "ketiga": 3, "c": 3,
-    "4": 4, "empat": 4, "keempat": 4, "d": 4,
-    "5": 5, "lima": 5, "kelima": 5, "e": 5,
-    "6": 6, "enam": 6, "keenam": 6, "f": 6,
-    "7": 7, "tujuh": 7, "ketujuh": 7, "g": 7,
-    "8": 8, "delapan": 8, "kedelapan": 8, "h": 8,
-}
+_h2_topics_cache: dict[str, Any] = {"map": {}, "expires_at": 0.0}
 
 
-def _normalize_section_tokens(name: str) -> list[str]:
-    """Lowercase + strip punctuation + remove stopwords. Returns significant tokens."""
-    import re as _re
-    s = _re.sub(r"[^\w\s]", " ", (name or "").lower())
-    toks = [t for t in s.split() if t and t not in _SECTION_NAME_STOPWORDS and len(t) > 1]
-    return toks
-
-
-def _levenshtein(a: str, b: str) -> int:
-    """Standard Levenshtein edit distance. O(len(a)*len(b)). For short tokens only."""
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    if len(a) > len(b):
-        a, b = b, a
-    prev = list(range(len(a) + 1))
-    for i, bc in enumerate(b, 1):
-        cur = [i]
-        for j, ac in enumerate(a, 1):
-            cur.append(min(
-                cur[-1] + 1,        # insertion
-                prev[j] + 1,        # deletion
-                prev[j-1] + (ac != bc),  # substitution
-            ))
-        prev = cur
-    return prev[-1]
-
-
-def _fuzzy_token_match(qt: str, st: str) -> bool:
-    """Token match with edit-distance fallback for cross-language stem variants.
-
-    Examples: "bisnis" vs "business" (dist=3, ratio≈0.57), "ajar" vs "learning"
-    (dist=6, ratio≈0.18 — too far; rejected).
-    Threshold: edit distance <= max(2, 30% of max_len).
-    """
-    if not qt or not st:
-        return False
-    if qt == st:
-        return True
-    # Only fuzzy-match on tokens of similar length to avoid spurious matches
-    ratio = min(len(qt), len(st)) / max(len(qt), len(st))
-    if ratio < 0.55:
-        return False
-    d = _levenshtein(qt, st)
-    max_edits = max(2, int(max(len(qt), len(st)) * 0.30))
-    return d <= max_edits
-
-
-def _score_query_against_section(query: str, section_name: str) -> float:
-    """Score how well `query` matches `section_name`. 0.0 = no match, 1.0 = perfect."""
-    q_toks = _normalize_section_tokens(query)
-    s_toks = _normalize_section_tokens(section_name)
-    if not q_toks or not s_toks:
-        return 0.0
-    overlap = 0
-    for qt in q_toks:
-        for st in s_toks:
-            # 1) Substring containment (handles "anti" in "anti harassment")
-            if qt in st or st in qt:
-                overlap += 1
-                break
-            # 2) 4-char prefix match (handles "produk" vs "product", "klien" vs "client")
-            if len(qt) >= 4 and len(st) >= 4 and qt[:4] == st[:4]:
-                overlap += 1
-                break
-            # 3) Fuzzy edit-distance match (handles "bisnis" vs "business" — ID↔EN)
-            if _fuzzy_token_match(qt, st):
-                overlap += 1
-                break
-    token_score = overlap / max(1, len(s_toks))
-    q_full = " ".join(q_toks)
-    s_full = " ".join(s_toks)
-    if q_full and s_full and (q_full in s_full or s_full in q_full):
-        return 1.0
-    return min(1.0, token_score)
-
-
-def _detect_section_from_query(query: str, section_map: dict[str, list[str]]) -> str | None:
-    """Match query -> canonical section name via token containment."""
-    if not section_map:
-        return None
-    best_section, best_score = None, 0.0
-    for section in section_map.keys():
-        score = _score_query_against_section(query, section)
-        if score > best_score:
-            best_score, best_section = score, section
-    return best_section if best_score >= 0.30 else None
-
-
-def _flatten_message_content(content) -> str:
-    """LangChain message content can be str OR list[{type:text}]. Flatten to str."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for blk in content:
-            if isinstance(blk, dict):
-                txt = blk.get("text") or blk.get("content") or ""
-                if txt:
-                    parts.append(str(txt))
-            elif isinstance(blk, str):
-                parts.append(blk)
-        return " ".join(parts)
-    return str(content) if content else ""
-
-
-def _has_topic_list_marker(content: str) -> bool:
-    """Detect if a previous AI message was a TOPIC_LIST response."""
-    low = (content or "").lower()
-    markers = (
-        "berikut topik", "topik-topik", "daftar topik", "berikut daftar",
-        "ini dia topik", "topik yang tersedia", "berikut beberapa topik",
-        "kamu bisa belajar", "kamu bisa pelajari", "materi yang tersedia",
-        "available topics", "topics available",
-    )
-    return any(m in low for m in markers)
-
-
-def _extract_sections_from_topic_list(content: str) -> list[str]:
-    """Parse a TOPIC_LIST AI response to recover the section list."""
-    import re as _re
-    if not content:
-        return []
-    text = content
-
-    numbered = _re.findall(
-        r"(?:^|\n)\s*(?:\d+|[A-Ha-h])[\.\)]\s+([^\n]{2,80})", text
-    )
-    if numbered:
-        cleaned = []
-        for s in numbered:
-            s = s.strip().rstrip(",;.")
-            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
-            if 2 <= len(s) <= 80:
-                cleaned.append(s)
-        if cleaned:
-            return cleaned
-
-    bullets = _re.findall(r"(?:^|\n)\s*[-*•·]\s+([^\n]{2,80})", text)
-    if bullets:
-        cleaned = []
-        for s in bullets:
-            s = s.strip().rstrip(",;.")
-            s = _re.sub(r"^[\*_\-`]+|[\*_\-`]+$", "", s).strip()
-            if 2 <= len(s) <= 80:
-                cleaned.append(s)
-        if cleaned:
-            return cleaned
-
-    bolds = _re.findall(r"\*\*([^*\n]{2,60})\*\*", text)
-    if bolds:
-        cleaned = [s.strip().rstrip(",;.") for s in bolds if 2 <= len(s.strip()) <= 60]
-        if cleaned:
-            return cleaned
-
-    return []
-
-
-def _resolve_section_ordinal(query: str, sections: list[str]) -> str | None:
-    """Resolve 'yang kedua', 'topik B', 'nomor 3' against a section list."""
-    import re as _re
-    q = (query or "").lower().strip()
-    if not q or not sections:
-        return None
-    m = _re.search(
-        r"(?:yang|topi[ck]|no(?:mor)?|pilihan?)\s*"
-        r"(?:ke-?|nomor\s*)?\s*"
-        r"(satu|dua|tiga|empat|lima|enam|tujuh|delapan|"
-        r"pertama|kedua|ketiga|keempat|kelima|keenam|ketujuh|kedelapan|"
-        r"[1-8]|[a-h])\b",
-        q,
-    )
-    if m:
-        word = m.group(1).lower()
-        idx = _ORDINAL_TO_INT.get(word)
-        if idx and 1 <= idx <= len(sections):
-            return sections[idx - 1]
-    if _re.fullmatch(
-        r"(?:yang\s+(?:itu|tadi|barusan|sebelumnya|maksud|disebut|dibahas))+|"
-        r"(?:yang)|(?:itu)|(?:tadi)|(?:yang\s+aja)|(?:pilih\s+itu)",
-        q.strip(),
-    ):
-        # Only use fallback if there's exactly one section in recent context
-        if len(sections) == 1:
-            return sections[0]
-        # With multiple sections, "yang itu" is ambiguous — return None to avoid guessing
-        return None
-    return None
-
-
-def _extract_topic_list_from_history(messages: list) -> list[str]:
-    """Walk messages backwards, find last AI TOPIC_LIST response, return section list."""
-    if not messages:
-        return []
-    for m in reversed(messages[:-1]):
-        role = getattr(m, "type", None) or getattr(m, "role", "")
-        if role and role not in ("ai", "assistant"):
-            continue
-        content = _flatten_message_content(getattr(m, "content", ""))
-        if not _has_topic_list_marker(content):
-            continue
-        sections = _extract_sections_from_topic_list(content)
-        if sections:
-            return sections
-    return []
-
-
-def _resolve_drilldown_section(
-    query: str,
-    messages: list,
-    section_map: dict[str, list[str]],
-) -> tuple[str | None, str | None]:
-    """Resolve drilldown query -> canonical section name.
-
-    A drilldown is only valid when the user is picking from a TOPIC_LIST the
-    assistant just showed. A fresh content question ("produk amartha apa aja")
-    or a clarifying-question reply ("pencegahan", after the AI asked "pencegahan
-    atau pengamanan?") must NOT route here — those go to KNOWLEDGE so the actual
-    content gets retrieved. So every path is gated on a recent TOPIC_LIST in
-    history (via _extract_topic_list_from_history → _has_topic_list_marker);
-    with no such context we return None and let the query fall through to
-    retrieval instead of force-routing to a section file-list view.
-
-    Resolution order (all gated on a recent TOPIC_LIST in history):
-      1. Ordinal/deictic pick against the history section list.
-      2. Token match against the history section list (threshold 0.50).
-      3. Direct token match against section_map keys (last resort, same gate).
-
-    Returns (section_name | None, resolution_path | None).
-    """
-    if not query or not section_map:
-        return None, None
-
-    sections_in_history = _extract_topic_list_from_history(messages or [])
-    if not sections_in_history:
-        # No TOPIC_LIST the user is picking from → not a drilldown.
-        return None, None
-
-    ordinal = _resolve_section_ordinal(query, sections_in_history)
-    if ordinal:
-        for sec in section_map.keys():
-            if _score_query_against_section(ordinal, sec) >= 0.50:
-                return sec, "history_ordinal"
-
-    best, best_score = None, 0.0
-    for sec in sections_in_history:
-        score = _score_query_against_section(query, sec)
-        if score > best_score:
-            best_score, best = score, sec
-    if best and best_score >= 0.50:
-        for sec in section_map.keys():
-            if _score_query_against_section(best, sec) >= 0.50:
-                return sec, "history"
-
-    direct = _detect_section_from_query(query, section_map)
-    if direct:
-        return direct, "query"
-
-    return None, None
-
-
-def _is_section_drilldown_shape(query: str) -> bool:
-    """Quick shape check: does the query LOOK like 'what's inside topic X'?"""
-    if not query or len(query) > 150:
-        return False
-    low = query.lower().strip()
-    return any(p in low for p in _SECTION_DRILLDOWN_PHRASES)
-
-
-async def _load_section_map(user_role: str = "ALL") -> dict[str, list[str]]:
-    """Map each Moodle SECTION → its item list, filtered by role, TTL-cached (10min)."""
+async def _load_role_kb_cache(
+    cache_store: dict[str, Any],
+    user_role: str,
+    extractor_fn,
+    default_factory,
+    label: str,
+):
+    """Generic role-filtered KB metadata loader with 10-minute TTL cache."""
     import time as _time
 
     role = user_role.upper().strip()
     now = _time.time()
-    
-    if now >= _section_map_cache["expires_at"]:
-        _section_map_cache["map"] = {}
-        _section_map_cache["expires_at"] = 0.0
 
-    if role in _section_map_cache["map"]:
-        return _section_map_cache["map"][role]
+    if now >= cache_store["expires_at"]:
+        cache_store["map"] = {}
+        cache_store["expires_at"] = 0.0
+
+    if role in cache_store["map"]:
+        return cache_store["map"][role]
 
     lock = _get_section_map_lock()
     async with lock:
         now = _time.time()
-        if now >= _section_map_cache["expires_at"]:
-            _section_map_cache["map"] = {}
-            _section_map_cache["expires_at"] = 0.0
-            
-        if role in _section_map_cache["map"]:
-            return _section_map_cache["map"][role]
+        if now >= cache_store["expires_at"]:
+            cache_store["map"] = {}
+            cache_store["expires_at"] = 0.0
+
+        if role in cache_store["map"]:
+            return cache_store["map"][role]
 
         try:
             full_kb = await _load_active_cag_kb_text()
             cag_kb_text = _filter_kb_by_role(full_kb, role) if full_kb else ""
-            section_map = extract_kb_sections(cag_kb_text) if cag_kb_text else {}
+            result = extractor_fn(cag_kb_text) if cag_kb_text else default_factory()
         except Exception as exc:
-            logger.warning(f"Section-map load failed for role {role}: {exc}")
-            return {}
+            logger.warning(f"{label} load failed for role {role}: {exc}")
+            return default_factory()
 
-        _section_map_cache["map"][role] = section_map
-        _section_map_cache["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
-        return section_map
+        cache_store["map"][role] = result
+        cache_store["expires_at"] = now + _COURSE_CACHE_TTL_SECONDS
+        return result
+
+
+async def _load_section_map(user_role: str = "ALL") -> dict[str, list[str]]:
+    """Map each Moodle SECTION -> its item list, filtered by role, TTL-cached (10min)."""
+    return await _load_role_kb_cache(_section_map_cache, user_role, extract_kb_sections, dict, "Section-map")
+
+
+async def _load_h2_topics(user_role: str = "ALL") -> list[str]:
+    """Return distinct H2 (##) headings from active KB filtered by role, TTL-cached (10min)."""
+    return await _load_role_kb_cache(_h2_topics_cache, user_role, extract_kb_h2_headings, list, "H2-topics")
 
 
 _active_kb_cache: dict[str, Any] = {"hash": "", "content": ""}
@@ -1063,6 +550,8 @@ def clear_cag_kb_cache() -> None:
     _active_kb_cache.update({"hash": "", "content": ""})
     _course_cache.update({"courses": [], "expires_at": 0.0})
     _section_map_cache.update({"map": {}, "expires_at": 0.0})
+    _h2_topics_cache.update({"map": {}, "expires_at": 0.0})
+
 
 
 async def _load_active_cag_kb_text() -> str:
@@ -1329,7 +818,7 @@ def _format_user_context_block(uctx: dict) -> str:
 
 
 async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
-    """Build the exact prompt used by generate_node."""
+    """Build the exact prompt messages and OpenRouter session_id for generation."""
     summary = state.get("conversation_summary") or ""
     profile = state.get("user_profile") or {}
     intent = state.get("intent") or "KNOWLEDGE"
@@ -1341,10 +830,10 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
             full_kb = await _load_active_cag_kb_text()
             resolved_role = resolve_user_role(user_context)
             cag_kb_text = _filter_kb_by_role(full_kb, resolved_role)
+            logger.info(f"_generate_node: Filtered KB for role={resolved_role}: {len(cag_kb_text)} chars (out of {len(full_kb)})")
         except Exception as exc:
             logger.warning(f"CAG KB pack load failed: {exc}")
 
-    has_kb_context = bool(cag_kb_text)
     context_section = ""
     if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
         context_section = (
@@ -1369,7 +858,7 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     drilldown_sec = state.get("drilldown_section")
     if drilldown_sec:
         try:
-            resolved_role = resolve_user_role(state.get("user_context"))
+            resolved_role = resolve_user_role(user_context)
             items = (await _load_section_map(resolved_role)).get(drilldown_sec, [])
         except Exception:
             items = []
@@ -1379,28 +868,38 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
                 + "\n".join(f"- {it}" for it in items)
                 + "\n</section_materials>"
             )
+            logger.info(
+                f"SECTION_DRILLDOWN inject: section={drilldown_sec!r}, "
+                f"{len(items)} items, via={state.get('drilldown_resolution')!r}"
+            )
+        else:
+            logger.warning(
+                f"SECTION_DRILLDOWN resolved section={drilldown_sec!r} but section_map has no items"
+            )
 
     ltm_section = ""
     learning_summary = (profile.get("learning_summary") or "").strip()
-    if learning_summary:
-        ltm_section = f"\n\n<user_history>\nRingkasan progres & konteks belajar user:\n{learning_summary}\n</user_history>"
+    last_topics = profile.get("last_topics") or []
+    if learning_summary or last_topics:
+        history_lines = []
+        if learning_summary:
+            history_lines.append(f"Ringkasan progres & konteks belajar user: {learning_summary}")
+        if last_topics:
+            topics_str = ", ".join(last_topics) if isinstance(last_topics, list) else str(last_topics)
+            history_lines.append(f"Topik utama yang pernah dibahas: {topics_str}")
+        ltm_section = "\n\n<user_history>\n" + "\n".join(history_lines) + "\n</user_history>"
 
     summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
+    user_ctx_section = _format_user_context_block(user_context)
+    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
-    pref_section = ""
-
-    uctx = state.get("user_context") or {}
-    user_ctx_section = _format_user_context_block(uctx)
-
-    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
-    is_coaching = intent == "COACHING"
     windowed_messages = _window_generate_history(
         list(state["messages"]),
         max_fresh_turns=_settings.max_fresh_turns,
         max_ai_chars=_settings.max_history_ai_chars,
     )
 
-    if is_coaching:
+    if intent == "COACHING":
         system_prompt_text = SOCRATIC_PROMPT
     elif intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE"):
         system_prompt_text = CHIT_CHAT_PROMPT
@@ -1492,149 +991,15 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
 
 
 async def _generate_node(state: CAGState, config: RunnableConfig):
-    """Single conversational LLM call — the only answer-generating node.
-
-    One CONVERSATIONAL_PROMPT handles everything: greetings, identity, meta-turns
-    ("kok gini", "ga nyambung"), chit-chat, and grounded KB answers. Retrieved
-    context is injected ONLY when it's actually relevant; for a greeting / off-scope
-    / no-match turn we inject NO context, so the model never gets irrelevant chunks
-    forced into a casual reply — it just answers conversationally or says it doesn't
-    have that info. Memory (STM summary, LTM profile, user prefs) is always injected
-    when present. Conciseness + the detail/teach escalation live in the prompt.
-    """
-    summary = state.get("conversation_summary") or ""
-    profile = state.get("user_profile") or {}
-    intent = state.get("intent") or "KNOWLEDGE"
-
-    cag_kb_text = ""
-    user_context = state.get("user_context") or {}
-    if intent in ("KNOWLEDGE", "COACHING"):
-        try:
-            full_kb = await _load_active_cag_kb_text()
-            resolved_role = resolve_user_role(user_context)
-            cag_kb_text = _filter_kb_by_role(full_kb, resolved_role)
-            logger.info(f"_generate_node: Filtered KB for role={resolved_role}: {len(cag_kb_text)} chars (out of {len(full_kb)})")
-        except Exception as exc:
-            logger.warning(f"CAG KB pack load failed: {exc}")
-
-    has_kb_context = bool(cag_kb_text)
-    context_section = ""
-    if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
-        context_section = (
-            "\n\n<knowledge_base_missing>\n"
-            "No active CAG knowledge base pack is available. Ask an admin to run Moodle KB sync first."
-            "\n</knowledge_base_missing>"
-        )
-
-    # TOPIC_LIST: the user asked what materials/topics exist ("ada materi apa aja").
-    topics_section = ""
-    if intent == "TOPIC_LIST":
-        try:
-            course_names = await _load_course_names()
-        except Exception:
-            course_names = []
-        if course_names:
-            topics_section = (
-                "\n\n<available_topics>\n"
-                + "\n".join(f"- {c}" for c in course_names)
-                + "\n</available_topics>"
-            )
-        else:
-            topics_section = (
-                "\n\n<available_topics>\n(could not load topic list right now)\n"
-                "</available_topics>"
-            )
-
-    # Section drill-down.
-    section_section = ""
-    drilldown_sec = state.get("drilldown_section")
-    if drilldown_sec:
-        try:
-            resolved_role = resolve_user_role(state.get("user_context"))
-            items = (await _load_section_map(resolved_role)).get(drilldown_sec, [])
-        except Exception:
-            items = []
-        if items:
-            section_section = (
-                f'\n\n<section_materials section="{drilldown_sec}">\n'
-                + "\n".join(f"- {it}" for it in items)
-                + "\n</section_materials>"
-            )
-            logger.info(
-                f"SECTION_DRILLDOWN inject: section={drilldown_sec!r}, "
-                f"{len(items)} items, via={state.get('drilldown_resolution')!r}"
-            )
-        else:
-            logger.warning(
-                f"SECTION_DRILLDOWN resolved section={drilldown_sec!r} but "
-                f"section_map has no items"
-            )
-
-    # Long-term memory (LTM profile)
-    ltm_section = ""
-    learning_summary = (profile.get("learning_summary") or "").strip()
-    last_topics = profile.get("last_topics") or []
-    if learning_summary or last_topics:
-        history_lines = []
-        if learning_summary:
-            history_lines.append(f"Ringkasan progres & konteks belajar user: {learning_summary}")
-        if last_topics:
-            topics_str = ", ".join(last_topics) if isinstance(last_topics, list) else str(last_topics)
-            history_lines.append(f"Topik utama yang pernah dibahas: {topics_str}")
-        ltm_section = "\n\n<user_history>\n" + "\n".join(history_lines) + "\n</user_history>"
-
-    # Short-term rolling summary
-    summary_section = ""
-    if summary:
-        summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>"
-
-    # Persistent user preferences
-    pref_section = ""
-
-    # Live Moodle profile of the person asking (firstname + custom fields).
-    uctx = state.get("user_context") or {}
-    user_ctx_section = _format_user_context_block(uctx)
-
-    dynamic_tail = f"{user_ctx_section}{pref_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
-
-    is_coaching = intent == "COACHING"
-    _is_grounded = (has_kb_context or bool(topics_section) or bool(section_section)) and not is_coaching
-    windowed_messages = _window_generate_history(
-        list(state["messages"]),
-        max_fresh_turns=_settings.max_fresh_turns,
-        max_ai_chars=_settings.max_history_ai_chars,
-    )
-
-    if is_coaching:
-        system_prompt_text = SOCRATIC_PROMPT
-    elif intent in ("GREETING", "AMBIGUOUS", "OFF_SCOPE"):
-        system_prompt_text = CHIT_CHAT_PROMPT
-    else:
-        # KNOWLEDGE, TOPIC_LIST, SECTION_DRILLDOWN
-        system_prompt_text = CONVERSATIONAL_PROMPT
-
-    openrouter_session_id = _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
+    """Single conversational LLM call for the non-stream graph execution path."""
+    msgs, openrouter_session_id = await _build_generate_messages(state)
     llm = _with_openrouter_session(
         get_generate_llm_nostream(),
         openrouter_session_id,
     )
 
-    system_msg = SystemMessage(content=system_prompt_text)
-    msgs: list = [system_msg]
-    if cag_kb_text:
-        msgs.append(SystemMessage(content=cag_kb_text))
-    if dynamic_tail:
-        msgs.append(HumanMessage(content=dynamic_tail))
-    msgs += windowed_messages
-
     _t0 = time.monotonic()
-    try:
-        response = await llm.ainvoke(msgs, config=config)
-    except Exception as gen_exc:
-        logger.warning(
-            f"generate_node ainvoke failed ({type(gen_exc).__name__}): {gen_exc}"
-        )
-        raise
+    response = await llm.ainvoke(msgs, config=config)
     await _log_cache_usage(
         response,
         "generate",

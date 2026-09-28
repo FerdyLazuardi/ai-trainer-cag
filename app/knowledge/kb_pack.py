@@ -52,6 +52,11 @@ class KBService:
     def extract_topics(kb_text: str) -> list[str]:
         return extract_kb_topics(kb_text)
 
+    @staticmethod
+    def extract_h2_headings(kb_text: str) -> list[str]:
+        return extract_kb_h2_headings(kb_text)
+
+
 
 def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
     ordered = sorted(docs, key=lambda d: (d.course_id, d.section_id, d.filename))
@@ -144,5 +149,21 @@ def extract_h2_headings(markdown_text: str) -> list[str]:
         if clean and len(clean) >= 3 and clean.lower() not in ignore_words and clean not in cleaned:
             cleaned.append(clean)
     return cleaned[:10]
+
+
+def extract_kb_h2_headings(kb_text: str) -> list[str]:
+    """Extract all unique level-2 (## ) markdown headings from active KB text."""
+    if not kb_text:
+        return []
+    raw_h2 = re.findall(r"(?m)^##\s+(.+)$", kb_text)
+    ignore_words = {"note", "catatan", "perhatian", "penting", "sumber", "ringkasan"}
+    headings: list[str] = []
+    for h in raw_h2:
+        clean = re.sub(r"<[^>]+>", "", h)
+        clean = re.sub(r"[*_`~]+", "", clean).strip().strip(":#*-_")
+        if clean and len(clean) >= 3 and clean.lower() not in ignore_words and clean not in headings:
+            headings.append(clean)
+    return headings
+
 
 

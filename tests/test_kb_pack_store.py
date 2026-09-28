@@ -176,9 +176,49 @@ def test_clear_cag_kb_cache_resets_metadata_caches():
     pipeline._active_kb_cache.update({"hash": "x", "content": "KB", "expires_at": 9999999999.0})
     pipeline._course_cache.update({"courses": ["A"], "expires_at": 9999999999.0})
     pipeline._section_map_cache.update({"map": {"A": ["a"]}, "expires_at": 9999999999.0})
+    pipeline._h2_topics_cache.update({"map": {"ALL": ["Topic H2"]}, "expires_at": 9999999999.0})
 
     pipeline.clear_cag_kb_cache()
 
     assert pipeline._active_kb_cache["content"] == ""
     assert pipeline._course_cache["courses"] == []
     assert pipeline._section_map_cache["map"] == {}
+    assert pipeline._h2_topics_cache["map"] == {}
+
+
+@pytest.mark.asyncio
+async def test_extract_and_load_h2_topics_by_role(monkeypatch):
+    from app.graph import pipeline
+    from app.knowledge.kb_pack import extract_kb_h2_headings
+
+    sample_kb = (
+        '<knowledge_base version="sha256:test">\n'
+        '<doc id="DOC-001" course="3" section="SOP" file="sop.md" roles="BP">\n'
+        '# Judul Utama\n'
+        '## **Prosedur Pencairan Pinjaman**\n'
+        '## Catatan\n'
+        '</doc>\n'
+        '<doc id="DOC-002" course="3" section="Leadership" file="bm.md" roles="BM">\n'
+        '## Evaluasi Kinerja Cabang\n'
+        '</doc>\n'
+        '</knowledge_base>'
+    )
+
+    assert extract_kb_h2_headings(sample_kb) == [
+        "Prosedur Pencairan Pinjaman",
+        "Evaluasi Kinerja Cabang",
+    ]
+
+    async def fake_load_kb():
+        return sample_kb
+
+    pipeline.clear_cag_kb_cache()
+    monkeypatch.setattr(pipeline, "_load_active_cag_kb_text", fake_load_kb)
+
+    bp_h2 = await pipeline._load_h2_topics("BP")
+    bm_h2 = await pipeline._load_h2_topics("BM")
+
+    assert bp_h2 == ["Prosedur Pencairan Pinjaman"]
+    assert bm_h2 == ["Evaluasi Kinerja Cabang"]
+    pipeline.clear_cag_kb_cache()
+
