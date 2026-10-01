@@ -606,6 +606,74 @@ async def update_spreadsheet_schedule(
     return data
 
 
+@router.get("/courses/schedule", summary="Get course catalog auto-sync schedule config")
+async def get_courses_schedule(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+    import json
+    redis = get_redis_client()
+    raw = await redis.get("cag:courses:schedule")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {
+        "enabled": False,
+        "schedule_type": "daily",
+        "hour": 2,
+        "minute": 0,
+        "day_of_week": 1,
+        "last_run_at": None,
+        "last_status": None,
+        "last_result": None,
+    }
+
+
+@router.post("/courses/schedule", summary="Update course catalog auto-sync schedule config")
+async def update_courses_schedule(
+    payload: Dict[str, Any],
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+    import json
+    redis = get_redis_client()
+
+    raw = await redis.get("cag:courses:schedule")
+    existing = json.loads(raw) if raw else {}
+
+    data = {
+        "enabled": bool(payload.get("enabled", False)),
+        "schedule_type": str(payload.get("schedule_type", "daily")),
+        "hour": int(payload.get("hour", 2)),
+        "minute": int(payload.get("minute", 0)),
+        "day_of_week": int(payload.get("day_of_week", 1)),
+        "last_run_at": payload.get("last_run_at") or existing.get("last_run_at"),
+        "last_status": payload.get("last_status") or existing.get("last_status"),
+        "last_result": payload.get("last_result") or existing.get("last_result"),
+    }
+    await redis.set("cag:courses:schedule", json.dumps(data))
+    return data
+
+
+@router.get("/courses/summary", summary="Get course catalog summary from PostgreSQL")
+async def get_courses_summary(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.postgres import AsyncSessionLocal
+    from sqlalchemy import text
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            text("SELECT count(*) as total, count(*) FILTER (WHERE status = 'Aktif') as active FROM course_catalog")
+        )
+        row = res.mappings().first()
+        return {
+            "total": row["total"] if row else 0,
+            "active": row["active"] if row else 0,
+        }
+
+
 @router.get("/spreadsheet/users", summary="Get spreadsheet user KPI records from PostgreSQL")
 async def get_spreadsheet_users(
     page: int = Query(1, ge=1),
