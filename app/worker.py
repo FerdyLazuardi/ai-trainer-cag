@@ -100,6 +100,17 @@ async def sync_spreadsheet_task() -> dict[str, Any]:
         return result
 
 
+@worker.task(max_tries=1, timeout=300)
+async def sync_courses_task() -> dict[str, Any]:
+    """Sync active Moodle courses catalog from GAS Web App."""
+    from app.knowledge.sync_courses import sync_courses_from_spreadsheet
+
+    async with AsyncSessionLocal() as session:
+        result = await sync_courses_from_spreadsheet(session)
+        logger.info(f"Course catalog sync completed: {result}")
+        return result
+
+
 @worker.task
 async def dummy_task(name: str) -> str:
     logger.info(f"Running dummy task for {name}")

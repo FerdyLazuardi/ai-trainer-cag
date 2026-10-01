@@ -74,6 +74,7 @@ class CAGState(TypedDict):
     rewritten_queries: Optional[List[str]]
     seen_chunk_ids: Optional[List[str]]
     off_scope_detected: Optional[bool]
+    candidate_courses: Optional[List[dict]]
 
 
 RAGState: TypeAlias = CAGState

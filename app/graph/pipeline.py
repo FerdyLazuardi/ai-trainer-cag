@@ -222,6 +222,21 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
 
     rule_intent = rule_classify(user_msg_str)
 
+    # ── Course link search on demand (only when explicitly requested) ───────
+    from app.knowledge.course_search import detect_course_query, search_courses
+    course_q = detect_course_query(user_msg_str)
+    candidate_courses = None
+    if course_q:
+        try:
+            from app.database.postgres import AsyncSessionLocal
+            async with AsyncSessionLocal() as db_session:
+                candidate_courses = await search_courses(db_session, course_q, limit=3)
+                logger.info(f"Course link query detected: q={course_q!r}, found={len(candidate_courses)}")
+        except Exception as exc:
+            logger.warning(f"Failed to search courses for query {course_q!r}: {exc}")
+            candidate_courses = []
+        rule_intent = None
+
     # ── Injection / jailbreak guard ─────────────────────────────────────────
     if rule_intent == "MALICIOUS":
         logger.info("Pre-processor: injection detected → MALICIOUS")
@@ -231,6 +246,7 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
             "gate_score": None,
+            "candidate_courses": candidate_courses,
         }
 
     # NOTE: "apa aja di <section>" text-detection was REMOVED — structured
@@ -337,6 +353,7 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
             "learning_context": 0.0,
         },
         "gate_score": None,
+        "candidate_courses": candidate_courses,
     }
 
 
@@ -936,7 +953,31 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
 
     summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
     user_ctx_section = _format_user_context_block(user_context)
-    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
+
+    course_section = ""
+    candidate_courses = state.get("candidate_courses")
+    if candidate_courses is not None:
+        if candidate_courses:
+            lines = [
+                f"- [{c['fullname']}]({c['url']}) (Kategori: {c.get('category', '-')})"
+                for c in candidate_courses
+            ]
+            course_section = (
+                "\n\n<candidate_courses>\n"
+                "Berikut adalah kelas aktif yang relevan dari katalog Amarthapedia untuk permintaan user. "
+                "Sajikan tautan kelas ini secara langsung menggunakan format Markdown link [Nama Kelas](URL):\n"
+                + "\n".join(lines)
+                + "\n</candidate_courses>"
+            )
+        else:
+            course_section = (
+                "\n\n<candidate_courses>\n"
+                "Kelas yang dicari user tidak ditemukan atau sedang tidak aktif di katalog Amarthapedia. "
+                "Sampaikan secara singkat bahwa kelas tersebut tidak ditemukan di daftar pelatihan aktif Amarthapedia.\n"
+                "</candidate_courses>"
+            )
+
+    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{course_section}{context_section}".strip()
 
     windowed_messages = _window_generate_history(
         list(state["messages"]),

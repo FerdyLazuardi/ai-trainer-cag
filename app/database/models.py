@@ -241,6 +241,24 @@ class BranchData(Base):
         return f"<BranchData point={self.point!r}>"
 
 
+class CourseCatalog(Base):
+    """Stores active Moodle course catalog for link recommendation."""
+
+    __tablename__ = "course_catalog"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fullname: Mapped[str] = mapped_column(String(255), index=True)
+    category: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="Aktif")
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<CourseCatalog id={self.id} fullname={self.fullname!r}>"
+
+
 
 
 

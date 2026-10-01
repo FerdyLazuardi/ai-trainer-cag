@@ -195,6 +195,8 @@ class Settings(BaseSettings):
     cag_moodle_course_id: int = Field(default=3, alias="CAG_MOODLE_COURSE_ID")
     spreadsheet_sync_url: str = Field(default="", alias="SPREADSHEET_SYNC_URL")
     spreadsheet_sync_token: str = Field(default="amartha_secret_kpi_token_2026", alias="SPREADSHEET_SYNC_TOKEN")
+    course_spreadsheet_url: str = Field(default="", alias="COURSE_SPREADSHEET_URL")
+    course_spreadsheet_token: str = Field(default="", alias="COURSE_SPREADSHEET_TOKEN")
 
 
     @property

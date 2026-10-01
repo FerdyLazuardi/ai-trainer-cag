@@ -199,6 +199,72 @@ async def spreadsheet_sync_status(
     return SpreadsheetSyncStatusResponse(job_id=job_id, status=status_str, result=result)
 
 
+class CourseSyncEnqueuedResponse(BaseModel):
+    message: str
+    job_id: str
+    status: str
+
+
+@router.post(
+    "/ingest/courses/sync",
+    response_model=CourseSyncEnqueuedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue active course catalog sync from Google Spreadsheet (async)",
+)
+async def courses_sync(
+    current_user: User = Depends(get_admin_or_jwt_user),
+) -> CourseSyncEnqueuedResponse:
+    """Enqueue course catalog sync from GAS Web App to the background worker."""
+    logger.info(f"Course catalog sync enqueued by user: {current_user.username}")
+    from app.worker import sync_courses_task
+
+    task = sync_courses_task.enqueue()
+    await task
+
+    return CourseSyncEnqueuedResponse(
+        message="Course catalog sync enqueued. Poll GET /ingest/courses/status/{job_id}.",
+        job_id=task.id,
+        status="queued",
+    )
+
+
+@router.get(
+    "/ingest/courses/status/{job_id}",
+    response_model=SpreadsheetSyncStatusResponse,
+    summary="Get status of an enqueued course catalog sync job",
+)
+async def courses_sync_status(
+    job_id: str,
+    current_user: User = Depends(get_admin_or_jwt_user),
+) -> SpreadsheetSyncStatusResponse:
+    """Poll worker-side status/result for a course sync job."""
+    from app.worker import worker
+
+    try:
+        task_status = await worker.status_by_id(job_id)
+        status_str = str(getattr(task_status, "value", task_status))
+    except Exception:
+        return SpreadsheetSyncStatusResponse(job_id=job_id, status="not_found")
+
+    result: dict | None = None
+    if status_str == "done":
+        try:
+            task_result = await worker.result_by_id(job_id, timeout=10)
+            try:
+                raw = task_result.result
+            except Exception as exc:
+                result = {"status": "failed", "error": str(getattr(task_result, 'exception', exc))}
+            else:
+                if isinstance(raw, dict):
+                    result = raw
+                else:
+                    result = {"result": raw}
+        except Exception:
+            result = None
+
+    return SpreadsheetSyncStatusResponse(job_id=job_id, status=status_str, result=result)
+
+
 
 @router.post("/test/dummy-task", summary="Enqueue a dummy task to verify the worker")
 async def enqueue_dummy_task(

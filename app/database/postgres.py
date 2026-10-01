@@ -189,6 +189,16 @@ async def init_db() -> None:
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_logs_area ON agent_logs (area)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_logs_regional ON agent_logs (regional)"))
 
+        # Course catalog fuzzy matching (pg_trgm)
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
+            await conn.execute(
+                text("CREATE INDEX IF NOT EXISTS idx_course_catalog_fullname_trgm "
+                     "ON course_catalog USING gin (fullname gin_trgm_ops);")
+            )
+        except Exception:
+            pass
+
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
