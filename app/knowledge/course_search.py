@@ -19,18 +19,30 @@ from app.database.models import CourseCatalog
 # "minta link course ...", "link kelas ... dong", "ada link pelatihan ...", "url modul ..."
 _COURSE_LINK_PREFIX_PATTERNS = [
     re.compile(
-        r"(?:minta|bagi|spill|cari|tolong|ada)?\s*(?:link|tautan|url)\s+(?:course|kelas|modul|pelatihan|materi|training)?\s*(?:tentang|buat|untuk|soal)?\s*(.+)",
+        r"(?:minta|bagi|spill|cari|tolong|ada|kasih|kirim|bisa\s+minta|bisa\s+kasih|dimana)?\s*(?:link|tautan|url)\s+(?:buat\s+|untuk\s+)?(?:course|kelas|modul|pelatihan|materi|training|belajar)?\s*(?:tentang|buat|untuk|soal)?\s*(.+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:course|kelas|modul|pelatihan|training)\s+(?:tentang|buat|untuk|soal)?\s*(.+?)\s*(?:ada\s+link|linknya\s+apa|minta\s+link|link)?\s*[?.]*$",
+        r"(?:mau\s+ikut|mau\s+daftar|ikut)?\s*(?:course|kelas|modul|pelatihan|training|materi)\s+(?:tentang|buat|untuk|soal)?\s*(.+?)\s*(?:ada\s+link|linknya\s+apa|linknya\s+dimana|linknya\s+mana|minta\s+link|link)?\s*[?.]*$",
         re.IGNORECASE,
     ),
 ]
 
 
-def detect_course_query(message: str) -> str | None:
-    """Detect if the user is asking for a course/class link and extract search keyword."""
+# Follow-up link requests referring to previous conversation turn ("link nya", "minta linknya", "mana linknya")
+_FOLLOW_UP_LINK_PATTERN = re.compile(
+    r"^(?:minta\s+|bagi\s+|spill\s+|mana\s+|ada\s+|kirim\s+)?(?:link|tautan|url)(?:nya|\s+nya|\s+dong|\s+min|\s+va|\s+plis)?\s*(?:apa|dong|deh|ya|kah|kan|ada|nggak|gak|ga)?\s*[?.]*$",
+    re.IGNORECASE,
+)
+
+
+def detect_course_query(message: str, previous_query: str | None = None) -> str | None:
+    """Detect if the user is asking for a course/class link and extract search keyword.
+    
+    Supports:
+    1. Explicit link query in same turn: "minta link course collaborate to influence"
+    2. Contextual follow-up turn: "Link nya" / "minta linknya" with previous_query from chat history.
+    """
     raw = message.strip()
     if not raw:
         return None
@@ -38,9 +50,16 @@ def detect_course_query(message: str) -> str | None:
     # Strip conversational noise
     clean = re.sub(r"^(?:ava|hai|halo|pagi|siang|sore|malam)\s*[,!.]?\s*", "", raw, flags=re.IGNORECASE).strip()
 
-    # Must contain anchor words indicating a link/course lookup
+    # Case A: Follow-up turn asking for link of previous topic ("Link nya", "minta linknya")
+    if previous_query and _FOLLOW_UP_LINK_PATTERN.match(clean):
+        prev_clean = re.sub(r"^(?:tolong\s+)?(?:jelaskan(?:\s+tentang)?|apa\s+itu|apa\s+maksud(?:\s+dari)?|tentang)\s+", "", previous_query.strip(), flags=re.IGNORECASE).strip()
+        prev_clean = re.sub(r"[?!.,]+$", "", prev_clean).strip()
+        if len(prev_clean) >= 2:
+            return prev_clean
+
+    # Case B: Explicit mention in current turn
     has_link_marker = any(w in clean.lower() for w in ("link", "tautan", "url"))
-    has_course_marker = any(w in clean.lower() for w in ("course", "kelas", "modul", "pelatihan", "training"))
+    has_course_marker = any(w in clean.lower() for w in ("course", "kelas", "modul", "pelatihan", "training", "belajar", "materi"))
 
     if not (has_link_marker and has_course_marker):
         return None
@@ -49,10 +68,11 @@ def detect_course_query(message: str) -> str | None:
         m = pattern.search(clean)
         if m:
             candidate = m.group(1).strip()
-            # Remove trailing punctuation and conversational fluff
+            # Remove trailing punctuation, questions, and conversational fluff
             for _ in range(2):
                 candidate = re.sub(r"[?!.,]+$", "", candidate).strip()
-                candidate = re.sub(r"\b(dong|deh|ya|kah|kan|min|ava|nya|plis|please|ada|nggak|ngga|gak|ga)\b$", "", candidate, flags=re.IGNORECASE).strip()
+                candidate = re.sub(r"\b(linknya\s+dimana|linknya\s+mana|linknya\s+apa|linknya|tautannya|urlnya)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+                candidate = re.sub(r"\b(dong|deh|ya|kah|kan|min|ava|nya|plis|please|ada|nggak|ngga|gak|ga|mana|dimana|apa)\b$", "", candidate, flags=re.IGNORECASE).strip()
             candidate = re.sub(r"[?!.,]+$", "", candidate).strip()
             if len(candidate) >= 2:
                 return candidate
@@ -74,9 +94,11 @@ async def search_courses(
     # 1. Primary: PostgreSQL pg_trgm similarity
     try:
         sql = text("""
-            SELECT id, fullname, category, url, similarity(fullname, :query) as sim
+            SELECT id, fullname, category, url,
+                   GREATEST(similarity(fullname, :query), word_similarity(:query, fullname)) as sim
             FROM course_catalog
-            WHERE status = 'Aktif' AND similarity(fullname, :query) >= :min_sim
+            WHERE status = 'Aktif'
+              AND (similarity(fullname, :query) >= :min_sim OR word_similarity(:query, fullname) >= 0.25)
             ORDER BY sim DESC
             LIMIT :limit
         """)

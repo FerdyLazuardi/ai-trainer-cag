@@ -224,7 +224,15 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
 
     # ── Course link search on demand (only when explicitly requested) ───────
     from app.knowledge.course_search import detect_course_query, search_courses
-    course_q = detect_course_query(user_msg_str)
+    prev_user_msg = None
+    if len(messages) >= 2:
+        for m in reversed(messages[:-1]):
+            role = getattr(m, "type", "") or getattr(m, "role", "")
+            if role in ("human", "user"):
+                prev_user_msg = str(m.content) if isinstance(m.content, str) else str(m.content)
+                break
+
+    course_q = detect_course_query(user_msg_str, previous_query=prev_user_msg)
     candidate_courses = None
     if course_q:
         try:

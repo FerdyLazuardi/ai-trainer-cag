@@ -46,17 +46,24 @@ class FakeSession:
 
 
 def test_detect_course_query():
-    # Positive triggers
+    # Positive triggers (direct turn)
     assert detect_course_query("minta link course kolaborasi analyst dong") == "kolaborasi analyst"
     assert detect_course_query("Ava, link kelas customer first ada?") == "customer first"
     assert detect_course_query("minta link pelatihan digital marketing ya") == "digital marketing"
     assert detect_course_query("tolong url modul risk based thinking") == "risk based thinking"
+
+    # Positive triggers (follow-up contextual turn like 'Link nya')
+    assert detect_course_query("Link nya", previous_query="Empower growth") == "Empower growth"
+    assert detect_course_query("linknya apa?", previous_query="jelaskan tentang risk based thinking") == "risk based thinking"
+    assert detect_course_query("minta linknya dong", previous_query="apa itu customer centric") == "customer centric"
+    assert detect_course_query("mana linknya", previous_query="Collaborate to influence") == "Collaborate to influence"
 
     # Negative triggers (should NOT detect course link query)
     assert detect_course_query("jelaskan rumus DPD 1") is None
     assert detect_course_query("halo ava, selamat pagi") is None
     assert detect_course_query("berapa pencapaian cabang saya?") is None
     assert detect_course_query("apa bedanya PAR dan NPL?") is None
+    assert detect_course_query("Link nya", previous_query=None) is None
 
 
 @pytest.mark.asyncio
