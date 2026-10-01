@@ -612,7 +612,7 @@ COURSE_SEARCH_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "search_courses",
-        "description": "Search active LMS courses and training modules in PostgreSQL database by topic or keyword. Call this when the user asks for course/training links.",
+        "description": "Search active LMS courses in the database. ONLY call this when the user explicitly or contextually asks for a course, class, or training link to register/learn. DO NOT call for ordinary factual Q&A or policy explanations.",
         "parameters": {
             "type": "object",
             "properties": {
