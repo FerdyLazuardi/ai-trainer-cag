@@ -608,55 +608,50 @@ async def _load_active_cag_kb_text() -> str:
         return _active_kb_cache.get("content", "")
 
 
-_active_catalog_cache: dict[str, Any] = {
-    "content": "",
-    "expires_at": 0.0,
+COURSE_SEARCH_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search_courses",
+        "description": "Search active LMS courses and training modules in PostgreSQL database by topic or keyword. Call this when the user asks for course/training links.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Topic or keyword to search for (e.g. 'bisnis proses', 'customer first', 'excel')",
+                }
+            },
+            "required": ["query"],
+        },
+    },
 }
-_CATALOG_CHECK_TTL_SECONDS = 60.0
 
 
-def clear_course_catalog_cache():
-    """Invalidate memory cache for course catalog so fresh DB data is loaded."""
-    _active_catalog_cache["content"] = ""
-    _active_catalog_cache["expires_at"] = 0.0
+async def _execute_course_search_tool(query: str) -> str:
+    """Execute search_courses on PostgreSQL for the tool calling response."""
+    from app.database.postgres import AsyncSessionLocal
+    from app.knowledge.course_search import search_courses
 
-
-async def _load_active_course_catalog_text() -> str:
-    """Load all active courses from PostgreSQL course_catalog table into cached prompt block."""
-    now = time.time()
-    if _active_catalog_cache["content"] and now < _active_catalog_cache["expires_at"]:
-        return _active_catalog_cache["content"]
+    q = (query or "").strip()
+    if not q:
+        return json.dumps({"result": "empty_query", "courses": []})
 
     try:
-        from app.database.postgres import AsyncSessionLocal
-        from sqlalchemy import text
-
         async with AsyncSessionLocal() as session:
-            sql = text("""
-                SELECT fullname, category, url
-                FROM course_catalog
-                WHERE status = 'Aktif'
-                ORDER BY category, fullname
-            """)
-            res = await session.execute(sql)
-            rows = res.fetchall()
-            if rows:
-                lines = [
-                    f"- [{r[0]}]({r[2]}) (Kategori: {r[1] or '-'})"
-                    for r in rows
-                ]
-                content = (
-                    "<course_catalog>\n"
-                    + "\n".join(lines)
-                    + "\n</course_catalog>"
-                )
-                _active_catalog_cache["content"] = content
-                _active_catalog_cache["expires_at"] = now + _CATALOG_CHECK_TTL_SECONDS
-                return content
+            courses = await search_courses(session, q, limit=3)
+            if courses:
+                return json.dumps([
+                    {
+                        "fullname": c["fullname"],
+                        "url": c["url"],
+                        "category": c.get("category", "-"),
+                    }
+                    for c in courses
+                ])
+            return json.dumps({"result": "not_found", "message": f"Tidak ditemukan kelas aktif untuk topik '{q}' di katalog Amarthapedia."})
     except Exception as exc:
-        logger.warning(f"Failed to load course catalog text: {exc}")
-
-    return _active_catalog_cache.get("content", "")
+        logger.warning(f"Failed to execute search_courses tool: {exc}")
+        return json.dumps({"error": str(exc), "courses": []})
 
 
 @lru_cache(maxsize=64)
@@ -677,19 +672,32 @@ def _with_openrouter_session(llm, session_id: str | None):
     return llm.bind(extra_body={**extra_body, "session_id": session_id})
 
 
-def _openrouter_messages(messages: list) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
+def _openrouter_messages(messages: list) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for msg in messages:
+        if isinstance(msg, dict):
+            out.append(msg)
+            continue
         if isinstance(msg, SystemMessage):
             role = "system"
         elif isinstance(msg, AIMessage):
             role = "assistant"
+        elif hasattr(msg, "tool_call_id"):
+            out.append({
+                "role": "tool",
+                "tool_call_id": getattr(msg, "tool_call_id", ""),
+                "content": str(getattr(msg, "content", "")),
+            })
+            continue
         else:
             role = "user"
         content = getattr(msg, "content", msg)
         if isinstance(content, list):
             content = "".join(str(part.get("text", part)) if isinstance(part, dict) else str(part) for part in content)
-        out.append({"role": role, "content": str(content)})
+        item: dict[str, Any] = {"role": role, "content": str(content) if content is not None else None}
+        if hasattr(msg, "additional_kwargs") and "tool_calls" in msg.additional_kwargs:
+            item["tool_calls"] = msg.additional_kwargs["tool_calls"]
+        out.append(item)
     return out
 
 
@@ -921,7 +929,6 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     user_context = state.get("user_context") or {}
 
     cag_kb_text = ""
-    course_catalog_text = ""
     if intent in ("KNOWLEDGE", "COACHING"):
         try:
             full_kb = await _load_active_cag_kb_text()
@@ -930,11 +937,6 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
             logger.info(f"_generate_node: Filtered KB for role={resolved_role}: {len(cag_kb_text)} chars (out of {len(full_kb)})")
         except Exception as exc:
             logger.warning(f"CAG KB pack load failed: {exc}")
-
-        try:
-            course_catalog_text = await _load_active_course_catalog_text()
-        except Exception as exc:
-            logger.warning(f"Course catalog load failed: {exc}")
 
     context_section = ""
     if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
@@ -1012,94 +1014,168 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     msgs: list = [SystemMessage(content=system_prompt_text)]
     if cag_kb_text:
         msgs.append(SystemMessage(content=cag_kb_text))
-    if course_catalog_text:
-        msgs.append(SystemMessage(content=course_catalog_text))
     if dynamic_tail:
         msgs.append(HumanMessage(content=dynamic_tail))
     msgs += windowed_messages
-    return msgs, _openrouter_prompt_session_id(system_prompt_text, cag_kb_text, course_catalog_text)
+    return msgs, _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
 
 
 async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | None = None):
-    """Stream generate directly from OpenRouter so final usage.cost is preserved."""
+    """Stream generate directly from OpenRouter with native tool-calling support."""
     messages, session_id = await _build_generate_messages(state)
     extra_body = _provider_extra_body(_settings.llm_model)
     if session_id:
         extra_body = {**extra_body, "session_id": session_id}
-    body = {
-        "model": _settings.llm_model,
-        "messages": _openrouter_messages(messages),
-        "temperature": _settings.generate_llm_temperature,
-        "max_tokens": _settings.llm_max_tokens,
-        "stream": True,
-        **extra_body,
-    }
+
+    tools = [COURSE_SEARCH_TOOL]
+
     headers = {
         "Authorization": f"Bearer {_settings.openrouter_api_key}",
         "HTTP-Referer": "https://github.com/FerdyLazuardi/ai-trainer-cag",
         "X-Title": "CAG AI TRAINER (Generate)",
     }
-
-    generation_id = None
-    model = None
-    provider = None
-    sent_usage = False
     url = _settings.openrouter_base_url.rstrip("/") + "/chat/completions"
-    async with _shared_http_client().stream("POST", url, headers=headers, json=body) as response:
-        response.raise_for_status()
-        async for line in response.aiter_lines():
-            if not line:
+
+    curr_messages = _openrouter_messages(messages)
+    max_tool_iterations = 2
+    total_usage = {
+        "prompt_tokens": 0,
+        "cached_tokens": 0,
+        "completion_tokens": 0,
+        "cost": 0.0,
+        "provider": None,
+        "generation_id": None,
+    }
+    last_generation_id = None
+    last_model = None
+    last_provider = None
+
+    for iteration in range(max_tool_iterations):
+        body = {
+            "model": _settings.llm_model,
+            "messages": curr_messages,
+            "temperature": _settings.generate_llm_temperature,
+            "max_tokens": _settings.llm_max_tokens,
+            "stream": True,
+            "tools": tools,
+            **extra_body,
+        }
+
+        tool_calls_accumulator: dict[int, dict[str, Any]] = {}
+        finish_reason = None
+
+        async with _shared_http_client().stream("POST", url, headers=headers, json=body) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith(":"):
+                    yield {"type": "ping"}
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+
+                last_generation_id = data.get("id") or last_generation_id
+                last_model = data.get("model") or last_model
+                last_provider = data.get("provider") or data.get("provider_name") or last_provider
+
+                for choice in data.get("choices") or []:
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                    delta = choice.get("delta") or {}
+
+                    if delta.get("tool_calls"):
+                        for tc in delta["tool_calls"]:
+                            idx = tc.get("index", 0)
+                            if idx not in tool_calls_accumulator:
+                                tool_calls_accumulator[idx] = {
+                                    "id": tc.get("id", ""),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.get("function", {}).get("name", ""),
+                                        "arguments": "",
+                                    },
+                                }
+                            if tc.get("id"):
+                                tool_calls_accumulator[idx]["id"] = tc["id"]
+                            if tc.get("function", {}).get("name"):
+                                tool_calls_accumulator[idx]["function"]["name"] = tc["function"]["name"]
+                            if tc.get("function", {}).get("arguments"):
+                                tool_calls_accumulator[idx]["function"]["arguments"] += tc["function"]["arguments"]
+
+                    token = delta.get("content")
+                    if token and not tool_calls_accumulator:
+                        yield {"type": "token", "text": token}
+
+                usage = data.get("usage") or {}
+                if usage:
+                    details = usage.get("prompt_tokens_details") or {}
+                    total_usage["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+                    total_usage["cached_tokens"] += int(details.get("cached_tokens") or 0)
+                    total_usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+                    total_usage["cost"] += float(usage.get("cost") or 0.0)
+                    total_usage["provider"] = last_model or last_provider or total_usage["provider"]
+                    total_usage["generation_id"] = last_generation_id or total_usage["generation_id"]
+
+        if tool_calls_accumulator:
+            executed_any_tool = False
+            tool_calls_list = [v for k, v in sorted(tool_calls_accumulator.items())]
+            curr_messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": tool_calls_list,
+            })
+
+            for tc in tool_calls_list:
+                fn_name = tc.get("function", {}).get("name")
+                fn_args_raw = tc.get("function", {}).get("arguments", "{}")
+                tool_call_id = tc.get("id", "")
+                if fn_name == "search_courses":
+                    try:
+                        args = json.loads(fn_args_raw)
+                        q = args.get("query", "").strip()
+                    except Exception:
+                        q = fn_args_raw.strip()
+
+                    logger.info(f"LLM Tool Call: search_courses(query={q!r})")
+                    tool_content = await _execute_course_search_tool(q)
+                    curr_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": tool_content,
+                    })
+                    executed_any_tool = True
+
+            if executed_any_tool:
                 continue
-            if line.startswith(":"):
-                yield {"type": "ping"}
-                continue
-            if not line.startswith("data:"):
-                continue
-            payload = line[5:].strip()
-            if payload == "[DONE]":
-                if not sent_usage and generation_id:
-                    yield {
-                        "type": "usage",
-                        "usage": OpenRouterUsage(
-                            provider=model or provider,
-                            generation_id=generation_id,
-                        ),
-                    }
-                break
-            try:
-                data = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            generation_id = data.get("id") or generation_id
-            model = data.get("model") or model
-            provider = data.get("provider") or data.get("provider_name") or provider
-            for choice in data.get("choices") or []:
-                delta = choice.get("delta") or {}
-                token = delta.get("content")
-                if token:
-                    yield {"type": "token", "text": token}
-            usage = data.get("usage") or {}
-            if usage:
-                sent_usage = True
-                details = usage.get("prompt_tokens_details") or {}
-                yield {
-                    "type": "usage",
-                    "usage": OpenRouterUsage(
-                        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                        cached_tokens=int(details.get("cached_tokens") or 0),
-                        completion_tokens=int(usage.get("completion_tokens") or 0),
-                        provider=model or provider,
-                        cost=float(usage.get("cost") or 0.0),
-                        generation_id=generation_id,
-                    ),
-                }
+
+        break
+
+    yield {
+        "type": "usage",
+        "usage": OpenRouterUsage(
+            prompt_tokens=total_usage["prompt_tokens"],
+            cached_tokens=total_usage["cached_tokens"],
+            completion_tokens=total_usage["completion_tokens"],
+            provider=total_usage["provider"] or last_model or last_provider,
+            cost=total_usage["cost"],
+            generation_id=total_usage["generation_id"] or last_generation_id,
+        ),
+    }
 
 
 async def _generate_node(state: CAGState, config: RunnableConfig):
-    """Single conversational LLM call for the non-stream graph execution path."""
+    """Single conversational LLM call for the non-stream graph execution path with tool support."""
     msgs, openrouter_session_id = await _build_generate_messages(state)
+    llm_base = get_generate_llm_nostream()
     llm = _with_openrouter_session(
-        get_generate_llm_nostream(),
+        llm_base.bind(tools=[COURSE_SEARCH_TOOL]),
         openrouter_session_id,
     )
 
@@ -1111,6 +1187,17 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
         turn_id=state.get("turn_id") if isinstance(state, dict) else None,
         started_at=_t0,
     )
+
+    if getattr(response, "tool_calls", None):
+        tool_messages = [response]
+        for tc in response.tool_calls:
+            if tc.get("name") == "search_courses":
+                q = tc.get("args", {}).get("query", "")
+                logger.info(f"Non-stream LLM Tool Call: search_courses(query={q!r})")
+                tool_content = await _execute_course_search_tool(q)
+                from langchain_core.messages import ToolMessage
+                tool_messages.append(ToolMessage(content=tool_content, tool_call_id=tc.get("id", "")))
+        response = await llm.ainvoke(list(msgs) + tool_messages, config=config)
 
     raw = response.content if hasattr(response, "content") else str(response)
     intent = state.get("intent") or "KNOWLEDGE"

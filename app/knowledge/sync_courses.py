@@ -171,11 +171,6 @@ async def sync_courses_from_spreadsheet(session: AsyncSession) -> dict:
         courses_deleted = int(getattr(res, "rowcount", 0) or 0)
 
     await session.commit()
-    try:
-        from app.graph.pipeline import clear_course_catalog_cache
-        clear_course_catalog_cache()
-    except Exception:
-        pass
     logger.info(
         f"Course catalog sync complete. Updated: {courses_updated}, Deleted (inactive/orphans): {courses_deleted}"
     )
