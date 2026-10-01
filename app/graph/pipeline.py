@@ -222,29 +222,6 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
 
     rule_intent = rule_classify(user_msg_str)
 
-    # ── Course link search on demand (only when explicitly requested) ───────
-    from app.knowledge.course_search import detect_course_query, search_courses
-    prev_user_msg = None
-    if len(messages) >= 2:
-        for m in reversed(messages[:-1]):
-            role = getattr(m, "type", "") or getattr(m, "role", "")
-            if role in ("human", "user"):
-                prev_user_msg = str(m.content) if isinstance(m.content, str) else str(m.content)
-                break
-
-    course_q = detect_course_query(user_msg_str, previous_query=prev_user_msg)
-    candidate_courses = None
-    if course_q:
-        try:
-            from app.database.postgres import AsyncSessionLocal
-            async with AsyncSessionLocal() as db_session:
-                candidate_courses = await search_courses(db_session, course_q, limit=3)
-                logger.info(f"Course link query detected: q={course_q!r}, found={len(candidate_courses)}")
-        except Exception as exc:
-            logger.warning(f"Failed to search courses for query {course_q!r}: {exc}")
-            candidate_courses = []
-        rule_intent = None
-
     # ── Injection / jailbreak guard ─────────────────────────────────────────
     if rule_intent == "MALICIOUS":
         logger.info("Pre-processor: injection detected → MALICIOUS")
@@ -254,7 +231,6 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
             "retrieval_query": user_msg_str,
             "intent_scores": {"needs_lookup": 0.0, "needs_reasoning": 0.0, "needs_empathy": 0.0, "needs_safety_escalation": 0.0, "learning_context": 0.0},
             "gate_score": None,
-            "candidate_courses": candidate_courses,
         }
 
     # NOTE: "apa aja di <section>" text-detection was REMOVED — structured
@@ -361,7 +337,6 @@ async def _pre_processor(state: CAGState, config: RunnableConfig):
             "learning_context": 0.0,
         },
         "gate_score": None,
-        "candidate_courses": candidate_courses,
     }
 
 
@@ -633,6 +608,57 @@ async def _load_active_cag_kb_text() -> str:
         return _active_kb_cache.get("content", "")
 
 
+_active_catalog_cache: dict[str, Any] = {
+    "content": "",
+    "expires_at": 0.0,
+}
+_CATALOG_CHECK_TTL_SECONDS = 60.0
+
+
+def clear_course_catalog_cache():
+    """Invalidate memory cache for course catalog so fresh DB data is loaded."""
+    _active_catalog_cache["content"] = ""
+    _active_catalog_cache["expires_at"] = 0.0
+
+
+async def _load_active_course_catalog_text() -> str:
+    """Load all active courses from PostgreSQL course_catalog table into cached prompt block."""
+    now = time.time()
+    if _active_catalog_cache["content"] and now < _active_catalog_cache["expires_at"]:
+        return _active_catalog_cache["content"]
+
+    try:
+        from app.database.postgres import AsyncSessionLocal
+        from sqlalchemy import text
+
+        async with AsyncSessionLocal() as session:
+            sql = text("""
+                SELECT fullname, category, url
+                FROM course_catalog
+                WHERE status = 'Aktif'
+                ORDER BY category, fullname
+            """)
+            res = await session.execute(sql)
+            rows = res.fetchall()
+            if rows:
+                lines = [
+                    f"- [{r[0]}]({r[2]}) (Kategori: {r[1] or '-'})"
+                    for r in rows
+                ]
+                content = (
+                    "<course_catalog>\n"
+                    + "\n".join(lines)
+                    + "\n</course_catalog>"
+                )
+                _active_catalog_cache["content"] = content
+                _active_catalog_cache["expires_at"] = now + _CATALOG_CHECK_TTL_SECONDS
+                return content
+    except Exception as exc:
+        logger.warning(f"Failed to load course catalog text: {exc}")
+
+    return _active_catalog_cache.get("content", "")
+
+
 @lru_cache(maxsize=64)
 def _openrouter_prompt_session_id(*parts: str) -> str:
     stable_prefix = "\n".join(part for part in parts if part)
@@ -895,6 +921,7 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     user_context = state.get("user_context") or {}
 
     cag_kb_text = ""
+    course_catalog_text = ""
     if intent in ("KNOWLEDGE", "COACHING"):
         try:
             full_kb = await _load_active_cag_kb_text()
@@ -903,6 +930,11 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
             logger.info(f"_generate_node: Filtered KB for role={resolved_role}: {len(cag_kb_text)} chars (out of {len(full_kb)})")
         except Exception as exc:
             logger.warning(f"CAG KB pack load failed: {exc}")
+
+        try:
+            course_catalog_text = await _load_active_course_catalog_text()
+        except Exception as exc:
+            logger.warning(f"Course catalog load failed: {exc}")
 
     context_section = ""
     if intent in ("KNOWLEDGE", "COACHING") and not cag_kb_text:
@@ -962,30 +994,7 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
     user_ctx_section = _format_user_context_block(user_context)
 
-    course_section = ""
-    candidate_courses = state.get("candidate_courses")
-    if candidate_courses is not None:
-        if candidate_courses:
-            lines = [
-                f"- [{c['fullname']}]({c['url']}) (Kategori: {c.get('category', '-')})"
-                for c in candidate_courses
-            ]
-            course_section = (
-                "\n\n<candidate_courses>\n"
-                "Berikut adalah kelas aktif yang relevan dari katalog Amarthapedia untuk permintaan user. "
-                "Sajikan tautan kelas ini secara langsung menggunakan format Markdown link [Nama Kelas](URL):\n"
-                + "\n".join(lines)
-                + "\n</candidate_courses>"
-            )
-        else:
-            course_section = (
-                "\n\n<candidate_courses>\n"
-                "Kelas yang dicari user tidak ditemukan atau sedang tidak aktif di katalog Amarthapedia. "
-                "Sampaikan secara singkat bahwa kelas tersebut tidak ditemukan di daftar pelatihan aktif Amarthapedia.\n"
-                "</candidate_courses>"
-            )
-
-    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{course_section}{context_section}".strip()
+    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
     windowed_messages = _window_generate_history(
         list(state["messages"]),
@@ -1003,10 +1012,12 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     msgs: list = [SystemMessage(content=system_prompt_text)]
     if cag_kb_text:
         msgs.append(SystemMessage(content=cag_kb_text))
+    if course_catalog_text:
+        msgs.append(SystemMessage(content=course_catalog_text))
     if dynamic_tail:
         msgs.append(HumanMessage(content=dynamic_tail))
     msgs += windowed_messages
-    return msgs, _openrouter_prompt_session_id(system_prompt_text, cag_kb_text)
+    return msgs, _openrouter_prompt_session_id(system_prompt_text, cag_kb_text, course_catalog_text)
 
 
 async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | None = None):

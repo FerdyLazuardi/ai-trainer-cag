@@ -29,11 +29,19 @@ _COURSE_LINK_PREFIX_PATTERNS = [
 ]
 
 
-# Follow-up link requests referring to previous conversation turn ("link nya", "minta linknya", "mana linknya")
+# Follow-up link requests referring to previous conversation turn ("link nya", "kasih linknya", "minta linknya", "mana linknya")
 _FOLLOW_UP_LINK_PATTERN = re.compile(
-    r"^(?:minta\s+|bagi\s+|spill\s+|mana\s+|ada\s+|kirim\s+)?(?:link|tautan|url)(?:nya|\s+nya|\s+dong|\s+min|\s+va|\s+plis)?\s*(?:apa|dong|deh|ya|kah|kan|ada|nggak|gak|ga)?\s*[?.]*$",
+    r"^(?:(?:boleh|bisa|tolong|coba)?\s*(?:minta|bagi|spill|mana|ada|kirim|kasih|share|dikasih|drop)?\s+)?(?:link|tautan|url)(?:nya|\s+nya|\s+dong|\s+min|\s+va|\s+plis)?(?:\s+(?:apa|dong|deh|ya|kah|kan|ada|nggak|gak|ga|mana|dimana|min|va|plis|please))*\s*[?.]*$",
     re.IGNORECASE,
 )
+
+_GENERIC_WORDS = {
+    "kasih", "minta", "bagi", "share", "spill", "kirim", "tolong", "ada",
+    "mana", "coba", "link", "tautan", "url", "linknya", "urlnya", "tautannya",
+    "course", "kelas", "modul", "pelatihan", "training", "materi", "workshop",
+    "dong", "deh", "ya", "kah", "kan", "min", "ava", "nya", "plis", "please",
+    "apa", "dimana", "bisa", "boleh",
+}
 
 
 def detect_course_query(message: str, previous_query: str | None = None) -> str | None:
@@ -41,7 +49,7 @@ def detect_course_query(message: str, previous_query: str | None = None) -> str 
     
     Supports:
     1. Explicit link query in same turn: "minta link course collaborate to influence"
-    2. Contextual follow-up turn: "Link nya" / "minta linknya" with previous_query from chat history.
+    2. Contextual follow-up turn: "Link nya" / "kasih linknya" / "minta linknya" with previous_query from chat history.
     """
     raw = message.strip()
     if not raw:
@@ -50,9 +58,14 @@ def detect_course_query(message: str, previous_query: str | None = None) -> str 
     # Strip conversational noise
     clean = re.sub(r"^(?:ava|hai|halo|pagi|siang|sore|malam)\s*[,!.]?\s*", "", raw, flags=re.IGNORECASE).strip()
 
-    # Case A: Follow-up turn asking for link of previous topic ("Link nya", "minta linknya")
+    # Case A: Follow-up turn asking for link of previous topic ("Link nya", "kasih linknya", "minta linknya")
     if previous_query and _FOLLOW_UP_LINK_PATTERN.match(clean):
-        prev_clean = re.sub(r"^(?:tolong\s+)?(?:jelaskan(?:\s+tentang)?|apa\s+itu|apa\s+maksud(?:\s+dari)?|tentang)\s+", "", previous_query.strip(), flags=re.IGNORECASE).strip()
+        prev_clean = re.sub(
+            r"^(?:tolong\s+)?(?:jelaskan(?:\s+tentang)?|apa\s+itu|apa\s+maksud(?:\s+dari)?|tentang|gimana\s+sih|bagaimana(?:\s+cara)?|ceritakan(?:\s+tentang)?|apa\s+saja)\s+",
+            "",
+            previous_query.strip(),
+            flags=re.IGNORECASE,
+        ).strip()
         prev_clean = re.sub(r"[?!.,]+$", "", prev_clean).strip()
         if len(prev_clean) >= 2:
             return prev_clean
@@ -73,6 +86,9 @@ def detect_course_query(message: str, previous_query: str | None = None) -> str 
                 candidate = re.sub(r"\b(dong|deh|ya|kah|kan|min|ava|nya|plis|please|ada|nggak|ngga|gak|ga|mana|dimana|apa)\b$", "", candidate, flags=re.IGNORECASE).strip()
             candidate = re.sub(r"[?!.,]+$", "", candidate).strip()
             if candidate.lower() in ("link", "tautan", "url", "linknya", "urlnya", "tautannya"):
+                continue
+            words = set(candidate.lower().split())
+            if words.issubset(_GENERIC_WORDS):
                 continue
             if len(candidate) >= 2:
                 return candidate

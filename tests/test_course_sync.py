@@ -52,7 +52,10 @@ def test_detect_course_query():
     assert detect_course_query("minta link pelatihan digital marketing ya") == "digital marketing"
     assert detect_course_query("tolong url modul risk based thinking") == "risk based thinking"
 
-    # Positive triggers (follow-up contextual turn like 'Link nya')
+    # Positive triggers (follow-up contextual turn like 'Link nya', 'kasih linknya')
+    assert detect_course_query("kasih linknya", previous_query="bisnis proses") == "bisnis proses"
+    assert detect_course_query("bisa kasih linknya?", previous_query="tolong jelaskan proses bisnis") == "proses bisnis"
+    assert detect_course_query("share linknya dong", previous_query="Customer First") == "Customer First"
     assert detect_course_query("Link nya", previous_query="Empower growth") == "Empower growth"
     assert detect_course_query("linknya apa?", previous_query="jelaskan tentang risk based thinking") == "risk based thinking"
     assert detect_course_query("minta linknya dong", previous_query="apa itu customer centric") == "customer centric"
@@ -64,6 +67,8 @@ def test_detect_course_query():
     assert detect_course_query("berapa pencapaian cabang saya?") is None
     assert detect_course_query("apa bedanya PAR dan NPL?") is None
     assert detect_course_query("Link nya", previous_query=None) is None
+    assert detect_course_query("kasih linknya", previous_query=None) is None
+    assert detect_course_query("minta link", previous_query=None) is None
 
 
 @pytest.mark.asyncio
