@@ -19,11 +19,11 @@ from app.database.models import CourseCatalog
 # "minta link course ...", "link kelas ... dong", "ada link pelatihan ...", "url modul ..."
 _COURSE_LINK_PREFIX_PATTERNS = [
     re.compile(
-        r"(?:minta|bagi|spill|cari|tolong|ada|kasih|kirim|bisa\s+minta|bisa\s+kasih|dimana)?\s*(?:link|tautan|url)\s+(?:buat\s+|untuk\s+)?(?:course|kelas|modul|pelatihan|materi|training|belajar)?\s*(?:tentang|buat|untuk|soal)?\s*(.+)",
+        r"^(?:minta|bagi|spill|cari|tolong|ada|kasih|kirim|bisa\s+minta|bisa\s+kasih|dimana)?\s*(?:link|tautan|url)\s+(?:buat\s+|untuk\s+)?(?:course|kelas|modul|pelatihan|materi|training|belajar|workshop)?\s*(?:tentang|buat|untuk|soal)?\s*(.+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:mau\s+ikut|mau\s+daftar|ikut)?\s*(?:course|kelas|modul|pelatihan|training|materi)\s+(?:tentang|buat|untuk|soal)?\s*(.+?)\s*(?:ada\s+link|linknya\s+apa|linknya\s+dimana|linknya\s+mana|minta\s+link|link)?\s*[?.]*$",
+        r"(?:mau\s+ikut|mau\s+daftar|ikut)?\s*(?:course|kelas|modul|pelatihan|training|materi|workshop)?\s*(?:tentang|buat|untuk|soal)?\s*(.+?)\s*(?:ada\s+link|linknya\s+apa|linknya\s+dimana|linknya\s+mana|minta\s+link|link)?\s*[?.]*$",
         re.IGNORECASE,
     ),
 ]
@@ -59,9 +59,7 @@ def detect_course_query(message: str, previous_query: str | None = None) -> str 
 
     # Case B: Explicit mention in current turn
     has_link_marker = any(w in clean.lower() for w in ("link", "tautan", "url"))
-    has_course_marker = any(w in clean.lower() for w in ("course", "kelas", "modul", "pelatihan", "training", "belajar", "materi"))
-
-    if not (has_link_marker and has_course_marker):
+    if not has_link_marker:
         return None
 
     for pattern in _COURSE_LINK_PREFIX_PATTERNS:
@@ -74,6 +72,8 @@ def detect_course_query(message: str, previous_query: str | None = None) -> str 
                 candidate = re.sub(r"\b(linknya\s+dimana|linknya\s+mana|linknya\s+apa|linknya|tautannya|urlnya)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
                 candidate = re.sub(r"\b(dong|deh|ya|kah|kan|min|ava|nya|plis|please|ada|nggak|ngga|gak|ga|mana|dimana|apa)\b$", "", candidate, flags=re.IGNORECASE).strip()
             candidate = re.sub(r"[?!.,]+$", "", candidate).strip()
+            if candidate.lower() in ("link", "tautan", "url", "linknya", "urlnya", "tautannya"):
+                continue
             if len(candidate) >= 2:
                 return candidate
 
