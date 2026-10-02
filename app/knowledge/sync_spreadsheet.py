@@ -14,6 +14,7 @@ Anti-wipe guarantees:
   are still accepted as a fallback.
 """
 
+import asyncio
 import httpx
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,8 @@ PAGE_LIMIT = 1000
 STAGING_BATCH = 1000
 MAX_PAGES = 50  # hard guard: 50 x 1000 = 50k rows ceiling
 PER_PAGE_TIMEOUT = 90.0  # each page ~4MB, must stay under CF 120s
+PAGE_RETRY_COUNT = 3
+PAGE_DELAY_SECONDS = 2.0  # pacing between pages to keep GAS container stable
 
 
 def _norm_point(value: object) -> str | None:
@@ -89,17 +92,28 @@ async def _fetch_scope_pages(
     """
     rows: list[dict] = []
     for page in range(1, MAX_PAGES + 1):
-        try:
-            resp = await client.get(
-                url,
-                params={"token": token, "scope": scope, "page": page, "limit": PAGE_LIMIT},
-                follow_redirects=True,
-                timeout=PER_PAGE_TIMEOUT,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception as exc:
-            logger.error(f"Spreadsheet fetch failed scope={scope} page={page}: {exc}")
+        payload = None
+        for attempt in range(1, PAGE_RETRY_COUNT + 1):
+            try:
+                resp = await client.get(
+                    url,
+                    params={"token": token, "scope": scope, "page": page, "limit": PAGE_LIMIT},
+                    follow_redirects=True,
+                    timeout=PER_PAGE_TIMEOUT,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+            except Exception as exc:
+                logger.warning(
+                    f"Spreadsheet fetch attempt {attempt}/{PAGE_RETRY_COUNT} failed "
+                    f"scope={scope} page={page}: {exc}"
+                )
+                if attempt < PAGE_RETRY_COUNT:
+                    await asyncio.sleep(2.0 * attempt)
+
+        if payload is None:
+            logger.error(f"Spreadsheet fetch permanently failed scope={scope} page={page} after {PAGE_RETRY_COUNT} attempts")
             return rows, False
 
         if isinstance(payload, dict):
@@ -124,6 +138,10 @@ async def _fetch_scope_pages(
         if len(batch) < PAGE_LIMIT:
             return rows, True  # last page
 
+        # Brief pacing delay before next page to keep Google Apps Script container stable
+        if PAGE_DELAY_SECONDS > 0:
+            await asyncio.sleep(PAGE_DELAY_SECONDS)
+
     logger.warning(f"Spreadsheet scope={scope} hit MAX_PAGES={MAX_PAGES}, truncating")
     return rows, True
 
@@ -132,13 +150,21 @@ async def _fetch_legacy_single(
     client: httpx.AsyncClient, url: str, token: str
 ) -> tuple[list[dict], list[dict], bool]:
     """Fallback for GAS without pagination: single doGet returning everything."""
-    try:
-        resp = await client.get(url, params={"token": token}, follow_redirects=True, timeout=300.0)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        err = f"{type(exc).__name__}: {exc}".strip(": ")
-        logger.error(f"Failed to fetch spreadsheet data from GAS Web App: {err}")
+    data = None
+    for attempt in range(1, PAGE_RETRY_COUNT + 1):
+        try:
+            resp = await client.get(url, params={"token": token}, follow_redirects=True, timeout=180.0)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}".strip(": ")
+            logger.warning(f"Failed to fetch spreadsheet data (attempt {attempt}/{PAGE_RETRY_COUNT}): {err}")
+            if attempt < PAGE_RETRY_COUNT:
+                await asyncio.sleep(2.0 * attempt)
+
+    if data is None:
+        logger.error(f"Failed to fetch spreadsheet data from GAS Web App after {PAGE_RETRY_COUNT} attempts")
         return [], [], False
 
     users_list: list[dict] = []
