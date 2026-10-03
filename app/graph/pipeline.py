@@ -612,7 +612,12 @@ COURSE_SEARCH_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "search_courses",
-        "description": "Search active LMS courses in the database. ONLY call this when the user explicitly or contextually asks for a course, class, or training link to register/learn. DO NOT call for ordinary factual Q&A or policy explanations.",
+        "description": (
+            "Search active LMS courses in the database. "
+            "STRICT REQUIREMENT: Call this ONLY when the user EXPLICITLY asks for a course URL, registration link, or LMS class catalog "
+            "(e.g., 'minta link kelas', 'ada link pelatihannya?', 'link daftarnya mana?'). "
+            "NEVER call this for general learning intent, topic explanations, or conversational affirmations like 'mau dong', 'lanjut', or 'jelaskan'."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
