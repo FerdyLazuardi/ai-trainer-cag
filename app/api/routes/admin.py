@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.config.settings import get_settings
 from app.database.postgres import engine
+from app.utils.query_classifier import classify_query, infer_pulau_from_regional
 
 settings = get_settings()
 
@@ -85,6 +86,8 @@ def _extract_geo_from_json(data: dict | None) -> dict[str, str]:
             out["regional"] = vs
         elif kl in ("pulau", "island") and not out["pulau"]:
             out["pulau"] = vs
+    if not out["pulau"] and out["regional"]:
+        out["pulau"] = infer_pulau_from_regional(out["regional"])
     return out
 
 
@@ -298,7 +301,8 @@ async def get_dashboard_logs(
         db_point = str(row[25]).strip() if len(row) > 25 and row[25] else ""
         db_area = str(row[26]).strip() if len(row) > 26 and row[26] else ""
         db_reg = str(row[27]).strip() if len(row) > 27 and row[27] else ""
-        if not db_area or not db_reg or not db_username:
+        db_pulau = str(row[28]).strip() if len(row) > 28 and row[28] else ""
+        if not db_area or not db_reg or not db_username or not db_pulau:
             if db_username:
                 lookup_usernames.add(db_username)
             name_cand = (db_fullname or meta["full_name"]).lower().strip()
@@ -403,12 +407,15 @@ async def get_dashboard_logs(
         final_area = _clean_na(db_area or u_match.get("area") or b_match.get("area") or "")
         final_regional = _clean_na(db_regional or u_match.get("regional") or b_match.get("regional") or "")
         final_pulau = _clean_na(db_pulau or u_match.get("pulau") or b_match.get("pulau") or "")
+        if not final_pulau and final_regional:
+            final_pulau = infer_pulau_from_regional(final_regional)
 
         if (
             (final_point and not db_point)
             or (final_area and not db_area)
             or (final_regional and not db_regional)
             or (final_username and not db_username)
+            or (final_pulau and not db_pulau)
         ):
             backfill_updates.append({
                 "id": row_id,
@@ -421,12 +428,15 @@ async def get_dashboard_logs(
                 "pulau": final_pulau[:64] or None,
             })
 
+        raw_query = str(row[5]) if row[5] else ""
+        topic_info = classify_query(raw_query)
+
         logs.append({
             "created_at": str(row[0]),
             "intent": str(row[2]) if row[2] else "UNKNOWN",
             "latency_ms": float(row[3]) if row[3] is not None else 0.0,
             "cache_hit": bool(row[4]),
-            "query": str(row[5]),
+            "query": raw_query,
             "answer": str(row[6]) if row[6] else "",
             "session_id": str(row[7]) if row[7] else "Unknown",
             "tokens": (
@@ -453,6 +463,8 @@ async def get_dashboard_logs(
             "area": final_area,
             "regional": final_regional,
             "pulau": final_pulau,
+            "topic_category": topic_info["category"],
+            "subtopic": topic_info["subtopic"],
         })
 
     if backfill_updates:

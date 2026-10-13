@@ -13,6 +13,7 @@ from app.api.auth import User
 from app.config.settings import get_settings
 from app.database.models import BranchData, UserKPIData
 from app.database.postgres import AsyncSessionLocal
+from app.utils.query_classifier import infer_pulau_from_regional
 
 settings = get_settings()
 
@@ -134,6 +135,9 @@ async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
                     user_context["regional"] = val_str
                 elif not user_context.get("pulau") and k_lower in ("pulau", "island"):
                     user_context["pulau"] = val_str
+
+    if not user_context.get("pulau") and user_context.get("regional"):
+        user_context["pulau"] = infer_pulau_from_regional(user_context["regional"])
 
     pos_upper = str(user_context.get("position") or "").strip().upper()
     grade_upper = str(user_context.get("grade") or "").strip().upper()
