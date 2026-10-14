@@ -1116,7 +1116,12 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
 
                     token = delta.get("content")
                     if token and not tool_calls_accumulator:
-                        yield {"type": "token", "text": token}
+                        yield {
+                            "type": "token",
+                            "text": token,
+                            "generation_id": last_generation_id,
+                            "provider": last_model or last_provider,
+                        }
 
                 usage = data.get("usage") or {}
                 if usage:

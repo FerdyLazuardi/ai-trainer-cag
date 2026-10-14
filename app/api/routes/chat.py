@@ -1081,6 +1081,10 @@ async def chat_stream(
                                     continue
                                 if ev_type != "token":
                                     continue
+                                if ev.get("generation_id") and not stream_generation_id:
+                                    stream_generation_id = ev["generation_id"]
+                                if ev.get("provider") and not stream_provider:
+                                    stream_provider = ev["provider"]
                                 emit = deduper.feed(ev.get("text") or "")
                                 if not emit:
                                     continue
@@ -1094,7 +1098,10 @@ async def chat_stream(
                                 if token_count % 5 == 0 and await req.is_disconnected():
                                     logger.info("Client disconnected mid-stream", conversation_id=conversation_id, tokens=token_count)
                                     sem_release()
-                                    deduper.full_answer = ""
+                                    if not deduper.full_answer.strip():
+                                        deduper.full_answer = "[Klien terputus sebelum respons selesai]"
+                                    else:
+                                        deduper.full_answer += " [Koneksi terputus di tengah jalan]"
                                     await _emit_log()
                                     return
                             else:
@@ -1272,9 +1279,13 @@ async def chat_stream(
                 await asyncio.gather(*post_tasks)
             except Exception as bg_err:
                 logger.warning(f"Stream background task error: {bg_err}")
-        except Exception:
+        except Exception as e:
             sem_release()
             logger.exception("Raw OpenRouter stream error", query=request.query[:60])
+            if not deduper.full_answer.strip():
+                deduper.full_answer = f"[Gagal stream: {type(e).__name__}]"
+            else:
+                deduper.full_answer += f" [Stream terputus: {type(e).__name__}]"
             yield f"event: error\ndata: {json.dumps({'error': 'CAG pipeline failed'})}\n\n"
             await _emit_log()
         finally:
