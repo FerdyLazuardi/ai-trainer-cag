@@ -766,30 +766,21 @@ async def get_history_schedule(
 
     redis = get_redis_client()
     raw = await redis.get("cag:history:schedule")
-    if not raw:
-        return {
-            "enabled": False,
-            "schedule_type": "daily",
-            "hour": 2,
-            "minute": 0,
-            "day_of_week": 1,
-            "last_run_at": None,
-            "last_status": "IDLE",
-            "last_result": None,
-        }
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {
-            "enabled": False,
-            "schedule_type": "daily",
-            "hour": 2,
-            "minute": 0,
-            "day_of_week": 1,
-            "last_run_at": None,
-            "last_status": "CORRUPTED",
-            "last_result": None,
-        }
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {
+        "enabled": False,
+        "schedule_type": "daily",
+        "hour": 2,
+        "minute": 0,
+        "day_of_week": 1,
+        "last_run_at": None,
+        "last_status": "IDLE",
+        "last_result": None,
+    }
 
 
 @router.post("/history/schedule", summary="Update historical KPI auto-sync schedule config")
@@ -802,7 +793,12 @@ async def update_history_schedule(
 
     redis = get_redis_client()
     raw = await redis.get("cag:history:schedule")
-    existing = json.loads(raw) if raw else {}
+    existing = {}
+    if raw:
+        try:
+            existing = json.loads(raw)
+        except Exception:
+            existing = {}
 
     data = {
         "enabled": bool(payload.get("enabled", False)),
@@ -811,7 +807,7 @@ async def update_history_schedule(
         "minute": int(payload.get("minute", 0)),
         "day_of_week": int(payload.get("day_of_week", 1)),
         "last_run_at": payload.get("last_run_at") or existing.get("last_run_at"),
-        "last_status": payload.get("last_status") or existing.get("last_status"),
+        "last_status": payload.get("last_status") or existing.get("last_status") or "IDLE",
         "last_result": payload.get("last_result") or existing.get("last_result"),
     }
     await redis.set("cag:history:schedule", json.dumps(data))

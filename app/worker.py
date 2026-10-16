@@ -149,13 +149,20 @@ async def sync_history_task() -> dict[str, Any]:
             redis = get_redis_client()
             now_iso = datetime.now(JakartaTz).isoformat()
             raw = await redis.get("cag:history:schedule")
-            sched = json.loads(raw) if raw else {
-                "enabled": False,
-                "schedule_type": "daily",
-                "hour": 2,
-                "minute": 0,
-                "day_of_week": 1,
-            }
+            sched = {}
+            if raw:
+                try:
+                    sched = json.loads(raw)
+                except Exception:
+                    sched = {}
+            if not sched:
+                sched = {
+                    "enabled": False,
+                    "schedule_type": "daily",
+                    "hour": 2,
+                    "minute": 0,
+                    "day_of_week": 1,
+                }
             sched["last_run_at"] = now_iso
             sched["last_status"] = result.get("status", "unknown")
             sched["last_result"] = result
