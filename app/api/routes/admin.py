@@ -686,6 +686,77 @@ async def get_courses_summary(
         }
 
 
+@router.get("/courses", summary="Get course catalog list from PostgreSQL")
+@router.get("/courses/list", summary="Get course catalog list from PostgreSQL (alias)")
+async def get_courses_list(
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=200),
+    search: str | None = Query(None),
+    category: str | None = Query(None),
+    status: str | None = Query(None),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.postgres import AsyncSessionLocal
+    from sqlalchemy import text
+
+    offset = (page - 1) * limit
+    params: dict = {"limit": limit, "offset": offset}
+    where_clauses = []
+
+    if search:
+        params["search"] = f"%{search.strip()}%"
+        where_clauses.append("(fullname ILIKE :search OR CAST(id AS TEXT) ILIKE :search)")
+
+    if category and category != "ALL":
+        params["category"] = category.strip()
+        where_clauses.append("category = :category")
+
+    if status and status != "ALL":
+        params["status"] = status.strip()
+        where_clauses.append("status = :status")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    count_sql = f"SELECT count(*) FROM course_catalog {where_sql}"
+    data_sql = f"""
+        SELECT id, fullname, category, status, url, updated_at
+        FROM course_catalog
+        {where_sql}
+        ORDER BY id ASC
+        LIMIT :limit OFFSET :offset
+    """
+    cat_sql = "SELECT DISTINCT category FROM course_catalog WHERE category IS NOT NULL AND category != '' ORDER BY category ASC"
+
+    async with AsyncSessionLocal() as session:
+        count_res = await session.execute(text(count_sql), params)
+        total = count_res.scalar() or 0
+
+        rows_res = await session.execute(text(data_sql), params)
+        rows = rows_res.mappings().all()
+
+        cats_res = await session.execute(text(cat_sql))
+        categories = [str(r[0]) for r in cats_res.fetchall() if r[0]]
+
+    courses = [
+        {
+            "id": r["id"],
+            "fullname": r["fullname"],
+            "category": r["category"],
+            "status": r["status"],
+            "url": r["url"],
+            "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        }
+        for r in rows
+    ]
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "categories": categories,
+        "courses": courses,
+    }
+
+
 @router.get("/history/schedule", summary="Get historical KPI auto-sync schedule config")
 @router.get("/spreadsheet/history/schedule", summary="Get historical KPI auto-sync schedule config (alias)")
 async def get_history_schedule(
