@@ -686,6 +686,86 @@ async def get_courses_summary(
         }
 
 
+@router.get("/history/schedule", summary="Get historical KPI auto-sync schedule config")
+@router.get("/spreadsheet/history/schedule", summary="Get historical KPI auto-sync schedule config (alias)")
+async def get_history_schedule(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    raw = await redis.get("cag:history:schedule")
+    if not raw:
+        return {
+            "enabled": False,
+            "schedule_type": "daily",
+            "hour": 2,
+            "minute": 0,
+            "day_of_week": 1,
+            "last_run_at": None,
+            "last_status": "IDLE",
+            "last_result": None,
+        }
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {
+            "enabled": False,
+            "schedule_type": "daily",
+            "hour": 2,
+            "minute": 0,
+            "day_of_week": 1,
+            "last_run_at": None,
+            "last_status": "CORRUPTED",
+            "last_result": None,
+        }
+
+
+@router.post("/history/schedule", summary="Update historical KPI auto-sync schedule config")
+@router.post("/spreadsheet/history/schedule", summary="Update historical KPI auto-sync schedule config (alias)")
+async def update_history_schedule(
+    payload: Dict[str, Any],
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.redis_client import get_redis_client
+
+    redis = get_redis_client()
+    raw = await redis.get("cag:history:schedule")
+    existing = json.loads(raw) if raw else {}
+
+    data = {
+        "enabled": bool(payload.get("enabled", False)),
+        "schedule_type": str(payload.get("schedule_type", "daily")),
+        "hour": int(payload.get("hour", 2)),
+        "minute": int(payload.get("minute", 0)),
+        "day_of_week": int(payload.get("day_of_week", 1)),
+        "last_run_at": payload.get("last_run_at") or existing.get("last_run_at"),
+        "last_status": payload.get("last_status") or existing.get("last_status"),
+        "last_result": payload.get("last_result") or existing.get("last_result"),
+    }
+    await redis.set("cag:history:schedule", json.dumps(data))
+    return data
+
+
+@router.get("/history/summary", summary="Get historical KPI records summary from PostgreSQL")
+@router.get("/spreadsheet/history/summary", summary="Get historical KPI records summary from PostgreSQL (alias)")
+async def get_history_summary(
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.postgres import AsyncSessionLocal
+    from sqlalchemy import text
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            text("SELECT count(*) as total, count(DISTINCT username) as active FROM user_kpi_history")
+        )
+        row = res.mappings().first()
+        return {
+            "total": row["total"] if row else 0,
+            "active": row["active"] if row else 0,
+        }
+
+
+
 @router.get("/spreadsheet/users", summary="Get spreadsheet user KPI records from PostgreSQL")
 async def get_spreadsheet_users(
     page: int = Query(1, ge=1),
@@ -798,6 +878,90 @@ async def get_spreadsheet_branches(
         "branches_total": total,
         "branches": branches,
     }
+
+
+@router.get("/spreadsheet/history", summary="Get historical KPI records from PostgreSQL")
+async def get_spreadsheet_history(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None),
+    role: str | None = Query(None),
+    periode: str | None = Query(None),
+    timeframe: str | None = Query(None),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    offset = (page - 1) * limit
+    params: dict = {"limit": limit, "offset": offset}
+    where_clauses = []
+
+    if search:
+        params["search"] = f"%{search.strip()}%"
+        where_clauses.append("(username ILIKE :search OR full_name ILIKE :search OR point_norm ILIKE :search)")
+
+    if role and role != "ALL":
+        params["role"] = role.strip()
+        where_clauses.append("role = :role")
+
+    if periode:
+        params["periode"] = periode.strip()
+        where_clauses.append("periode = :periode")
+
+    if timeframe and timeframe != "ALL":
+        params["timeframe"] = timeframe.strip()
+        where_clauses.append("timeframe = :timeframe")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    count_sql = f"SELECT COUNT(*) FROM user_kpi_history {where_sql}"
+    data_sql = f"""
+        SELECT username, full_name, periode, timeframe, role, point_norm, data, created_at
+        FROM user_kpi_history
+        {where_sql}
+        ORDER BY periode DESC, username ASC
+        LIMIT :limit OFFSET :offset
+    """
+
+    async with engine.connect() as conn:
+        total_res = await conn.execute(text(count_sql), params)
+        total = total_res.scalar() or 0
+
+        rows_res = await conn.execute(text(data_sql), params)
+        rows = rows_res.mappings().all()
+
+        periods_res = await conn.execute(text("SELECT DISTINCT periode FROM user_kpi_history ORDER BY periode DESC"))
+        periods = [str(r[0]) for r in periods_res.fetchall() if r[0]]
+
+    history = []
+    for r in rows:
+        d = dict(r.get("data") or {})
+        d["username"] = r["username"]
+        d["full_name"] = r["full_name"]
+        d["periode"] = r["periode"]
+        d["timeframe"] = r["timeframe"]
+        d["role"] = r["role"]
+        d["created_at"] = r["created_at"].isoformat() if r["created_at"] else None
+        history.append(d)
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "periods": periods,
+        "records": history,
+    }
+
+
+@router.post("/spreadsheet/sync-history", summary="Trigger spreadsheet KPI history sync")
+async def trigger_spreadsheet_history_sync(
+    scope: str = Query("score_trend"),
+    _=Depends(verify_api_key),
+) -> Dict[str, Any]:
+    from app.database.postgres import AsyncSessionLocal
+    from app.knowledge.sync_spreadsheet import sync_kpi_history_from_spreadsheet
+
+    async with AsyncSessionLocal() as session:
+        result = await sync_kpi_history_from_spreadsheet(session, scope=scope)
+    return result
 
 
 @router.delete("/spreadsheet/clean", summary="Truncate all spreadsheet KPI and branch records from PostgreSQL")

@@ -199,6 +199,19 @@ async def init_db() -> None:
         except Exception:
             pass
 
+        # User KPI History composite indexes
+        try:
+            await conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_user_kpi_history_user_periode "
+                     "ON user_kpi_history (username, periode DESC);")
+            )
+            await conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_user_kpi_history_periode_role "
+                     "ON user_kpi_history (periode, role);")
+            )
+        except Exception:
+            pass
+
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

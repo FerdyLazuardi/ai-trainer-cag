@@ -132,6 +132,40 @@ async def sync_courses_task() -> dict[str, Any]:
         return result
 
 
+@worker.task(max_tries=1, timeout=900)
+async def sync_history_task() -> dict[str, Any]:
+    """Sync historical KPI / score trend from GAS Web App."""
+    from app.knowledge.sync_spreadsheet import sync_kpi_history_from_spreadsheet
+    import json
+    from datetime import datetime
+
+    async with AsyncSessionLocal() as session:
+        result = await sync_kpi_history_from_spreadsheet(session, scope="score_trend")
+        logger.info(f"Historical KPI sync completed: {result}")
+
+        # Update Redis schedule state with last run details
+        try:
+            from app.database.redis_client import get_redis_client
+            redis = get_redis_client()
+            now_iso = datetime.now(JakartaTz).isoformat()
+            raw = await redis.get("cag:history:schedule")
+            sched = json.loads(raw) if raw else {
+                "enabled": False,
+                "schedule_type": "daily",
+                "hour": 2,
+                "minute": 0,
+                "day_of_week": 1,
+            }
+            sched["last_run_at"] = now_iso
+            sched["last_status"] = result.get("status", "unknown")
+            sched["last_result"] = result
+            await redis.set("cag:history:schedule", json.dumps(sched))
+        except Exception as exc:
+            logger.warning(f"Failed to record history sync status to Redis: {exc}")
+
+        return result
+
+
 @worker.task
 async def dummy_task(name: str) -> str:
     logger.info(f"Running dummy task for {name}")
@@ -354,6 +388,47 @@ async def _run_scheduled_course_sync():
         await sync_courses_task()
     except Exception as exc:
         logger.error(f"Error in scheduled course catalog sync check: {exc}")
+
+
+@worker.cron("0 * * * *", timeout=900)
+async def _run_scheduled_history_sync():
+    """Check hourly if historical KPI auto-sync is scheduled and due in WIB."""
+    try:
+        from app.database.redis_client import get_redis_client
+        import json
+        from datetime import datetime
+
+        redis = get_redis_client()
+        schedule_raw = await redis.get("cag:history:schedule")
+        if not schedule_raw:
+            return
+
+        sched = json.loads(schedule_raw)
+        if not sched.get("enabled"):
+            return
+
+        now = datetime.now(JakartaTz)
+        target_hour = int(sched.get("hour", 2))
+        if now.hour != target_hour:
+            return
+
+        sched_type = sched.get("schedule_type", "daily")
+        if sched_type == "weekly":
+            target_dow = int(sched.get("day_of_week", 1))  # 0=Monday, 6=Sunday
+            if now.weekday() != target_dow:
+                return
+
+        # Anti-double-run: check if already run within the last 6 hours
+        last_run = sched.get("last_run_at")
+        if last_run:
+            last_dt = datetime.fromisoformat(last_run)
+            if (now - last_dt).total_seconds() < 21600:
+                return
+
+        logger.info(f"Triggering scheduled historical KPI sync at hour {now.hour} WIB")
+        await sync_history_task()
+    except Exception as exc:
+        logger.error(f"Error in scheduled historical KPI sync check: {exc}")
 
 
 

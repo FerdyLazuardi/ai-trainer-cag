@@ -659,6 +659,112 @@ async def _execute_course_search_tool(query: str) -> str:
         return json.dumps({"error": str(exc), "courses": []})
 
 
+KPI_HISTORY_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "get_kpi_history",
+        "description": (
+            "Ambil riwayat performa/KPI dan tren pencapaian bulanan/mingguan karyawan yang sedang login dari database. "
+            "STRICT REQUIREMENT: Panggil tool ini HANYA JIKA pengguna secara spesifik menanyakan riwayat, tren performa masa lalu, "
+            "evaluasi bulan lalu, perbandingan skor antar periode, atau perkembangan performa (e.g. 'gimana performa saya bulan lalu?', "
+            "'tren skor kpi saya gimana?', 'skor kpi saya dari januari sampai sekarang', 'bandingkan capaian saya'). "
+            "JANGAN panggil jika pengguna hanya menanyakan materi kursus, definisi konsep, atau percakapan umum."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "description": "Periode bulan atau tahun spesifik (e.g. '2026-08', 'bulan lalu', 'JAN', '2026'), atau kosongkan untuk mengambil riwayat terbaru.",
+                },
+                "timeframe": {
+                    "type": "string",
+                    "enum": ["monthly", "weekly", "trend", "all"],
+                    "description": "Granularitas: 'trend' untuk tren tahunan (Jan-Des), 'monthly' untuk rincian per bulan, 'weekly' untuk mingguan, atau 'all'.",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+async def _execute_kpi_history_tool(
+    username: str | None,
+    period: str | None = None,
+    timeframe: str | None = None,
+) -> str:
+    """Execute get_kpi_history on PostgreSQL for the logged in user."""
+    from app.database.postgres import AsyncSessionLocal
+    from app.database.models import UserKPIHistory
+    from sqlalchemy import select, desc
+
+    user_nik = (username or "").strip()
+    if not user_nik:
+        return json.dumps({
+            "result": "unauthenticated",
+            "message": "NIK pengguna tidak terdeteksi dalam sesi chat.",
+        })
+
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(UserKPIHistory).where(UserKPIHistory.username == user_nik)
+
+            tf_clean = str(timeframe or "").strip().lower()
+            if tf_clean and tf_clean not in ("all", "semua"):
+                if tf_clean in ("monthly", "trend"):
+                    stmt = stmt.where(UserKPIHistory.timeframe.in_(["trend", "monthly"]))
+                else:
+                    stmt = stmt.where(UserKPIHistory.timeframe == tf_clean)
+
+            p_clean = str(period or "").strip()
+            import re
+            year_match = re.search(r"\b(20\d{2})\b", p_clean)
+            if year_match:
+                stmt = stmt.where(UserKPIHistory.periode.ilike(f"%{year_match.group(1)}%"))
+
+            stmt = stmt.order_by(desc(UserKPIHistory.periode), desc(UserKPIHistory.created_at)).limit(12)
+
+            res = await session.execute(stmt)
+            rows = res.scalars().all()
+
+            # Resilient fallback: if filter yielded nothing, grab user's available history records
+            if not rows and (tf_clean or p_clean):
+                fallback_stmt = (
+                    select(UserKPIHistory)
+                    .where(UserKPIHistory.username == user_nik)
+                    .order_by(desc(UserKPIHistory.periode), desc(UserKPIHistory.created_at))
+                    .limit(12)
+                )
+                res_fb = await session.execute(fallback_stmt)
+                rows = res_fb.scalars().all()
+
+            if not rows:
+                return json.dumps({
+                    "result": "not_found",
+                    "message": f"Tidak ditemukan riwayat KPI/skor performa untuk NIK {user_nik} di database.",
+                })
+
+            records = []
+            for r in rows:
+                records.append({
+                    "periode": r.periode,
+                    "timeframe": r.timeframe,
+                    "full_name": r.full_name,
+                    "role": r.role,
+                    "data": r.data,
+                })
+            return json.dumps({
+                "result": "success",
+                "username": user_nik,
+                "total_records": len(records),
+                "history": records,
+            }, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning(f"Failed to execute get_kpi_history tool: {exc}")
+        return json.dumps({"error": str(exc), "history": []})
+
+
 @lru_cache(maxsize=64)
 def _openrouter_prompt_session_id(*parts: str) -> str:
     stable_prefix = "\n".join(part for part in parts if part)
@@ -1032,7 +1138,7 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
     if session_id:
         extra_body = {**extra_body, "session_id": session_id}
 
-    tools = [COURSE_SEARCH_TOOL]
+    tools = [COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL]
 
     headers = {
         "Authorization": f"Bearer {_settings.openrouter_api_key}",
@@ -1161,6 +1267,27 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
                         "content": tool_content,
                     })
                     executed_any_tool = True
+                elif fn_name == "get_kpi_history":
+                    try:
+                        args = json.loads(fn_args_raw) if fn_args_raw else {}
+                    except Exception:
+                        args = {}
+                    user_nik = (
+                        (state.get("user_context") or {}).get("username")
+                        or (state.get("user_profile") or {}).get("username")
+                        or state.get("user_id")
+                        or ""
+                    )
+                    period = args.get("period")
+                    tf = args.get("timeframe")
+                    logger.info(f"LLM Tool Call: get_kpi_history(username={user_nik!r}, period={period!r}, timeframe={tf!r})")
+                    tool_content = await _execute_kpi_history_tool(username=user_nik, period=period, timeframe=tf)
+                    curr_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": tool_content,
+                    })
+                    executed_any_tool = True
 
             if executed_any_tool:
                 continue
@@ -1185,7 +1312,7 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
     msgs, openrouter_session_id = await _build_generate_messages(state)
     llm_base = get_generate_llm_nostream()
     llm = _with_openrouter_session(
-        llm_base.bind(tools=[COURSE_SEARCH_TOOL]),
+        llm_base.bind(tools=[COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL]),
         openrouter_session_id,
     )
 
@@ -1205,6 +1332,20 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
                 q = tc.get("args", {}).get("query", "")
                 logger.info(f"Non-stream LLM Tool Call: search_courses(query={q!r})")
                 tool_content = await _execute_course_search_tool(q)
+                from langchain_core.messages import ToolMessage
+                tool_messages.append(ToolMessage(content=tool_content, tool_call_id=tc.get("id", "")))
+            elif tc.get("name") == "get_kpi_history":
+                tc_args = tc.get("args", {})
+                user_nik = (
+                    (state.get("user_context") or {}).get("username")
+                    or (state.get("user_profile") or {}).get("username")
+                    or state.get("user_id")
+                    or ""
+                )
+                period = tc_args.get("period")
+                tf = tc_args.get("timeframe")
+                logger.info(f"Non-stream LLM Tool Call: get_kpi_history(username={user_nik!r}, period={period!r}, timeframe={tf!r})")
+                tool_content = await _execute_kpi_history_tool(username=user_nik, period=period, timeframe=tf)
                 from langchain_core.messages import ToolMessage
                 tool_messages.append(ToolMessage(content=tool_content, tool_call_id=tc.get("id", "")))
         response = await llm.ainvoke(list(msgs) + tool_messages, config=config)

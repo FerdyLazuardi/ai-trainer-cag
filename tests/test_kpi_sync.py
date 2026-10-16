@@ -172,3 +172,103 @@ async def test_sync_kpi_from_spreadsheet_retry_success(monkeypatch):
     assert result["users_updated"] == 1
     assert call_count["users"] == 2
 
+
+@pytest.mark.asyncio
+async def test_sync_kpi_history_from_spreadsheet(monkeypatch):
+    from app.knowledge.sync_spreadsheet import sync_kpi_history_from_spreadsheet
+
+    class FakeSettings:
+        spreadsheet_sync_url = "https://example.com/gas"
+        spreadsheet_sync_token = "test_token"
+
+    monkeypatch.setattr("app.knowledge.sync_spreadsheet.get_settings", lambda: FakeSettings())
+
+    SCORE_TREND_ROW = {
+        "NIK": "13005",
+        "FULLNAME": "Nur Nanengsih",
+        "ROLE": "AM",
+        "JOIN_DATE": "18-Mar-2013",
+        "TENURE_MONTHS": 161,
+        "CATEGORY_TENURE": "e. > 3 Ye",
+        "STATUS": "Active",
+        "JAN": "49.10%",
+        "FEB": "51.50%",
+        "MAR": "47.90%",
+        "APR": "30.41%",
+        "MAY": "23.18%",
+        "JUN": "22.58%",
+        "JUL": "-",
+        "AUG": "-",
+        "SEP": "-",
+        "OCT": "57.70%",
+        "NOV": "-",
+        "DEC": "-",
+        "AVG_SCORE": "40.34%",
+        "GROUPING_SCORE": "1. <80%",
+        "KPI_Q1": "49.50%",
+        "KPI_Q2": "25.39%",
+        "KPI_Q3": "-",
+        "KPI_Q4": "57.70%",
+        "COMPETENCY": "Out of range",
+        "CERTIFICATION_RESULT": "Tidak Lulus",
+    }
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def get(self, url, params, follow_redirects, timeout=90.0):
+            assert params.get("scope") == "score_trend"
+            return FakeResponse([SCORE_TREND_ROW])
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeClient)
+
+    session = FakeSession()
+    result = await sync_kpi_history_from_spreadsheet(session, scope="score_trend")
+
+    assert result["status"] == "success"
+    assert result["history_updated"] == 1
+    assert session.committed is True
+
+    # Validate that ignored fields (join_date, tenure, status) are stripped
+    # and wanted fields (quarterly, competency, certification_result) are kept
+    executed_stmt = session.executed[0]
+    inserted_values = executed_stmt.compile().params
+    # Check data dictionary passed in statement
+    data_dict = [v for k, v in inserted_values.items() if isinstance(v, dict)][0]
+    assert "join_date" not in data_dict
+    assert "tenure_months" not in data_dict
+    assert "status" not in data_dict
+    assert data_dict["competency"] == "Out of range"
+    assert data_dict["certification_result"] == "Tidak Lulus"
+    assert data_dict["quarterly"]["Q1"] == "49.50%"
+    assert data_dict["scores"]["JAN"] == "49.10%"
+    assert data_dict["scores"]["OCT"] == "57.70%"
+
+
+
+@pytest.mark.asyncio
+async def test_execute_kpi_history_tool_unauthenticated():
+    from app.graph.pipeline import _execute_kpi_history_tool
+    import json
+
+    res_raw = await _execute_kpi_history_tool(username="")
+    res = json.loads(res_raw)
+    assert res["result"] == "unauthenticated"
+
+
+

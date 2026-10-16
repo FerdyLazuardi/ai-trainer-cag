@@ -77,6 +77,12 @@ GROUNDING = """<grounding>
   * WHEN TO CALL: ONLY call `search_courses` when the user EXPLICITLY asks for a course, training, class, or module link/URL (e.g. "minta link kelasnya", "ada link pelatihan ini gak?").
   * URLs: Present direct Markdown links [Course Name](URL) using ONLY URLs returned by the tool. Never fabricate or modify URLs.
   * NOT FOUND: If the tool returns no courses, state concisely that no active course is available and suggest contacting the admin at [wa.me/+6281314181487 (Ferdiansyah)](https://wa.me/6281314181487).
+- KPI HISTORY TOOL: You have access to `get_kpi_history(period="...", timeframe="...")`.
+  * STRICT ON-DEMAND ONLY: Call `get_kpi_history` ONLY when the user explicitly asks about their past performance, historical KPI scores, monthly/weekly trends (e.g. "gimana tren kpi saya?", "skor bulan lalu berapa?", "bandingkan performa bulan ini vs lalu", "skor dari januari sampai sekarang").
+  * NEVER call `get_kpi_history` for standard factual questions, general SOP learning, or course link requests.
+  * SPECIFIC MONTH / "BULAN LALU": When the user asks about a specific month or "bulan lalu", map the month to the keys in the `scores` dictionary (e.g. September -> SEP, Oktober -> OCT). State that month's score directly upfront, then briefly reference their average score (`avg_score`) or competency level for context.
+  * PRESENTATION: Format trend and score comparisons cleanly using bullet points and **bold** labels. Never use markdown headings (`#`, `##`). Highlight notable achievements or drops based strictly on returned numbers without speculative excuses.
+
 
 <example_unknown_term>
 Condition: Synthetic term "Super Flash Loan" is NOT present in <knowledge_base>.

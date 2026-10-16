@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 from loguru import logger
 
 from app.config.settings import get_settings
-from app.database.models import UserKPIData, BranchData
+from app.database.models import UserKPIData, BranchData, UserKPIHistory
 
 PAGE_LIMIT = 1000
 STAGING_BATCH = 1000
@@ -82,6 +82,103 @@ def _extract_branch_fields(row: dict, point: str, point_key: str | None) -> dict
     }
 
 
+_MONTH_KEYS_MAP = {
+    "jan": "JAN", "feb": "FEB", "mar": "MAR", "apr": "APR", "may": "MAY", "mei": "MAY",
+    "jun": "JUN", "jul": "JUL", "aug": "AUG", "agu": "AUG", "sep": "SEP", "oct": "OCT",
+    "okt": "OCT", "nov": "NOV", "dec": "DEC", "des": "DEC",
+}
+
+
+_IGNORED_HISTORY_KEYS = {
+    "join_date", "tenure_months", "category_tenure", "status",
+    "tanggal_bergabung", "masa_kerja", "kategori_masa_kerja", "status_karyawan",
+}
+
+_QUARTER_KEYS_MAP = {
+    "kpi_q1": "Q1", "kpi_q2": "Q2", "kpi_q3": "Q3", "kpi_q4": "Q4",
+    "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4",
+}
+
+
+def _extract_history_fields(row: dict, username: str, username_key: str | None) -> dict:
+    """Extract historical KPI fields, supporting both wide score trend and single-period rows."""
+    lowered = {str(k).lower().strip(): v for k, v in row.items()}
+    has_month = any(m in lowered for m in ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))
+
+    full_name = row.get("full_name") or row.get("fullname") or row.get("nama")
+    role = _get_ci(row, "role", "jabatan", "position")
+    point_raw = _get_ci(row, "point", "cabang")
+
+    if has_month:
+        # 1. Monthly Scores
+        scores = {}
+        for m_key, m_label in _MONTH_KEYS_MAP.items():
+            if m_key in lowered and lowered[m_key] not in (None, "", "-"):
+                scores[m_label] = lowered[m_key]
+
+        # 2. Quarterly Scores (pre-computed in sheet)
+        quarterly = {}
+        for q_key, q_label in _QUARTER_KEYS_MAP.items():
+            if q_key in lowered and lowered[q_key] not in (None, "", "-"):
+                quarterly[q_label] = lowered[q_key]
+
+        avg_score = _get_ci(row, "avg_score", "avg", "average", "skor_rata_rata")
+        grouping_score = _get_ci(row, "grouping_score", "grouping", "kategori_skor")
+        competency = _get_ci(row, "competency", "kompetensi")
+        certification_result = _get_ci(row, "certification_result", "hasil_sertifikasi", "sertifikasi")
+        periode = str(_get_ci(row, "periode", "year", "tahun") or "2026").strip()[:32]
+        timeframe = "trend"
+
+        exclude_keys = {
+            "fullname", "full_name", "nama", "role", "jabatan", "position",
+            "point", "cabang", "avg_score", "avg", "average", "periode", "year", "tahun",
+            "grouping_score", "grouping", "competency", "kompetensi",
+            "certification_result", "hasil_sertifikasi", "sertifikasi",
+        }
+        if username_key:
+            exclude_keys.add(username_key.lower().strip())
+        exclude_keys.update(_MONTH_KEYS_MAP.keys())
+        exclude_keys.update(_QUARTER_KEYS_MAP.keys())
+        exclude_keys.update(_IGNORED_HISTORY_KEYS)
+
+        extra_meta = {
+            k: v for k, v in row.items()
+            if str(k).lower().strip() not in exclude_keys and v not in (None, "", "-")
+        }
+
+        data_payload = {
+            "scores": scores,
+            "avg_score": avg_score,
+        }
+        if quarterly:
+            data_payload["quarterly"] = quarterly
+        if grouping_score:
+            data_payload["grouping_score"] = grouping_score
+        if competency:
+            data_payload["competency"] = competency
+        if certification_result:
+            data_payload["certification_result"] = certification_result
+        data_payload.update(extra_meta)
+    else:
+        periode = str(_get_ci(row, "periode", "periode_kpi") or "unknown").strip()[:32]
+        timeframe = str(_get_ci(row, "timeframe", "type") or "monthly").strip()[:16]
+        exclude = {"full_name", "fullname", "nama"}
+        if username_key:
+            exclude.add(username_key)
+        exclude.update(_IGNORED_HISTORY_KEYS)
+        data_payload = {k: v for k, v in row.items() if str(k).lower().strip() not in exclude and v not in (None, "", "-")}
+
+    return {
+        "username": username,
+        "full_name": full_name,
+        "periode": periode,
+        "timeframe": timeframe,
+        "role": str(role).strip()[:64] if role not in (None, "") else None,
+        "point_norm": _norm_point(point_raw),
+        "data": data_payload,
+    }
+
+
 async def _fetch_scope_pages(
     client: httpx.AsyncClient, url: str, token: str, scope: str
 ) -> tuple[list[dict], bool]:
@@ -118,8 +215,14 @@ async def _fetch_scope_pages(
 
         if isinstance(payload, dict):
             # New GAS shape: {"users": [...], "page": N, ...} or per-scope key,
-            # or a bare list under "data"/"rows".
-            batch = payload.get(scope, payload.get("data", payload.get("rows", [])))
+            # or a bare list under "data"/"rows"/"history".
+            batch = (
+                payload.get(scope)
+                or payload.get("history")
+                or payload.get("data")
+                or payload.get("rows")
+                or []
+            )
             if batch is None:
                 batch = []
         elif isinstance(payload, list):
@@ -400,3 +503,107 @@ async def sync_kpi_from_spreadsheet(session: AsyncSession) -> dict:
         "users_deleted": users_deleted,
         "branches_deleted": branches_deleted,
     }
+
+
+async def _upsert_history_staged(session: AsyncSession, history_list: list[dict]) -> tuple[int, set[tuple[str, str, str]]]:
+    history_updated = 0
+    incoming: set[tuple[str, str, str]] = set()
+    batch_count = 0
+    for row in history_list:
+        try:
+            if not isinstance(row, dict):
+                continue
+            username = ""
+            username_key = None
+            for k, v in row.items():
+                if k.lower().strip() in ("user_id", "username", "nik", "user_name", "id_karyawan", "nik_karyawan", "column_b", "col_1"):
+                    if v not in (None, ""):
+                        username = str(v).strip()
+                        username_key = k
+                        break
+            if not username:
+                continue
+            fields = _extract_history_fields(row, username, username_key)
+            stmt = insert(UserKPIHistory).values(**fields)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["username", "periode", "timeframe"],
+                set_={
+                    "full_name": stmt.excluded.full_name,
+                    "role": stmt.excluded.role,
+                    "point_norm": stmt.excluded.point_norm,
+                    "data": stmt.excluded.data,
+                },
+            )
+            await session.execute(stmt)
+            incoming.add((username, fields["periode"], fields["timeframe"]))
+            history_updated += 1
+            batch_count += 1
+            if batch_count >= STAGING_BATCH:
+                await session.flush()
+                batch_count = 0
+        except Exception as e:
+            logger.warning(f"Error parsing history row: {e}")
+    if batch_count:
+        await session.flush()
+    return history_updated, incoming
+
+
+async def sync_kpi_history_from_spreadsheet(session: AsyncSession, scope: str = "score_trend") -> dict:
+    """
+    Sync historical KPI / score trend from spreadsheet into user_kpi_history.
+    Scoped upsert by (username, periode, timeframe) — NEVER deletes historical records.
+    """
+    settings = get_settings()
+    url = settings.spreadsheet_sync_url
+    token = settings.spreadsheet_sync_token
+
+    if not url:
+        logger.warning("SPREADSHEET_SYNC_URL is not configured. Skipping history sync.")
+        return {"status": "skipped", "message": "URL not configured"}
+
+    logger.info(f"Starting historical spreadsheet sync scope={scope} from GAS Web App: {url}")
+
+    history_rows: list[dict] = []
+    try:
+        async with httpx.AsyncClient() as client:
+            rows, ok = await _fetch_scope_pages(client, url, token, scope)
+            if ok and rows:
+                history_rows = rows
+            else:
+                resp = await client.get(
+                    url,
+                    params={"token": token, "scope": scope},
+                    follow_redirects=True,
+                    timeout=180.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        history_rows = data
+                    elif isinstance(data, dict):
+                        history_rows = (
+                            data.get(scope)
+                            or data.get("history")
+                            or data.get("data")
+                            or data.get("rows")
+                            or []
+                        )
+    except Exception as exc:
+        err_msg = f"{type(exc).__name__}: {exc}".strip(": ")
+        logger.error(f"Spreadsheet history fetch aborted: {err_msg}")
+        return {"status": "failed", "message": err_msg}
+
+    if not history_rows:
+        logger.warning(f"Spreadsheet history payload empty for scope={scope}")
+        return {"status": "failed", "message": "empty payload"}
+
+    history_updated, _ = await _upsert_history_staged(session, history_rows)
+    await session.commit()
+    logger.info(f"Spreadsheet history sync complete for scope={scope}. Updated: {history_updated}")
+
+    return {
+        "status": "success",
+        "scope": scope,
+        "history_updated": history_updated,
+    }
+

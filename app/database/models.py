@@ -11,13 +11,15 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.postgres import Base
@@ -257,6 +259,32 @@ class CourseCatalog(Base):
 
     def __repr__(self) -> str:
         return f"<CourseCatalog id={self.id} fullname={self.fullname!r}>"
+
+
+class UserKPIHistory(Base):
+    """Stores historical KPI scores and performance trends (monthly/weekly)."""
+
+    __tablename__ = "user_kpi_history"
+    __table_args__ = (
+        UniqueConstraint("username", "periode", "timeframe", name="uq_user_kpi_history"),
+        Index("ix_user_kpi_history_user_period", "username", "periode"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    periode: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # e.g., "2026-08", "2026-W34", "YEAR_2026"
+    timeframe: Mapped[str] = mapped_column(String(16), nullable=False, default="monthly", index=True)  # "monthly", "weekly", "trend"
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    point_norm: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    data: Mapped[dict] = mapped_column(JSONB().with_variant(JSON, "sqlite"), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserKPIHistory username={self.username} periode={self.periode} timeframe={self.timeframe}>"
+
 
 
 

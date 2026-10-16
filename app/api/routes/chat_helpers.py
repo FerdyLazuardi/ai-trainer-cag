@@ -96,6 +96,7 @@ async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
 
     user_context: dict[str, Any] = {
         "name": current_user.fullname or current_user.username,
+        "username": str(current_user.username or "").strip(),
         "dept": current_user.dept,
         "location": current_user.location,
         "position": current_user.position,
