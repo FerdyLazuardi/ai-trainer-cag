@@ -199,7 +199,7 @@ SCENARIO: list[dict[str, Any]] = [
 # occasionally echoes them literally — pipeline's StreamLeakGuard catches
 # this in prod, smoke test bypasses pipeline so we mimic the strip).
 _STRUCTURAL_TAG_RE = re.compile(
-    r"</?(?:retrieved_context|hard_rules|anti_deflection|mode|role|"
+    r"</?(?:temporal_context|retrieved_context|hard_rules|anti_deflection|mode|role|"
     r"output_contract|rules|how_to_ask|during_the_loop|wrap_up|"
     r"scope|grounding|length|when_to_ask_vs_answer|user_history|"
     r"previous_context|user_preferences|user_context|response_shape|"

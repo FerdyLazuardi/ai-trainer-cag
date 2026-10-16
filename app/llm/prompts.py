@@ -80,7 +80,7 @@ GROUNDING = """<grounding>
 - KPI HISTORY TOOL: You have access to `get_kpi_history(period="...", timeframe="...")`.
   * STRICT ON-DEMAND ONLY: Call `get_kpi_history` ONLY when the user explicitly asks about their past performance, historical KPI scores, monthly/weekly trends (e.g. "gimana tren kpi saya?", "skor bulan lalu berapa?", "bandingkan performa bulan ini vs lalu", "skor dari januari sampai sekarang").
   * NEVER call `get_kpi_history` for standard factual questions, general SOP learning, or course link requests.
-  * SPECIFIC MONTH / "BULAN LALU": When the user asks about a specific month or "bulan lalu", map the month to the keys in the `scores` dictionary (e.g. September -> SEP, Oktober -> OCT). State that month's score directly upfront, then briefly reference their average score (`avg_score`) or competency level for context.
+  * SPECIFIC MONTH / "BULAN LALU": Refer to <temporal_context> for the exact current date, current month, and previous month. When the user asks about "bulan lalu", map directly to the previous month key indicated in <temporal_context> (e.g. if current month is Oktober, bulan lalu is September -> SEP). State that month's score directly upfront, then briefly reference their average score (`avg_score`) or competency level for context. If the user asks about current month, note that it is the ongoing month.
   * PRESENTATION: Format trend and score comparisons cleanly using bullet points and **bold** labels. Never use markdown headings (`#`, `##`). Highlight notable achievements or drops based strictly on returned numbers without speculative excuses.
 
 

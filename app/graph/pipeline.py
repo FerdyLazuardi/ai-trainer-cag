@@ -1032,6 +1032,54 @@ def _format_user_context_block(uctx: dict) -> str:
     )
 
 
+def _format_temporal_context_block() -> str:
+    """Format real-time temporal context (Asia/Jakarta / WIB) for LLM time grounding."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Jakarta")
+    except Exception:
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=7))
+
+    from datetime import datetime
+    now = datetime.now(tz)
+
+    id_months = [
+        "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ]
+    month_keys = ["", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+    curr_year = now.year
+    curr_m_idx = now.month
+    curr_month_name = id_months[curr_m_idx]
+    curr_month_key = month_keys[curr_m_idx]
+
+    if curr_m_idx == 1:
+        prev_m_idx = 12
+        prev_year = curr_year - 1
+    else:
+        prev_m_idx = curr_m_idx - 1
+        prev_year = curr_year
+
+    prev_month_name = id_months[prev_m_idx]
+    prev_month_key = month_keys[prev_m_idx]
+
+    days_id = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+    day_name = days_id[now.weekday()]
+    time_str = now.strftime("%H:%M")
+
+    return (
+        "\n\n<temporal_context>\n"
+        f"- Waktu saat ini: {day_name}, {now.day} {curr_month_name} {curr_year} ({time_str} WIB)\n"
+        f"- Bulan berjalan saat ini: {curr_month_name} {curr_year} (Key: {curr_month_key})\n"
+        f"- Bulan lalu: {prev_month_name} {prev_year} (Key: {prev_month_key})\n"
+        f"- Aturan: Jika user menanyakan 'bulan lalu' atau performa bulan lalu, maksudnya adalah bulan {prev_month_name} {prev_year} ({prev_month_key}). "
+        f"Skor pada bulan {curr_month_name} {curr_year} ({curr_month_key}) adalah skor bulan berjalan yang sedang aktif/berlangsung.\n"
+        "</temporal_context>"
+    )
+
+
 async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
     """Build the exact prompt messages and OpenRouter session_id for generation."""
     summary = state.get("conversation_summary") or ""
@@ -1106,8 +1154,9 @@ async def _build_generate_messages(state: CAGState) -> tuple[list, str]:
 
     summary_section = f"\n\n<previous_context>\n{summary}\n</previous_context>" if summary else ""
     user_ctx_section = _format_user_context_block(user_context)
+    temporal_section = _format_temporal_context_block()
 
-    dynamic_tail = f"{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
+    dynamic_tail = f"{temporal_section}{user_ctx_section}{ltm_section}{summary_section}{topics_section}{section_section}{context_section}".strip()
 
     windowed_messages = _window_generate_history(
         list(state["messages"]),
