@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import secrets
+import time
 from datetime import datetime
 from typing import Any, Dict
 
@@ -196,31 +197,12 @@ async def get_dashboard_logs(
     # Fetch limit+1 to detect has_more without a separate COUNT(*).
     recent_limit = limit + 1
 
-    kpi_q, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
-        _run_one(f"""
-            SELECT COUNT(*),
-                   AVG(latency_ms),
-                   SUM(or_prompt_tokens),
-                   SUM(or_cached_tokens),
-                   SUM(or_completion_tokens),
-                   SUM(or_cost)
-            FROM agent_logs
-            WHERE {chat_where}
-        """),
-        _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {chat_where} GROUP BY intent"),
-        _run_one(f"""
-            SELECT DATE(created_at) AS date, COUNT(*) AS queries
-            FROM agent_logs
-            WHERE {chat_where}
-              AND created_at > NOW() - INTERVAL '30 days'
-            GROUP BY DATE(created_at)
-            ORDER BY date ASC
-        """),
-        _run_one(f"""
+    if decoded:
+        logs_q = await _run_one(f"""
             SELECT created_at, id, intent, latency_ms, cache_hit, query, answer,
                    conversation_id, llm_tokens_used, chunks_retrieved,
                    faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
-                   retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
+                   NULL::jsonb as retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
                    rewritten_query, or_cost, or_generation_id,
                    username, full_name, position, point, area, regional, pulau
             FROM agent_logs
@@ -228,33 +210,76 @@ async def get_dashboard_logs(
               {cursor_clause}
             ORDER BY created_at DESC, id DESC
             LIMIT :limit
-        """, {"limit": recent_limit, **cursor_params}),
-        _run_one("""
-            SELECT user_id, learning_summary, updated_at
-            FROM user_ltm_memories
-            ORDER BY updated_at DESC
-        """),
-        # Rolling-7d perf + quality. Window matters: an all-time AVG/percentile
-        # is dragged for weeks by a single bad day (e.g. a cold-start/retry-storm
-        # day with p95=90s), hiding that recent traffic is ~4s p95. 7d tracks
-        # "how is it NOW". Latency excludes cache_lookup (no LLM); faithfulness
-        # is the sampled judge score (NULL for un-evaluated turns).
-        _run_one(f"""
-            SELECT
-              percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)
-                FILTER (WHERE latency_ms IS NOT NULL) AS p95,
-              percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)
-                FILTER (WHERE latency_ms IS NOT NULL) AS p99,
-              AVG(faithfulness_score) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_avg,
-              COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_n,
-              COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL
-                AND faithfulness_score < :faith_min) AS faith_fail
-            FROM agent_logs
-            WHERE {chat_where} AND created_at > NOW() - INTERVAL '7 days'
-        """, {"faith_min": settings.faithfulness_min}),
-    )
+        """, {"limit": recent_limit, **cursor_params})
+        kpi_row = None
+        perf = None
+        intents_rows = []
+        trends_rows = []
+        users_rows = []
+    else:
+        kpi_q, intents_q, trends_q, logs_q, users_q, perf_q = await asyncio.gather(
+            _run_one(f"""
+                SELECT COUNT(*),
+                       AVG(latency_ms),
+                       SUM(or_prompt_tokens),
+                       SUM(or_cached_tokens),
+                       SUM(or_completion_tokens),
+                       SUM(or_cost)
+                FROM agent_logs
+                WHERE {chat_where}
+            """),
+            _run_one(f"SELECT intent, COUNT(*) AS count FROM agent_logs WHERE {chat_where} GROUP BY intent"),
+            _run_one(f"""
+                SELECT DATE(created_at) AS date, COUNT(*) AS queries
+                FROM agent_logs
+                WHERE {chat_where}
+                  AND created_at > NOW() - INTERVAL '30 days'
+                GROUP BY DATE(created_at)
+                ORDER BY date ASC
+            """),
+            _run_one(f"""
+                SELECT created_at, id, intent, latency_ms, cache_hit, query, answer,
+                       conversation_id, llm_tokens_used, chunks_retrieved,
+                       faithfulness_score, needs_empathy, needs_reasoning, needs_lookup,
+                       NULL::jsonb as retrieved_context, or_prompt_tokens, or_cached_tokens, or_completion_tokens, or_provider,
+                       rewritten_query, or_cost, or_generation_id,
+                       username, full_name, position, point, area, regional, pulau
+                FROM agent_logs
+                WHERE {chat_where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT :limit
+            """, {"limit": recent_limit}),
+            _run_one("""
+                SELECT user_id, learning_summary, updated_at
+                FROM user_ltm_memories
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """),
+            # Rolling-7d perf + quality. Window matters: an all-time AVG/percentile
+            # is dragged for weeks by a single bad day (e.g. a cold-start/retry-storm
+            # day with p95=90s), hiding that recent traffic is ~4s p95. 7d tracks
+            # "how is it NOW". Latency excludes cache_lookup (no LLM); faithfulness
+            # is the sampled judge score (NULL for un-evaluated turns).
+            _run_one(f"""
+                SELECT
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)
+                    FILTER (WHERE latency_ms IS NOT NULL) AS p95,
+                  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)
+                    FILTER (WHERE latency_ms IS NOT NULL) AS p99,
+                  AVG(faithfulness_score) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_avg,
+                  COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL) AS faith_n,
+                  COUNT(*) FILTER (WHERE faithfulness_score IS NOT NULL
+                    AND faithfulness_score < :faith_min) AS faith_fail
+                FROM agent_logs
+                WHERE {chat_where} AND created_at > NOW() - INTERVAL '7 days'
+            """, {"faith_min": settings.faithfulness_min}),
+        )
+        kpi_row = kpi_q.fetchone()
+        perf = perf_q.fetchone()
+        intents_rows = intents_q.fetchall()
+        trends_rows = trends_q.fetchall()
+        users_rows = users_q.fetchall()
 
-    kpi_row = kpi_q.fetchone()
     total = int(kpi_row[0] or 0) if kpi_row else 0
     avg_latency = float(kpi_row[1] or 0.0) if kpi_row else 0.0
     or_prompt = int(kpi_row[2] or 0) if kpi_row else 0
@@ -263,7 +288,6 @@ async def get_dashboard_logs(
     total_cost = float(kpi_row[5] or 0.0) if kpi_row else 0.0
     hit_rate = (or_cached / or_prompt * 100.0) if or_prompt > 0 else 0.0
 
-    perf = perf_q.fetchone()
     p95_7d = float(perf[0]) if perf and perf[0] is not None else 0.0
     p99_7d = float(perf[1]) if perf and perf[1] is not None else 0.0
     faith_avg_7d = float(perf[2]) if perf and perf[2] is not None else None
@@ -272,12 +296,12 @@ async def get_dashboard_logs(
 
     intents = [
         {"intent": str(row[0]) if row[0] else "UNKNOWN", "count": int(row[1])}
-        for row in intents_q.fetchall()
+        for row in intents_rows
     ]
 
     trends = [
         {"date": str(row[0]), "queries": int(row[1])}
-        for row in trends_q.fetchall()
+        for row in trends_rows
     ]
 
     log_rows = logs_q.fetchall()
@@ -481,7 +505,7 @@ async def get_dashboard_logs(
             "learning_summary": str(row[1]) if row[1] else "",
             "updated_at": str(row[2]),
         }
-        for row in users_q.fetchall()
+        for row in users_rows
     ]
 
     adoption_meta: dict[str, Any] = {}
@@ -947,6 +971,9 @@ async def get_spreadsheet_branches(
     }
 
 
+_history_periods_cache: dict[str, Any] = {"expires_at": 0.0, "periods": []}
+
+
 @router.get("/spreadsheet/history", summary="Get historical KPI records from PostgreSQL")
 async def get_spreadsheet_history(
     page: int = Query(1, ge=1),
@@ -995,8 +1022,14 @@ async def get_spreadsheet_history(
         rows_res = await conn.execute(text(data_sql), params)
         rows = rows_res.mappings().all()
 
-        periods_res = await conn.execute(text("SELECT DISTINCT periode FROM user_kpi_history ORDER BY periode DESC"))
-        periods = [str(r[0]) for r in periods_res.fetchall() if r[0]]
+        now = time.time()
+        if _history_periods_cache["expires_at"] > now and _history_periods_cache["periods"]:
+            periods = _history_periods_cache["periods"]
+        else:
+            periods_res = await conn.execute(text("SELECT DISTINCT periode FROM user_kpi_history ORDER BY periode DESC"))
+            periods = [str(r[0]) for r in periods_res.fetchall() if r[0]]
+            _history_periods_cache["periods"] = periods
+            _history_periods_cache["expires_at"] = now + 600.0  # 10 min TTL
 
     history = []
     for r in rows:
@@ -1026,6 +1059,7 @@ async def trigger_spreadsheet_history_sync(
     from app.database.postgres import AsyncSessionLocal
     from app.knowledge.sync_spreadsheet import sync_kpi_history_from_spreadsheet
 
+    _history_periods_cache["expires_at"] = 0.0
     async with AsyncSessionLocal() as session:
         result = await sync_kpi_history_from_spreadsheet(session, scope=scope)
     return result
@@ -1042,6 +1076,7 @@ async def clean_spreadsheet_data(
 
     from app.api.routes.chat_helpers import clear_user_context_cache
     clear_user_context_cache()
+    _history_periods_cache["expires_at"] = 0.0
 
     return {
         "status": "success",

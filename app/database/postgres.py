@@ -122,6 +122,13 @@ async def init_db() -> None:
             text("CREATE INDEX IF NOT EXISTS ix_agent_logs_endpoint_created_at "
                  "ON agent_logs (endpoint, created_at DESC)")
         )
+        # Dedicated partial index matching the dashboard's exact chat_where predicate
+        # (endpoint != 'cache_lookup' OR endpoint IS NULL) for zero-sort keyset pagination
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_agent_logs_dashboard_active "
+                 "ON agent_logs (created_at DESC, id DESC) "
+                 "WHERE (endpoint != 'cache_lookup' OR endpoint IS NULL)")
+        )
 
         # documents.source: the ingest dedup path (moodle_sync / portfolio_sync)
         # looks documents up by `source` on every synced file. create_all won't
