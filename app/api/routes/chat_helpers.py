@@ -21,7 +21,6 @@ _REDUNDANT_KPI_KEYS = {
     "full_name", "jabatan", "role", "nama_cabang", "username",
     "user_id", "nik", "user_name", "updated_at", "periode", "periode_kpi",
     "point", "cabang", "area", "wilayah", "regional", "region", "pulau", "island",
-    "total insentif", "total_insentif", "insentif", "incentive", "total incentive",
 }
 
 _CACHE_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE"}

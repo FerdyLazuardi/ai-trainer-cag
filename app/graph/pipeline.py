@@ -1022,10 +1022,27 @@ def _format_user_context_block(uctx: dict) -> str:
             reg_lines.append(f"- {region}:\n" + "\n".join(metrics))
         content_parts.append("\n".join(reg_lines))
 
+    has_incentive_data = any(
+        ("insentif" in str(k).lower() or "incentive" in str(k).lower()) and v not in (None, "", "-", "—")
+        for k, v in uctx.items()
+    )
+    if not has_incentive_data:
+        other_kpis.append("- Total Insentif: [Belum tersedia di sistem]")
+
     if other_kpis:
         content_parts.append("[Metrik Performa & KPI Lainnya]:\n" + "\n".join(other_kpis))
 
-    ctx_body = "\n\n".join(content_parts)
+    incentive_guard = ""
+    if not has_incentive_data:
+        incentive_guard = (
+            "\n\nIMPORTANT (INCENTIVE DATA GAP):\n"
+            "Data nominal insentif personal saat ini BELUM TERSEDIA / TIDAK TERCATAT di sistem. "
+            "Jika pengguna bertanya mengenai insentif atau bonus mereka, jawab JUJUR dan SINGKAT (1-2 kalimat) bahwa "
+            "data nominal insentif belum tersedia di sistem. "
+            "JANGAN PERNAH menghitung, mendeduksi, memperkirakan, atau menyebut Rp0 berdasarkan skor KPI atau aturan di dokumen!"
+        )
+
+    ctx_body = "\n\n".join(content_parts) + incentive_guard
     return (
         "\n\n<user_context>\nYou are speaking with the following user. "
         "Adapt your answers to their context, but DO NOT call or greet them by their first name "
