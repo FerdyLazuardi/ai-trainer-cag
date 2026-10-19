@@ -899,14 +899,39 @@ async def get_spreadsheet_users(
         roles_res = await conn.execute(text("SELECT COALESCE(role, 'UNKNOWN'), COUNT(*) FROM user_kpi_data GROUP BY role ORDER BY COUNT(*) DESC"))
         role_counts = {str(r[0]): int(r[1]) for r in roles_res.fetchall()}
 
+        usernames = [r["username"] for r in rows if r.get("username")]
+        history_by_user: dict[str, Any] = {}
+        if usernames:
+            try:
+                hist_res = await conn.execute(
+                    text("""
+                        SELECT DISTINCT ON (username) username, data
+                        FROM user_kpi_history
+                        WHERE username = ANY(:unames)
+                        ORDER BY username, (timeframe = 'trend') DESC, periode DESC
+                    """),
+                    {"unames": usernames},
+                )
+                for hr in hist_res.fetchall():
+                    u = str(hr[0])
+                    history_by_user[u] = hr[1] or {}
+            except Exception:
+                pass
+
     users = []
     for r in rows:
         d = dict(r.get("data") or {})
-        d["username"] = r["username"]
+        u_name = r["username"]
+        d["username"] = u_name
         d["full_name"] = r["full_name"]
         d["periode_kpi"] = r["periode"] or d.get("periode_kpi") or d.get("periode")
         d["role"] = r["role"] or d.get("role") or d.get("position")
         d["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
+        h_data = history_by_user.get(u_name)
+        if h_data:
+            d["history"] = h_data
+            if "scores" in h_data and "scores" not in d:
+                d["scores"] = h_data["scores"]
         users.append(d)
 
     return {
