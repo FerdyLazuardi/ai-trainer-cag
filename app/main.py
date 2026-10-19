@@ -199,7 +199,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             judge=settings.judge_llm_model,
         )
 
-        logger.info("CAG mode startup: vector retrieval and semantic gate pre-warm skipped")
+        # Pre-warm active CAG KB pack into memory so Turn 1 does not incur cold DB query
+        try:
+            from app.graph.pipeline import _filter_kb_by_role, _load_active_cag_kb_text
+            kb_text = await _load_active_cag_kb_text()
+            if kb_text:
+                for r in ("ALL", "BP", "BM", "FO", "HO"):
+                    _filter_kb_by_role(kb_text, r)
+            logger.info("CAG startup: Pre-warmed active KB pack and role caches", kb_length=len(kb_text) if kb_text else 0)
+        except Exception as e:
+            logger.warning(f"Failed to pre-warm CAG KB pack: {e}")
+
+        # Pre-warm OpenRouter HTTPS socket keep-alive to eliminate cold TLS handshake on Turn 1
+        try:
+            from app.llm.client import _shared_http_client
+            client = _shared_http_client()
+            url = settings.openrouter_base_url.rstrip("/") + "/models"
+            headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"} if settings.openrouter_api_key else {}
+            resp = await client.get(url, headers=headers, timeout=5.0)
+            logger.info("CAG startup: Pre-warmed OpenRouter HTTP connection", status_code=resp.status_code)
+        except Exception as e:
+            logger.warning(f"OpenRouter pre-warm connection skipped: {e}")
 
         yield
 

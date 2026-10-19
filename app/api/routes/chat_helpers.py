@@ -26,7 +26,7 @@ _REDUNDANT_KPI_KEYS = {
 _CACHE_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE"}
 
 
-_USER_CTX_CACHE_TTL = 60.0
+_USER_CTX_CACHE_TTL = 600.0  # 10 minutes (invalidated upon spreadsheet sync via clear_user_context_cache)
 _user_ctx_db_cache: dict[tuple[str, str], tuple[float, Any, Any]] = {}
 _branch_db_cache: dict[str, tuple[float, Any]] = {}
 

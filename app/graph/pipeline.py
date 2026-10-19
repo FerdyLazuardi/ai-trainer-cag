@@ -563,7 +563,7 @@ def clear_cag_kb_cache() -> None:
     _h2_topics_cache.update({"map": {}, "expires_at": 0.0})
 
 
-_KB_HASH_CHECK_TTL_SECONDS = 15.0
+_KB_HASH_CHECK_TTL_SECONDS = 3600.0  # 1 hour (invalidated upon Moodle sync via clear_cag_kb_cache)
 
 
 async def _load_active_cag_kb_text() -> str:
