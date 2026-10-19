@@ -747,12 +747,16 @@ async def _execute_kpi_history_tool(
 
             records = []
             for r in rows:
+                clean_data = {
+                    k: v for k, v in (r.data or {}).items()
+                    if "insentif" not in str(k).lower() and "incentive" not in str(k).lower()
+                } if isinstance(r.data, dict) else r.data
                 records.append({
                     "periode": r.periode,
                     "timeframe": r.timeframe,
                     "full_name": r.full_name,
                     "role": r.role,
-                    "data": r.data,
+                    "data": clean_data,
                 })
             return json.dumps({
                 "result": "success",
