@@ -16,14 +16,12 @@ settings = get_settings()
 # auto_error=False is crucial to prevent automatic 403/401 from FastAPI
 security = HTTPBearer(auto_error=False)
 
+
 class User(BaseModel):
     user_id: str
     role: str
     username: str
     fullname: str = ""
-    # Live Moodle profile fields (custom fields), passed through the JWT by the
-    # block_chatbot plugin so the conversational prompt can contextualize answers
-    # to who is asking. Optional — dev-bypass and older tokens omit them.
     dept: str = ""
     location: str = ""
     position: str = ""
@@ -32,6 +30,7 @@ class User(BaseModel):
     gender: str = ""
     area: str = ""
     regional: str = ""
+
 
 def _extract_fullname_from_session_id(session_id: str, user_id: str) -> str:
     """Fallback helper to extract user full name from session_id if fullname is absent from JWT payload."""
@@ -44,7 +43,7 @@ def _extract_fullname_from_session_id(session_id: str, user_id: str) -> str:
     parts = rem.split("_")
     if not parts or parts[0] == "user":
         return ""
-    
+
     name_tokens = []
     for p in parts:
         if p.lower() in ("ho", "fo", "na") or p.isdigit():
@@ -52,23 +51,19 @@ def _extract_fullname_from_session_id(session_id: str, user_id: str) -> str:
         name_tokens.append(p.capitalize())
     return " ".join(name_tokens)
 
+
 async def get_current_user(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> User:
     """
     Dependency to validate JWT token and return the current user.
     """
     user: Optional[User] = None
-    
+
     # ── 1. Attempt JWT Authentication ─────────────────────────────────────
     if not credentials or not credentials.credentials:
-        # Development Bypass — requires BOTH APP_ENV=development AND
-        # DEV_BYPASS_ENABLED=true (off by default, see settings.py). Closes
-        # the prod mis-config class where APP_ENV=development silently
-        # disables auth across 13k users.
         if settings.app_env == "development" and settings.dev_bypass_enabled:
-            # Check for local testing headers to fully simulate Moodle custom profile fields
             loc = request.headers.get("x-mock-location", "FO")
             pos = request.headers.get("x-mock-position", "Business Manager")
             gender = request.headers.get("x-mock-gender", "Male")
@@ -77,7 +72,7 @@ async def get_current_user(
             point = request.headers.get("x-mock-point", "Tutuyan")
             area = request.headers.get("x-mock-area", "Minahasa")
             reg = request.headers.get("x-mock-regional", "Sulawesi Utara")
-            
+
             mock_user = request.headers.get("x-mock-username") or request.query_params.get("mock_username") or "mock_user"
             mock_fullname = request.headers.get("x-mock-fullname") or mock_user
             logger.info(
@@ -96,7 +91,7 @@ async def get_current_user(
                 point=point,
                 gender=gender,
                 area=area,
-                regional=reg
+                regional=reg,
             )
         else:
             raise HTTPException(
@@ -106,29 +101,16 @@ async def get_current_user(
             )
 
     if not user:
-        assert credentials is not None  # narrowing: non-dev path guarantees non-None (raised 401 above)
+        assert credentials is not None
         token = credentials.credentials
 
-        # Brute-force throttle: count failed JWT decodes per client IP
-        # in 60s buckets. Above the threshold, refuse before we even
-        # try to decode — saves CPU + closes the "spray random tokens
-        # at the prod host" amplification path. Key is keyed on IP
-        # (not user_id) because the attacker is guessing against
-        # unknown users. The same Redis client the rate limiter uses,
-        # so a Redis outage still fails closed (H-6).
-        await _check_brute_force_throttle(request)
-
+        # Verify HMAC-SHA256 JWT locally first (<0.05ms CPU) so valid requests
+        # skip the Redis brute-force ZSET round-trip completely.
         try:
             payload = jwt.decode(
                 token,
                 settings.jwt_secret,
                 algorithms=[settings.jwt_algorithm],
-                # Force every token to carry exp / iat / user_id. Without
-                # this, pyjwt only validates claims that are present, so a
-                # Moodle mis-config that omits `exp` mints tokens that
-                # never expire. Combined with the Literal type on
-                # settings.jwt_algorithm (rejects alg=none at startup),
-                # this closes the alg-confusion / never-expire class.
                 options={"require": ["exp", "iat", "user_id"]},
             )
             raw_user_id = payload.get("user_id")
@@ -160,13 +142,8 @@ async def get_current_user(
                 regional=payload.get("regional", "") or "",
             )
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, ValueError, Exception) as e:
-            # Single uniform 401 response regardless of why the token
-            # was rejected. The previous code returned "Token
-            # expired" / "Invalid token" / "Authentication failed"
-            # as distinct messages, which let an attacker enumerate
-            # which users have an active session. The new
-            # behavior is the OWASP-recommended opaque 401.
             logger.warning(f"Auth rejected: {type(e).__name__}: {e}")
+            await _check_brute_force_throttle(request)
             await _record_auth_failure(request)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -175,10 +152,6 @@ async def get_current_user(
             )
 
     # ── 2. Role-Based Rate Limiting ───────────────────────────────────────
-    # Skip rate limiting for the dev bypass user — when APP_ENV=development we
-    # want unfettered ability to load-test, replay golden eval queries, and
-    # iterate on prompts without hitting 429s. Real Moodle users still rate-
-    # limited normally.
     if settings.app_env == "development" and settings.dev_bypass_enabled:
         return user
 
@@ -187,16 +160,6 @@ async def get_current_user(
     limit = settings.rate_limit_per_minute
 
     try:
-        # Atomic pipeline: incr + expire in a single round-trip to avoid TOCTOU.
-        # expire uses NX so the TTL is set ONLY on the first request of a window
-        # (when incr creates the key). Resetting expire on EVERY request — as the
-        # previous code did — turned this into a sliding lock-out: a continuously
-        # active user who tripped the limit kept pushing the TTL forward and
-        # stayed blocked for as long as they kept trying, instead of recovering
-        # after the window elapsed. NX makes it a true fixed 60s window: the key
-        # expires 60s after the FIRST hit and the counter resets, matching the
-        # advertised "{limit}/min". (Requires Redis >= 7 for EXPIRE NX; the app
-        # already mandates Redis >= 8 at boot in main.py.)
         pipe = redis.pipeline()
         pipe.incr(rate_limit_key)
         pipe.expire(rate_limit_key, 60, nx=True)
@@ -213,17 +176,6 @@ async def get_current_user(
         raise
     except Exception as e:
         logger.error(f"Rate limiting error: {e}")
-        # Fail-closed in production: a Redis outage means the rate
-        # limiter is untrustworthy, so the safest default is to refuse
-        # the request and let /readyz shed the instance from the load
-        # balancer. Operators get paged via the 503, the LB pulls us
-        # out, and users on the still-healthy instance (if any)
-        # continue normally.
-        #
-        # Fail-open in development: 30s Redis blips would otherwise
-        # brick the local iteration loop. The dev environment is
-        # single-instance, so a hard 503 would be the worst of both
-        # worlds (no healthy peers, but logged out anyway).
         if settings.app_env == "production":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -254,13 +206,7 @@ async def get_admin_or_jwt_user(
     return await get_current_user(request, credentials)
 
 
-
 # ── Brute-force throttle (H-7) ───────────────────────────────────────────────
-# Sliding-window counter in Redis, keyed on client IP, 60s buckets.
-# Above 30 failed decodes per minute from the same IP, refuse with
-# 429 before we even try to decode. Threshold is generous (real users
-# don't see 30+ failed logins) but the kind of ceiling a token-sprayer
-# will hit in a few seconds.
 _BRUTE_FORCE_WINDOW_SECONDS = 60
 _BRUTE_FORCE_MAX_FAILURES = 30
 
@@ -274,13 +220,7 @@ def _client_ip(request: Request) -> str:
 
 
 async def _check_brute_force_throttle(request: Request) -> None:
-    """If this IP has too many recent auth failures, 429 the request.
-
-    Uses a Redis ZSET sliding window: each failure is stored as a scored
-    member (score = timestamp), old entries are pruned on each check.
-    This avoids the fixed-window bypass where 30 failures at :59 + 30 at
-    :01 = 60 in 2 seconds with no throttle.
-    """
+    """If this IP has too many recent auth failures, 429 the request."""
     ip = _client_ip(request)
     key = f"bf:auth:sw:{ip}"
     now = time.time()
@@ -288,9 +228,7 @@ async def _check_brute_force_throttle(request: Request) -> None:
     try:
         redis = get_redis_client()
         pipe = redis.pipeline()
-        # Remove entries older than the sliding window
         pipe.zremrangebyscore(key, "-inf", window_start)
-        # Count remaining failures in the window
         pipe.zcard(key)
         results = await pipe.execute()
         n = results[1]
@@ -304,29 +242,19 @@ async def _check_brute_force_throttle(request: Request) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        # Redis outage: fail open here (the rate limiter in the
-        # caller is the durable fail-closed gate; this is a
-        # best-effort short-circuit for known-suspicious IPs).
         logger.warning(f"Brute-force throttle check failed (allowing): {e}")
 
 
 async def _record_auth_failure(request: Request) -> None:
-    """Add a timestamped entry to the sliding-window ZSET for this IP.
-
-    Called from the except block when jwt.decode raises. Best-effort —
-    if Redis is down the throttle check itself will fail open.
-    """
+    """Add a timestamped entry to the sliding-window ZSET for this IP."""
     ip = _client_ip(request)
     key = f"bf:auth:sw:{ip}"
     now = time.time()
     try:
         redis = get_redis_client()
         pipe = redis.pipeline()
-        # Use a unique member per failure (timestamp + random suffix) so
-        # multiple failures in the same millisecond don't overwrite each other.
         member = f"{now}:{id(request)}"
         pipe.zadd(key, {member: now})
-        # TTL = window * 2 so old ZSETs self-expire
         pipe.expire(key, _BRUTE_FORCE_WINDOW_SECONDS * 2)
         await pipe.execute()
     except Exception as e:

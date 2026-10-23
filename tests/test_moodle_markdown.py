@@ -41,6 +41,8 @@ class FakeMoodleClient:
         ])
 
     async def get(self, url, params):
+        if url.endswith("/local/knowledge_manager/api.php"):
+            return FakeResponse(payload=None)
         self.downloads.append((url, params))
         return FakeResponse(content=f"# {url}\r\nbody".encode())
 

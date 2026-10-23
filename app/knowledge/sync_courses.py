@@ -64,14 +64,14 @@ async def sync_courses_from_spreadsheet(session: AsyncSession) -> dict:
             if not text_content and hasattr(resp, "json"):
                 payload = resp.json()
                 if isinstance(payload, dict):
-                    courses_list = payload.get("courses", payload.get("data", []))
+                    courses_list = list(payload.get("courses") or payload.get("data") or [])
                 elif isinstance(payload, list):
                     courses_list = payload
             elif "json" in content_type or text_content.strip().startswith(("{", "[")):
                 import json
                 payload = json.loads(text_content)
                 if isinstance(payload, dict):
-                    courses_list = payload.get("courses", payload.get("data", []))
+                    courses_list = list(payload.get("courses") or payload.get("data") or [])
                 elif isinstance(payload, list):
                     courses_list = payload
             else:

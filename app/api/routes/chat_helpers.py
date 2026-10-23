@@ -1,6 +1,5 @@
 """Helper functions for chat routes (user context enrichment, cache privacy, evaluation sampling, log formatting, stream helpers)."""
 import asyncio
-from collections import Counter
 import random
 import re
 from typing import Any, Optional
@@ -25,15 +24,34 @@ _REDUNDANT_KPI_KEYS = {
 
 _CACHE_SKIP_INTENTS = {"GREETING", "AMBIGUOUS", "MALICIOUS", "TOPIC_LIST", "COACHING", "OFF_SCOPE"}
 
-
-_USER_CTX_CACHE_TTL = 600.0  # 10 minutes (invalidated upon spreadsheet sync via clear_user_context_cache)
+_USER_CTX_CACHE_TTL = 600.0  # 10 minutes (also cross-process invalidated via Redis cag:spreadsheet:version)
+_USER_CTX_VERSION_CHECK_INTERVAL = 30.0
 _user_ctx_db_cache: dict[tuple[str, str], tuple[float, Any, Any]] = {}
 _branch_db_cache: dict[str, tuple[float, Any]] = {}
+_user_ctx_sync_state: dict[str, Any] = {"version": None, "next_check_at": 0.0}
 
 
 def clear_user_context_cache() -> None:
     _user_ctx_db_cache.clear()
     _branch_db_cache.clear()
+
+
+async def _check_spreadsheet_cache_version(now: float) -> None:
+    """Invalidate in-memory KPI/Branch cache if worker synced new spreadsheet data."""
+    if not _user_ctx_db_cache and not _branch_db_cache:
+        return
+    if now < _user_ctx_sync_state["next_check_at"]:
+        return
+    _user_ctx_sync_state["next_check_at"] = now + _USER_CTX_VERSION_CHECK_INTERVAL
+    try:
+        from app.database.redis_client import get_redis_client
+        ver = await get_redis_client().get("cag:spreadsheet:version")
+        if ver and _user_ctx_sync_state["version"] is not None and ver != _user_ctx_sync_state["version"]:
+            clear_user_context_cache()
+        if ver:
+            _user_ctx_sync_state["version"] = ver
+    except Exception:
+        pass
 
 
 async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
@@ -45,6 +63,7 @@ async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
     branch_data = None
     cache_key = (str(current_user.username or ""), str(current_user.point or ""))
     now = _time.monotonic()
+    await _check_spreadsheet_cache_version(now)
     cached_entry = _user_ctx_db_cache.get(cache_key)
 
     if cached_entry and now < cached_entry[0]:
@@ -63,7 +82,7 @@ async def _build_enriched_user_context(current_user: User) -> dict[str, Any]:
                                 point_from_kpi = str(v).strip()
                                 break
                     if not point_from_kpi and getattr(kpi_data, "point_norm", None):
-                        point_from_kpi = kpi_data.point_norm
+                        point_from_kpi = str(kpi_data.point_norm or "")
 
                 point_val = point_from_kpi or str(current_user.point or "").strip()
                 if point_val:
@@ -436,15 +455,3 @@ def _extract_sources(retrieved_context: list) -> list:
                     "score": c.get("score") or 0.0,
                 })
     return sources
-
-
-def _auto_detect_course_id(retrieved_context: list, request_course_id: Optional[int]) -> Optional[int]:
-    effective_course_id = request_course_id
-    if effective_course_id in (None, 0) and retrieved_context:
-        cids = [c.get("course_id") for c in retrieved_context if c.get("course_id") not in (None, "", 0)]
-        if cids:
-            try:
-                effective_course_id = int(Counter(cids).most_common(1)[0][0])
-            except (ValueError, TypeError):
-                pass
-    return effective_course_id

@@ -1,3 +1,4 @@
+import json
 import asyncio
 import base64
 import secrets
@@ -1102,6 +1103,13 @@ async def clean_spreadsheet_data(
     from app.api.routes.chat_helpers import clear_user_context_cache
     clear_user_context_cache()
     _history_periods_cache["expires_at"] = 0.0
+    try:
+        from app.database.redis_client import get_redis_client
+        from app.utils.cache import flush_cache
+        await get_redis_client().set("cag:spreadsheet:version", str(time.time()))
+        await flush_cache()
+    except Exception:
+        pass
 
     return {
         "status": "success",

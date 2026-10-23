@@ -24,14 +24,7 @@ class _BodyTooLarge(Exception):
 
 class MaxBodySizeMiddleware:
     """Reject oversized request bodies — including chunked requests that OMIT
-    Content-Length, which the previous header-only check let through.
-
-    The Content-Length header is a fast pre-filter (normal clients send it).
-    For a streaming/chunked body with no Content-Length, we count bytes as they
-    arrive and abort with 413 the instant the cap is crossed — so an attacker
-    can't OOM the single-worker API by trickling a multi-GB body past a missing
-    header. Pure ASGI (not BaseHTTPMiddleware) so the byte-counting wrapper sees
-    every `http.request` chunk regardless of how the body is framed.
+    Content-Length.
     """
 
     def __init__(self, app, max_bytes: int) -> None:
@@ -43,8 +36,6 @@ class MaxBodySizeMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Fast path: a present, oversized Content-Length is rejected before we
-        # read a single body byte.
         for name, value in scope.get("headers") or []:
             if name == b"content-length":
                 try:
@@ -76,7 +67,6 @@ class MaxBodySizeMiddleware:
         try:
             await self.app(scope, counting_receive, tracking_send)
         except _BodyTooLarge:
-            # Only safe to emit a response if the app hasn't already started one.
             if not response_started:
                 await self._send_413(send)
 
@@ -95,17 +85,9 @@ class MaxBodySizeMiddleware:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan: boot → yield → shutdown.
-
-    Opens the streaq Worker async-context for the entire app lifetime so that
-    API handlers can call `worker.status_by_id()` / `worker.result_by_id()`
-    against the shared Redis pool without raising `StreaqError: Worker not
-    initialized` on every request. The custom `_worker_lifespan` in
-    `app/worker.py` only does `setup_logging` + `ensure_llamaindex_configured`
-    on startup, both safe to run in the API process.
-    """
+    """Application lifespan: boot → yield → shutdown."""
     setup_logging(debug=settings.app_debug)
-    from app.worker import worker  # shared streaq Worker instance for API enqueue/status helpers
+    from app.worker import worker
 
     async with worker:
         from app.database.postgres import init_db
@@ -114,20 +96,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         logger.info("Starting application", env=settings.app_env)
 
-        # Production-only guard: refuse to boot if the JWT secret looks like a
-        # dev placeholder. Catches the "forgot to set env in prod" failure mode
-        # where the entire /api/v1/chat* surface becomes forgeable.
         if settings.app_env == "production" and "dev" in settings.jwt_secret.lower():
             raise RuntimeError(
                 "JWT_SECRET contains 'dev' — refusing to start. Set a real secret in production."
             )
-        # Production-only guard: refuse to boot if the dev-bypass flag is
-        # enabled in prod. DEV_BYPASS_ENABLED off-by-default in settings
-        # closes the "APP_ENV=development in a prod .env" mis-config class
-        # where the auth dep at app/api/auth.py:40 returns a synthetic
-        # user with no token. Setting the flag in a prod .env would be
-        # an explicit (loud, fatal) operator action — this check makes
-        # that loud and fatal at boot, not silent at request time.
         if settings.app_env == "production" and settings.dev_bypass_enabled:
             raise RuntimeError(
                 "DEV_BYPASS_ENABLED=true under APP_ENV=production — refusing to start. "
@@ -135,12 +107,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "Unset DEV_BYPASS_ENABLED (or set APP_ENV to a non-production value) and restart."
             )
 
-        # Audit 3.5: STM TTL must outlive LTM AFK window, or the AFK-LTM worker
-        # tries to read history that has already expired — silent memory loss.
-        # The 2h margin (43200s STM vs 36000s AFK) is what lets the AFK worker
-        # tolerate a retry/defer cycle. Bumping STM down without bumping AFK
-        # is the realistic mistake (someone tuning TTL down for RAM); this
-        # guard catches it at boot instead of in production drift.
         if settings.conversation_ttl_seconds <= settings.ltm_afk_threshold_seconds:
             raise RuntimeError(
                 f"conversation_ttl_seconds ({settings.conversation_ttl_seconds}s) must be "
@@ -149,24 +115,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 f"Raise STM TTL or lower AFK threshold in settings."
             )
 
-        # Start BatchLogger background task
         await batch_logger.start()
 
-        # Initialize PostgreSQL tables
         await init_db()
         logger.info("PostgreSQL initialized")
 
-        # Initialize Redis connection
         redis = get_redis_client()
         await redis.ping()
 
-        # Fail-fast: the STM/LTM layer relies on HSETEX/HEXPIRE (field-level
-        # TTL on conversation + memory HASHes), which only exist in Redis
-        # >= 8.0. On an older server those write paths fail SILENTLY — the
-        # command errors are swallowed and memory simply never persists,
-        # so a mis-pointed REDIS_HOST or a half-finished migration would
-        # degrade memory with no loud signal. Assert the version at boot
-        # so that class of failure is caught here, not in production drift.
         _info = await redis.info("server")
         _ver = str(_info.get("redis_version", "0"))
         try:
@@ -182,22 +138,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
         logger.info("Redis connection established", redis_version=_ver)
 
-        # Fail-fast (C3): the eval judge MUST be a different model family than
-        # the generator. When judge == generator they share fabrication
-        # patterns and the faithfulness eval undercounts the hallucination
-        # rate (judge grading itself). The generator slots are
-        # cheap_llm_model (get_generate_llm) and llm_model (the old judge
-        # slot, get_llm) — both Gemini Flash Lite. JUDGE_LLM_MODEL must not
-        # collide with either, or eval scores silently inflate in production.
-        from app.llm.client import assert_judge_model_distinct
-        assert_judge_model_distinct(
-            settings.judge_llm_model,
-            {settings.cheap_llm_model, settings.llm_model},
-        )
-        logger.info(
-            "Eval judge model distinct from generator",
-            judge=settings.judge_llm_model,
-        )
+        if settings.eval_enabled:
+            from app.llm.client import assert_judge_model_distinct
+            assert_judge_model_distinct(
+                settings.judge_llm_model,
+                {settings.cheap_llm_model, settings.llm_model},
+            )
+            logger.info(
+                "Eval judge model distinct from generator",
+                judge=settings.judge_llm_model,
+            )
 
         # Pre-warm active CAG KB pack into memory so Turn 1 does not incur cold DB query
         try:
@@ -223,7 +173,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         yield
 
-        # Shutdown
         logger.info("Shutting down application")
         from app.utils.logger_batch import batch_logger
         await batch_logger.stop()
@@ -242,35 +191,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ─── Request body size cap ─────────────────────────────────────────────
-    # Reject oversized bodies before they reach the JSON parser. A 50 MB POST
-    # to /ingest would otherwise OOM the single-worker API during the body read,
-    # long before Pydantic's max_length on IngestRequest.text (200_000 chars)
-    # could fire. 256 KB is a small overhead above the 200 KB text cap to cover
-    # JSON envelope fields. MaxBodySizeMiddleware also counts streamed bytes, so
-    # a chunked request with no Content-Length can't slip past the header check.
     MAX_REQUEST_BYTES = 256 * 1024  # 256 KB
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
-    # ─── CORS ───────────────────────────────────────────────────────────────
-    # Moodle is now on a stable domain (https://amarthapedia-staging.
-    # lifeatamartha.com, was ngrok free-tier before 2026-08). General
-    # guidance:
-    #   1. Host-header / IP allowlists and per-IP rate limits are now safe
-    #      to add if needed (ngrok's rotating subdomain / CGNAT no longer
-    #      applies). Global `rate_limit` in settings.py remains fine.
-    #   2. CSP / X-Frame-Options can be tightened — no more ngrok first-visit
-    #      interstitial page to worry about.
-    #   3. Origin reflection (allow_origin_regex=".*") is still a CSRF exfil
-    #      vector — keep the explicit allowlist below.
-    # Moodle POSTs are server-to-server (no Origin header) so they never trip
-    # CORS anyway; only the dashboard frontend hits CORS preflight.
-    #
-    # The default allowlist below is localhost-only (dev). Production must
-    # set CORS_ALLOW_ORIGINS env to the real frontend origins (dashboard,
-    # Moodle staging domain, etc). Moodle server-to-server traffic is NOT
-    # affected by CORS because the plugin uses a server-side HTTP client —
-    # CORS is a browser-only concern.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,
@@ -279,14 +202,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ─── Global exception handler ──────────────────────────────────────────
-    # Without this, an unhandled exception anywhere in a route surfaces as
-    # Starlette's bare 500 with no structured-log hook, so the failure never
-    # lands in logs/app.json and ops can't see it. This catch-all logs the
-    # exception with request context (loguru captures the traceback) and
-    # returns an opaque 500 — it deliberately does NOT leak the exception
-    # string to the client. HTTPException is handled by FastAPI's own handler
-    # and never reaches here, so intended 4xx/403/413 responses are unaffected.
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.opt(exception=exc).error(
@@ -300,13 +215,11 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
-    # ─── Routes ─────────────────────────────────────────────────────────────
     from app.api.routes import admin
     app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
     app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
-    # Mount static files correctly
     import os
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.exists(static_dir):
@@ -325,14 +238,7 @@ def create_app() -> FastAPI:
 
     @app.get("/test-ui", summary="Chat UI (Development)", include_in_schema=settings.app_debug)
     async def chat_ui():
-        """Serve the simple chat interface for testing.
-
-        Gated on APP_DEBUG. In production this route returns 404 even
-        though it's registered — the audit flagged it as a dev
-        playground that any internet visitor can hit to fire
-        arbitrary queries at the LLM (cost amplification +
-        prompt-cache-miss provocation).
-        """
+        """Serve the simple chat interface for testing (gated on APP_DEBUG)."""
         if not settings.app_debug:
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Not Found")
@@ -342,16 +248,9 @@ def create_app() -> FastAPI:
                 return HTMLResponse(content=f.read())
         return {"message": "UI files not found."}
 
-
     @app.get("/health", summary="Liveness Check (always 200 if process is up)")
     async def health_check() -> dict:
-        """Liveness probe — does NOT check downstream services.
-
-        Use /readyz for readiness. K8s/Proxmox should hit /health as the
-        liveness probe (so the container is not killed for transient
-        downstream hiccups) and /readyz for routing (so traffic is shed
-        when Postgres/Redis are unreachable).
-        """
+        """Liveness probe — does NOT check downstream services."""
         return {"status": "ok", "env": settings.app_env}
 
     @app.get("/readyz", summary="Readiness Check (verifies Postgres + Redis)")

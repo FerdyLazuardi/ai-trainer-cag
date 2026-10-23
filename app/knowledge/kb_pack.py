@@ -1,3 +1,4 @@
+from typing import cast
 import hashlib
 import html
 import json
@@ -94,7 +95,7 @@ def assemble_kb_pack(docs: Sequence[MoodleMarkdownFile]) -> KBPack:
     lines.extend(["</kb_index>", ""])
 
     for i, doc in enumerate(canonical, 1):
-        roles_str = ",".join(doc["roles"])
+        roles_str = ",".join(cast(list[str], doc["roles"]))
         lines.extend(
             [
                 (

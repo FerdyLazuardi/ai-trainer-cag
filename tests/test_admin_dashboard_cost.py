@@ -25,6 +25,8 @@ async def test_dashboard_cost_uses_openrouter_logged_cost_only(monkeypatch):
         raise AssertionError("cost must come from agent_logs.or_cost")
 
     async def fake_run_one(sql, params=None):
+        if "SUM(or_prompt_tokens)" in sql and "SUM(or_cost)" in sql and "SELECT COUNT(*)" in sql:
+            return Result(one=(2, 25.0, 1000, 250, 80, 0.00042))
         if "SELECT COUNT(*)" in sql:
             return Result(scalar=2)
         if "AVG(latency_ms)" in sql:

@@ -1,59 +1,21 @@
 """
-POST /ingest endpoint — [DISABLED] accepts raw text and triggers the ingestion pipeline.
-POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync to CAG KB pack.
+CAG KB & Spreadsheet Sync Endpoints:
+- POST /ingest/moodle/sync — triggers the Moodle AI_Knowledge_Base sync to CAG KB pack.
+- POST /ingest/spreadsheet/sync — triggers paginated GAS KPI/branch spreadsheet sync.
+- POST /ingest/courses/sync — triggers active Moodle course catalog sync.
+- POST /ingest/history/sync — triggers historical KPI sync.
 """
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.api.schemas import IngestEnqueuedResponse, IngestRequest, IngestStatusResponse
-from app.config.settings import get_settings
-import httpx
-from app.api.auth import get_current_user, get_admin_or_jwt_user, User
+from app.api.auth import User, get_admin_or_jwt_user, get_current_user
 from app.api.routes.admin import verify_api_key
+from app.config.settings import get_settings
 
 router = APIRouter()
 settings = get_settings()
-
-@router.post(
-    "/ingest",
-    response_model=IngestEnqueuedResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="[DISABLED] Enqueue a document for ingestion (RAG mode only)",
-)
-async def ingest(
-    request: IngestRequest,
-    current_user: User = Depends(get_current_user),
-) -> IngestEnqueuedResponse:
-    """
-    **[DISABLED in CAG mode]**
-
-    Raw text ingestion was used in RAG mode. In the current CAG mode, this endpoint is disabled (returns 410 Gone) because the knowledge base is compiled deterministically from Moodle via `/ingest/moodle/sync`.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="Raw RAG ingestion is disabled in CAG mode. Use /ingest/moodle/sync."
-    )
-
-
-@router.get(
-    "/ingest/{job_id}",
-    response_model=IngestStatusResponse,
-    summary="[DISABLED] Get the status of an enqueued ingestion job (RAG mode only)",
-)
-async def ingest_status(
-    job_id: str,
-    current_user: User = Depends(get_current_user),
-) -> IngestStatusResponse:
-    """
-    **[DISABLED in CAG mode]**
-
-    Get the status of an enqueued ingestion job. Since raw RAG ingestion is disabled, this endpoint is also disabled.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="Raw RAG ingestion is disabled in CAG mode."
-    )
 
 
 class MoodleSyncRequest(BaseModel):
@@ -88,19 +50,6 @@ async def moodle_sync(
 ) -> MoodleSyncResponse:
     """
     Trigger background sync of Moodle course (default: course_id=3 AI_Knowledge_Base) via streaq worker.
-
-    **Quick Start:** Just click "Execute" to sync all markdown files from AI_Knowledge_Base course.
-
-    **Parameters:**
-    - `course_id`: Moodle course ID (default: 3 = AI_Knowledge_Base)
-    - `target_sections`: Optional list of section names to sync (leave empty for all)
-    - `force_reingest`: Set to `true` to re-process files even if unchanged
-
-    **What it does:**
-    1. Enqueues a persistent job to the streaq worker.
-    2. Downloads Moodle `.md` files, assembles one deterministic CAG KB pack.
-    3. Saves the active KB pack in PostgreSQL database.
-    4. Invalidates query and agent caches if changes are detected.
     """
     logger.info(f"Moodle sync triggered by user: {current_user.username}")
     from app.worker import sync_moodle_task
@@ -140,10 +89,6 @@ async def spreadsheet_sync(
 ) -> SpreadsheetSyncEnqueuedResponse:
     """
     Enqueue the paginated spreadsheet sync to the streaq worker (manual trigger).
-
-    Returns 202 immediately so the request never hits the Cloudflare 120s
-    proxy timeout — the worker fetches GAS page-by-page (limit=1000) with a
-    900s task timeout. Poll ``GET /ingest/spreadsheet/status/{job_id}``.
     """
     logger.info(f"Spreadsheet sync enqueued by user: {current_user.username}")
     from app.worker import sync_spreadsheet_task
@@ -179,14 +124,10 @@ async def spreadsheet_sync_status(
     result: dict | None = None
     if status_str == "done":
         try:
-            # Status is already done so the result key exists; a short
-            # timeout only guards the race where it just expired.
-            # NOTE: timeout must be > 0 — timeout=0 raises immediately.
             task_result = await worker.result_by_id(job_id, timeout=10)
             try:
                 raw = task_result.result
             except Exception as exc:
-                # Task ran but failed: surface the worker-side error.
                 result = {"status": "failed", "error": str(getattr(task_result, 'exception', exc))}
             else:
                 if isinstance(raw, dict):
@@ -331,25 +272,6 @@ async def history_sync_status(
     return SpreadsheetSyncStatusResponse(job_id=job_id, status=status_str, result=result)
 
 
-
-
-@router.post("/test/dummy-task", summary="Enqueue a dummy task to verify the worker")
-async def enqueue_dummy_task(
-    name: str = "Tester",
-    current_user: User = Depends(get_current_user),
-    _admin_key: str = Depends(verify_api_key),
-):
-    """
-    Enqueue a dummy task to verify that the streaq worker is running correctly.
-    """
-    logger.info(f"Dummy task enqueued by user: {current_user.username}")
-    from app.worker import dummy_task
-
-    task = dummy_task.enqueue(name=name)
-    await task
-    return {"message": f"Dummy task enqueued for {name}", "job_id": task.id}
-
-
 @router.get("/moodle/sections", summary="Get Moodle course sections")
 async def get_moodle_sections(
     course_id: int = 3,
@@ -358,12 +280,9 @@ async def get_moodle_sections(
 ):
     """
     Fetch sections from a Moodle course.
-    
+
     Returns list of section names that can be used for selective ingestion.
     """
-    from app.config.settings import get_settings
-    settings = get_settings()
-    
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -377,14 +296,13 @@ async def get_moodle_sections(
             )
             resp.raise_for_status()
             sections_data = resp.json()
-            
+
             if isinstance(sections_data, dict) and "exception" in sections_data:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Moodle error: {sections_data.get('message', 'Unknown error')}"
                 )
-            
-            # Extract section names
+
             sections = []
             for section in sections_data:
                 section_name = section.get("name", "").strip()
@@ -392,12 +310,12 @@ async def get_moodle_sections(
                     sections.append({
                         "id": section.get("id"),
                         "name": section_name,
-                        "summary": section.get("summary", "")[:100]  # First 100 chars
+                        "summary": section.get("summary", "")[:100]
                     })
-            
+
             logger.info(f"Fetched {len(sections)} sections from course {course_id} for user {current_user.username}")
             return sections
-            
+
     except httpx.HTTPError as exc:
         logger.error(f"Failed to fetch Moodle sections: {exc}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch sections: {exc}")

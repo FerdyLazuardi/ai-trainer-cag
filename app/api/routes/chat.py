@@ -19,7 +19,6 @@ from app.api.routes.chat_helpers import (
     StreamTextDeduper,
     _AFFIRMATION_TOKENS,
     _EVAL_SKIP_INTENTS,
-    _auto_detect_course_id,
     _build_enriched_user_context,
     _enqueue_eval,
     _extract_sources,
@@ -78,10 +77,6 @@ def get_cag_graph():
     return _get_cag_graph()
 
 
-def get_rag_graph():
-    return get_cag_graph()
-
-
 def get_cheap_llm():
     from app.llm.client import get_cheap_llm as _get_cheap_llm
     return _get_cheap_llm()
@@ -108,7 +103,7 @@ async def _complete_openrouter_usage(usage: OpenRouterUsage) -> OpenRouterUsage:
 
 
 async def _extract_message_token_usage(final_message: Any) -> dict[str, Any]:
-    usage_data = {
+    usage_data: dict[str, Any] = {
         "llm_tokens_used": 0,
         "or_prompt_tokens": 0,
         "or_completion_tokens": 0,
@@ -131,9 +126,6 @@ async def _extract_message_token_usage(final_message: Any) -> dict[str, Any]:
     return usage_data
 
 
-_stream_bg_tasks: set[asyncio.Task] = set()
-
-
 # ── STM facade ──────────────────────────────────────────────────────────────
 async def append_to_history(
     conversation_id: str,
@@ -152,19 +144,6 @@ async def append_to_history(
 
 async def get_conversation_history(conversation_id: str) -> list[dict]:
     return await _cs.get_history(get_redis_client(), conversation_id)
-
-
-async def get_seen_chunk_ids(conversation_id: str) -> set[str]:
-    return await _cs.get_seen_chunk_ids(get_redis_client(), conversation_id)
-
-
-async def add_seen_chunk_ids(conversation_id: str, retrieved_context: list) -> None:
-    chunk_ids = [
-        str(c.get("chunk_id"))
-        for c in retrieved_context or []
-        if c.get("chunk_id")
-    ]
-    await _cs.add_seen_chunk_ids(get_redis_client(), conversation_id, chunk_ids)
 
 
 async def clear_conversation_history(conversation_id: str) -> None:
@@ -207,24 +186,10 @@ async def _schedule_summary_refresh(conv_id: str) -> None:
         pass
 
 
-async def _schedule_afk_ltm_sync(conv_id: str, u_id: str):
+async def _schedule_afk_ltm_sync(conv_id: str, u_id: str) -> None:
+    if not settings.ltm_enabled:
+        return
     await _cs.schedule_afk_sync(get_redis_client(), conv_id, u_id)
-
-
-async def _track_session_courses(conv_id: str, retrieved_context: list) -> None:
-    if not retrieved_context:
-        return
-    names = {
-        (c.get("course_name") or "").strip()
-        for c in retrieved_context
-        if (c.get("course_name") or "").strip() not in ("", "?", "Unknown")
-    }
-    if not names:
-        return
-    try:
-        await _cs.add_courses(get_redis_client(), conv_id, names)
-    except Exception as e:
-        logger.warning(f"Failed to track session courses: {e}")
 
 
 DEV_BYPASS_USER_ID = "dev_user_123"
@@ -316,7 +281,7 @@ async def _prepare_cag_context(
         logger.debug("Cache lookup skipped", query=resolved_query[:60])
 
     user_id = current_user.user_id
-    ltm_eligible = is_real_user(user_id=user_id, role=current_user.role)
+    ltm_eligible = settings.ltm_enabled and is_real_user(user_id=user_id, role=current_user.role)
 
     if _skip_embedding:
         user_context = await _build_enriched_user_context(current_user)
@@ -337,7 +302,7 @@ async def _prepare_cag_context(
 
     logger.debug(f"[TIMING] pre-history: {time.perf_counter()-_t0:.2f}s")
     _t_hist = time.perf_counter()
-    user_context, (summary, recent_history), seen_chunk_ids = await asyncio.gather(
+    user_context, (summary, recent_history) = await asyncio.gather(
         _build_enriched_user_context(current_user),
         get_or_summarize_history(
             conversation_id=conversation_id,
@@ -345,50 +310,12 @@ async def _prepare_cag_context(
             max_fresh_turns=settings.max_fresh_turns,
             persist=False,
         ),
-        get_seen_chunk_ids(conversation_id),
     )
     asyncio.create_task(_schedule_summary_refresh(conversation_id))
     logger.debug(f"[TIMING] history+user_ctx: {time.perf_counter()-_t_hist:.2f}s")
     if (recent_history or summary) and len(resolved_query.split()) <= 3:
         skip_cache = True
         logger.debug("Cache lookup skipped - short follow-up query (context-dependent)")
-
-    cached = None
-    if not skip_cache:
-        _t_cache_start = time.perf_counter()
-        private_ns = f"rag_user_{current_user.user_id}"
-        global_ns = "rag"
-
-        private_cached, global_cached = await asyncio.gather(
-            get_cached_response(
-                resolved_query,
-                course_id=request.course_id,
-                cache_namespace=private_ns,
-            ),
-            get_cached_response(
-                resolved_query,
-                course_id=request.course_id,
-                cache_namespace=global_ns,
-            ),
-        )
-        cached = private_cached or global_cached
-        logger.debug(f"[TIMING] get_cached_response (private+global): {time.perf_counter()-_t_cache_start:.2f}s")
-
-    if cached:
-        return {
-            "cached": cached,
-            "query_embedding": None,
-            "initial_state": {"user_context": user_context},
-            "user_context": user_context,
-            "was_personalized": False,
-            "skip_cache": skip_cache,
-        }
-
-    messages: list[BaseMessage] = [
-        HumanMessage(content=turn["content"]) if turn["role"] == "user" else AIMessage(content=turn["content"])
-        for turn in recent_history
-    ]
-    messages.append(HumanMessage(content=resolved_query))
 
     ltm_profile = {"learning_summary": ""}
     if ltm_eligible:
@@ -405,6 +332,43 @@ async def _prepare_cag_context(
                 _ltm_profile_cache.pop(next(iter(_ltm_profile_cache)), None)
             _ltm_profile_cache[user_id] = (now_ltm + 60.0, ltm_profile)
 
+    was_personalized = compute_was_personalized(
+        ltm_profile=ltm_profile,
+        recent_history=recent_history,
+        summary=summary,
+        user_context=user_context,
+    )
+
+    cached = None
+    if not skip_cache:
+        _t_cache_start = time.perf_counter()
+        target_ns = cache_namespace_for(
+            was_personalized=was_personalized,
+            user_id=current_user.user_id,
+        )
+        cached = await get_cached_response(
+            resolved_query,
+            course_id=request.course_id,
+            cache_namespace=target_ns,
+        )
+        logger.debug(f"[TIMING] get_cached_response ({target_ns}): {time.perf_counter()-_t_cache_start:.2f}s")
+
+    if cached:
+        return {
+            "cached": cached,
+            "query_embedding": None,
+            "initial_state": {"user_context": user_context},
+            "user_context": user_context,
+            "was_personalized": was_personalized,
+            "skip_cache": skip_cache,
+        }
+
+    messages: list[BaseMessage] = [
+        HumanMessage(content=turn["content"]) if turn["role"] == "user" else AIMessage(content=turn["content"])
+        for turn in recent_history
+    ]
+    messages.append(HumanMessage(content=resolved_query))
+
     initial_state = {
         "messages": messages,
         "conversation_id": conversation_id,
@@ -416,16 +380,9 @@ async def _prepare_cag_context(
         "query_embedding_text": None,
         "rewritten_queries": None,
         "retrieval_query": resolved_query,
-        "seen_chunk_ids": list(seen_chunk_ids),
+        "seen_chunk_ids": [],
         "coaching_mode": request.coaching_mode,
     }
-
-    was_personalized = compute_was_personalized(
-        ltm_profile=ltm_profile,
-        recent_history=recent_history,
-        summary=summary,
-        user_context=user_context,
-    )
 
     return {
         "cached": None,
@@ -434,9 +391,6 @@ async def _prepare_cag_context(
         "was_personalized": was_personalized,
         "skip_cache": skip_cache,
     }
-
-
-_prepare_rag_context = _prepare_cag_context
 
 
 @router.post("/chat", response_model=ChatResponse, summary="Ask a question using the CAG pipeline")
@@ -541,7 +495,8 @@ async def _run_chat(
             },
         )
         await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
-        background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
+        if settings.ltm_enabled:
+            background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
 
         return ChatResponse(
             answer=cached["answer"],
@@ -652,13 +607,6 @@ async def _execute_chat_flow(
     actual_chunks = 0
     max_chunk_score = None
     retrieved_context = result.get("retrieved_context") or []
-    if retrieved_context:
-        real_chunks = [c for c in retrieved_context if c.get("source") not in (None, "", "None")]
-        actual_chunks = len(real_chunks)
-        dense_scores = [c.get("dense_score") for c in retrieved_context if isinstance(c.get("dense_score"), (int, float))]
-        if dense_scores:
-            max_chunk_score = max(dense_scores)
-
     sources = _extract_sources(retrieved_context)
     is_low_relevance = False
 
@@ -682,10 +630,6 @@ async def _execute_chat_flow(
         await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=answer)
     except Exception as hist_err:
         logger.warning(f"append_to_history (non-stream) failed: {hist_err}")
-    try:
-        await add_seen_chunk_ids(conversation_id, retrieved_context)
-    except Exception as seen_err:
-        logger.debug(f"seen chunk tracking skipped: {seen_err}")
 
     background_tasks.add_task(
         _log_chat_turn_with_usage,
@@ -719,8 +663,8 @@ async def _execute_chat_flow(
         max_chunk_score=max_chunk_score,
     )
 
-    background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
-    background_tasks.add_task(_track_session_courses, conversation_id, retrieved_context)
+    if settings.ltm_enabled:
+        background_tasks.add_task(_schedule_afk_ltm_sync, conversation_id, current_user.user_id)
 
     if _should_eval_turn(
         intent=intent,
@@ -779,7 +723,7 @@ async def get_onboarding_status(
         return {"completed": False}
     async with AsyncSessionLocal() as session:
         profile = await session.get(UserLTMMemory, current_user.user_id)
-    return {"completed": bool(profile and profile.onboarding_completed_at is not None)}
+    return {"completed": bool(profile and getattr(profile, "onboarding_completed_at", None) is not None)}
 
 
 @router.post("/user/onboarding/complete", summary="Mark the onboarding tour as seen")
@@ -794,7 +738,7 @@ async def complete_onboarding(
         if not profile:
             profile = UserLTMMemory(user_id=current_user.user_id)
             session.add(profile)
-        profile.onboarding_completed_at = datetime.now(timezone.utc)
+        setattr(profile, "onboarding_completed_at", datetime.now(timezone.utc))
         await session.commit()
     return {"status": "success"}
 
@@ -856,69 +800,60 @@ async def chat_stream(
     req: Request,
     current_user: User = Depends(get_current_user),
 ):
-    sem_release = await acquire_pipeline_slot_or_503()
-    try:
-        start_time = time.perf_counter()
-        conversation_id = request.conversation_id or str(uuid.uuid4())
-        _, stream_ban_ttl = await asyncio.gather(
-            _verify_conversation_ownership(conversation_id, current_user),
-            _get_ban_ttl(current_user.user_id),
-        )
-        if stream_ban_ttl > 0:
-            sem_release()
-            _stream_ban_ttl = stream_ban_ttl
-            async def banned_generator():
-                yield f"event: banned\ndata: {json.dumps({'ban_remaining_seconds': _stream_ban_ttl, 'conversation_id': conversation_id})}\n\n"
-                yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': False, 'latency_ms': 0.0})}\n\n"
-            return StreamingResponse(banned_generator(), media_type="text/event-stream")
+    start_time = time.perf_counter()
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    _, stream_ban_ttl = await asyncio.gather(
+        _verify_conversation_ownership(conversation_id, current_user),
+        _get_ban_ttl(current_user.user_id),
+    )
+    if stream_ban_ttl > 0:
+        _stream_ban_ttl = stream_ban_ttl
 
-        resolved_query = await resolve_numeric_query(request.query, conversation_id)
-        from app.graph.pipeline import _apply_glossary
-        resolved_query = _apply_glossary(resolved_query)
-        _raw_query_for_cache = resolved_query
-        logger.info(
-            "Stream request received",
-            query=request.query[:80],
-            resolved_query=resolved_query[:80] if resolved_query != request.query else None,
-            conversation_id=conversation_id,
-        )
+        async def banned_generator():
+            yield f"event: banned\ndata: {json.dumps({'ban_remaining_seconds': _stream_ban_ttl, 'conversation_id': conversation_id})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'sources': [], 'conversation_id': conversation_id, 'cached': False, 'latency_ms': 0.0})}\n\n"
 
-        context = await _prepare_cag_context(request, current_user, conversation_id, resolved_query)
-    except BaseException:
-        sem_release()
-        raise
+        return StreamingResponse(banned_generator(), media_type="text/event-stream")
 
+    resolved_query = await resolve_numeric_query(request.query, conversation_id)
+    from app.graph.pipeline import _apply_glossary
+    resolved_query = _apply_glossary(resolved_query)
+    _raw_query_for_cache = resolved_query
+    logger.info(
+        "Stream request received",
+        query=request.query[:80],
+        resolved_query=resolved_query[:80] if resolved_query != request.query else None,
+        conversation_id=conversation_id,
+    )
+
+    context = await _prepare_cag_context(request, current_user, conversation_id, resolved_query)
     cached = context.get("cached")
     was_personalized = context.get("was_personalized", False)
 
     if cached:
         async def _stream_cached():
-            try:
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                if resolved_query != request.query:
-                    yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            if resolved_query != request.query:
+                yield f"event: resolved\ndata: {json.dumps({'resolved_query': resolved_query})}\n\n"
 
-                sem_release()
+            words = cached["answer"].split(" ")
+            chunk_size = 16
+            for i in range(0, len(words), chunk_size):
+                chunk = " ".join(words[i:i + chunk_size])
+                if i > 0:
+                    chunk = " " + chunk
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+                await asyncio.sleep(0.002)
 
-                words = cached["answer"].split(" ")
-                chunk_size = 16
-                for i in range(0, len(words), chunk_size):
-                    chunk = " ".join(words[i:i + chunk_size])
-                    if i > 0:
-                        chunk = " " + chunk
-                    yield f"data: {json.dumps({'token': chunk})}\n\n"
-                    await asyncio.sleep(0.002)
+            sources_list = list(cached.get("sources", []))
+            yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
 
-                sources_list = list(cached.get("sources", []))
-                yield f"event: done\ndata: {json.dumps({'sources': sources_list, 'conversation_id': conversation_id, 'cached': True, 'latency_ms': round(latency_ms, 2)})}\n\n"
-
-                await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
+            await append_to_history(conversation_id=conversation_id, user_message=request.query, assistant_message=cached["answer"])
+            if settings.ltm_enabled:
                 try:
                     await _schedule_afk_ltm_sync(conversation_id, current_user.user_id)
                 except Exception as e:
                     logger.warning(f"Cache-hit AFK LTM schedule failed: {e}")
-            finally:
-                pass
 
         return StreamingResponse(
             _stream_cached(),
@@ -926,6 +861,7 @@ async def chat_stream(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    sem_release = await acquire_pipeline_slot_or_503()
     initial_state = context["initial_state"]
 
     async def _stream_cag_raw():
@@ -1179,8 +1115,6 @@ async def chat_stream(
                 except Exception as fb_exc:
                     logger.warning(f"Fallback ainvoke failed after empty raw stream: {type(fb_exc).__name__}: {fb_exc}")
 
-            # Release the LLM pipeline slot immediately once generation finishes
-            # so post-stream logging / OpenRouter cost lookup never blocks other users.
             sem_release()
 
             if not deduper.full_answer.strip():
@@ -1219,10 +1153,6 @@ async def chat_stream(
                 )
             except Exception as hist_err:
                 logger.warning(f"append_to_history (pre-done) failed: {hist_err}")
-            try:
-                await add_seen_chunk_ids(conversation_id, retrieved_context)
-            except Exception as seen_err:
-                logger.debug(f"seen chunk tracking skipped: {seen_err}")
 
             done_payload: dict = {
                 "sources": sources,
@@ -1238,11 +1168,9 @@ async def chat_stream(
             yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
 
             try:
-                post_tasks = [
-                    _emit_log(),
-                    _schedule_afk_ltm_sync(conversation_id, current_user.user_id),
-                    _track_session_courses(conversation_id, retrieved_context),
-                ]
+                post_tasks = [_emit_log()]
+                if settings.ltm_enabled:
+                    post_tasks.append(_schedule_afk_ltm_sync(conversation_id, current_user.user_id))
                 if _should_write_response_cache(
                     intent=intent,
                     is_low_relevance=is_low_relevance_stream,
@@ -1282,9 +1210,7 @@ async def chat_stream(
         except Exception as e:
             sem_release()
             logger.exception("Raw OpenRouter stream error", query=request.query[:60])
-            if not deduper.full_answer.strip():
-                deduper.full_answer = f"[Gagal stream: {type(e).__name__}]"
-            else:
+            if deduper.full_answer.strip():
                 deduper.full_answer += f" [Stream terputus: {type(e).__name__}]"
             yield f"event: error\ndata: {json.dumps({'error': 'CAG pipeline failed'})}\n\n"
             await _emit_log()

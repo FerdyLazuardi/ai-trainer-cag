@@ -224,7 +224,6 @@ async def test_prepare_cag_context_skips_rewrite_and_embedding(monkeypatch):
         return "rewritten retrieval query"
 
     monkeypatch.setattr(chat, "get_or_summarize_history", fake_history)
-    monkeypatch.setattr(chat, "get_seen_chunk_ids", fake_seen)
     monkeypatch.setattr(chat, "get_cached_response", fake_cached)
     monkeypatch.setattr(chat, "_schedule_summary_refresh", fake_refresh)
     monkeypatch.setattr(chat, "get_cheap_llm", lambda: object())
@@ -309,9 +308,11 @@ def _patch_stream_basics(monkeypatch, graph):
     monkeypatch.setattr(chat, "get_cag_graph", lambda: graph)
     monkeypatch.setattr(pipeline, "_pre_processor", fake_pre_processor)
     monkeypatch.setattr(pipeline, "stream_openrouter_generate", fake_stream_openrouter_generate)
+    async def fake_ban_ttl(*args, **kwargs):
+        return 0
+
+    monkeypatch.setattr(chat, "_get_ban_ttl", fake_ban_ttl)
     monkeypatch.setattr(chat, "_schedule_afk_ltm_sync", noop_async)
-    monkeypatch.setattr(chat, "_track_session_courses", noop_async)
-    monkeypatch.setattr(chat, "add_seen_chunk_ids", noop_async)
     monkeypatch.setattr(chat, "set_cached_response", noop_async)
     return chat
 

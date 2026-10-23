@@ -559,11 +559,12 @@ def clear_cag_kb_cache() -> None:
     _active_kb_cache.update({"hash": "", "content": "", "expires_at": 0.0})
     _role_kb_cache.clear()
     _course_cache.update({"courses": [], "expires_at": 0.0})
+    _doc_cache.update({"titles": [], "expires_at": 0.0})
     _section_map_cache.update({"map": {}, "expires_at": 0.0})
     _h2_topics_cache.update({"map": {}, "expires_at": 0.0})
 
 
-_KB_HASH_CHECK_TTL_SECONDS = 3600.0  # 1 hour (invalidated upon Moodle sync via clear_cag_kb_cache)
+_KB_HASH_CHECK_TTL_SECONDS = 30.0  # 30s lightweight hash check across worker/api processes
 
 
 async def _load_active_cag_kb_text() -> str:
@@ -964,7 +965,7 @@ def _format_user_context_block(uctx: dict) -> str:
         return ""
     
     profile_lines = []
-    regional_data = {}
+    regional_data: dict[str, list[str]] = {}
     other_kpis = []
 
     standard_keys = {
@@ -1026,23 +1027,13 @@ def _format_user_context_block(uctx: dict) -> str:
         ("insentif" in str(k).lower() or "incentive" in str(k).lower()) and v not in (None, "", "-", "—")
         for k, v in uctx.items()
     )
-    if not has_incentive_data:
+    if not has_incentive_data and (other_kpis or regional_data):
         other_kpis.append("- Total Insentif: [Belum tersedia di sistem]")
 
     if other_kpis:
         content_parts.append("[Metrik Performa & KPI Lainnya]:\n" + "\n".join(other_kpis))
 
-    incentive_guard = ""
-    if not has_incentive_data:
-        incentive_guard = (
-            "\n\nIMPORTANT (INCENTIVE DATA GAP):\n"
-            "Data nominal insentif personal saat ini BELUM TERSEDIA / TIDAK TERCATAT di sistem. "
-            "Jika pengguna bertanya mengenai insentif atau bonus mereka, jawab JUJUR dan SINGKAT (1-2 kalimat) bahwa "
-            "data nominal insentif belum tersedia di sistem. "
-            "JANGAN PERNAH menghitung, mendeduksi, memperkirakan, atau menyebut Rp0 berdasarkan skor KPI atau aturan di dokumen!"
-        )
-
-    ctx_body = "\n\n".join(content_parts) + incentive_guard
+    ctx_body = "\n\n".join(content_parts)
     return (
         "\n\n<user_context>\nYou are speaking with the following user. "
         "Adapt your answers to their context, but DO NOT call or greet them by their first name "
@@ -1057,7 +1048,7 @@ def _format_temporal_context_block() -> str:
     """Format real-time temporal context (Asia/Jakarta / WIB) for LLM time grounding."""
     try:
         from zoneinfo import ZoneInfo
-        tz = ZoneInfo("Asia/Jakarta")
+        tz: Any = ZoneInfo("Asia/Jakarta")
     except Exception:
         from datetime import timezone, timedelta
         tz = timezone(timedelta(hours=7))
@@ -1208,7 +1199,8 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
     if session_id:
         extra_body = {**extra_body, "session_id": session_id}
 
-    tools = [COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL]
+    intent = state.get("intent") or "KNOWLEDGE"
+    tools = [COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL] if intent in ("KNOWLEDGE", "COACHING") else None
 
     headers = {
         "Authorization": f"Bearer {_settings.openrouter_api_key}",
@@ -1219,7 +1211,7 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
 
     curr_messages = _openrouter_messages(messages)
     max_tool_iterations = 2
-    total_usage = {
+    total_usage: dict[str, Any] = {
         "prompt_tokens": 0,
         "cached_tokens": 0,
         "completion_tokens": 0,
@@ -1232,15 +1224,16 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
     last_provider = None
 
     for iteration in range(max_tool_iterations):
-        body = {
+        body: dict[str, Any] = {
             "model": _settings.llm_model,
             "messages": curr_messages,
             "temperature": _settings.generate_llm_temperature,
             "max_tokens": _settings.llm_max_tokens,
             "stream": True,
-            "tools": tools,
             **extra_body,
         }
+        if tools:
+            body["tools"] = tools
 
         tool_calls_accumulator: dict[int, dict[str, Any]] = {}
         finish_reason = None
@@ -1342,7 +1335,7 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
                         args = json.loads(fn_args_raw) if fn_args_raw else {}
                     except Exception:
                         args = {}
-                    user_nik = (
+                    user_nik = str(
                         (state.get("user_context") or {}).get("username")
                         or (state.get("user_profile") or {}).get("username")
                         or state.get("user_id")
@@ -1380,9 +1373,15 @@ async def stream_openrouter_generate(state: CAGState, config: RunnableConfig | N
 async def _generate_node(state: CAGState, config: RunnableConfig):
     """Single conversational LLM call for the non-stream graph execution path with tool support."""
     msgs, openrouter_session_id = await _build_generate_messages(state)
-    llm_base = get_generate_llm_nostream()
+    intent = state.get("intent") or "KNOWLEDGE"
+    llm_base: Any = get_generate_llm_nostream()
+    if intent in ("KNOWLEDGE", "COACHING") and hasattr(llm_base, "bind"):
+        try:
+            llm_base = llm_base.bind(tools=[COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL])
+        except (KeyError, TypeError):
+            pass
     llm = _with_openrouter_session(
-        llm_base.bind(tools=[COURSE_SEARCH_TOOL, KPI_HISTORY_TOOL]),
+        llm_base,
         openrouter_session_id,
     )
 
@@ -1406,7 +1405,7 @@ async def _generate_node(state: CAGState, config: RunnableConfig):
                 tool_messages.append(ToolMessage(content=tool_content, tool_call_id=tc.get("id", "")))
             elif tc.get("name") == "get_kpi_history":
                 tc_args = tc.get("args", {})
-                user_nik = (
+                user_nik = str(
                     (state.get("user_context") or {}).get("username")
                     or (state.get("user_profile") or {}).get("username")
                     or state.get("user_id")
@@ -1503,5 +1502,3 @@ def get_cag_graph():
     """Return the singleton compiled CAG graph."""
     return _build_agent_graph()
 
-
-get_rag_graph = get_cag_graph

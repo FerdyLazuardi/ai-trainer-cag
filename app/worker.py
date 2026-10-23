@@ -1,4 +1,3 @@
-import asyncio
 import zoneinfo
 from contextlib import asynccontextmanager
 from datetime import timedelta, timezone
@@ -39,11 +38,6 @@ worker = Worker(
 )
 
 
-@worker.task(max_tries=1, timeout=60)
-async def ingest_text_task(text: str, title: str, source: str, metadata: dict) -> dict[str, Any]:
-    return {"status": "disabled", "reason": "raw_rag_ingestion_disabled_in_cag"}
-
-
 @worker.task(max_tries=3, timeout=600)
 async def sync_moodle_task(
     course_id: int | None,
@@ -77,9 +71,17 @@ async def sync_spreadsheet_task() -> dict[str, Any]:
         result = await sync_kpi_from_spreadsheet(session)
         logger.info(f"Spreadsheet sync completed: {result}")
 
-        # Update Redis schedule state with last run details
+        try:
+            from app.api.routes.chat_helpers import clear_user_context_cache
+            clear_user_context_cache()
+        except Exception:
+            pass
+
+        # Update Redis schedule state and cross-process cache version
         try:
             from app.database.redis_client import get_redis_client
+            from app.utils.cache import flush_cache
+
             redis = get_redis_client()
             now_iso = datetime.now(JakartaTz).isoformat()
             raw = await redis.get("cag:spreadsheet:schedule")
@@ -94,6 +96,9 @@ async def sync_spreadsheet_task() -> dict[str, Any]:
             sched["last_status"] = result.get("status", "unknown")
             sched["last_result"] = result
             await redis.set("cag:spreadsheet:schedule", json.dumps(sched))
+            await redis.set("cag:spreadsheet:version", now_iso)
+            if result.get("status") == "success":
+                await flush_cache()
         except Exception as exc:
             logger.warning(f"Failed to record spreadsheet sync status to Redis: {exc}")
 
@@ -104,6 +109,8 @@ async def sync_spreadsheet_task() -> dict[str, Any]:
 async def sync_courses_task() -> dict[str, Any]:
     """Sync active Moodle courses catalog from GAS Web App."""
     from app.knowledge.sync_courses import sync_courses_from_spreadsheet
+    import json
+    from datetime import datetime
 
     async with AsyncSessionLocal() as session:
         result = await sync_courses_from_spreadsheet(session)
@@ -173,22 +180,14 @@ async def sync_history_task() -> dict[str, Any]:
         return result
 
 
-@worker.task
-async def dummy_task(name: str) -> str:
-    logger.info(f"Running dummy task for {name}")
-    await asyncio.sleep(1)
-    return f"Hello, {name}! Task completed."
-
-
 @worker.task(max_tries=2, timeout=60)
 async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
     from app.agents.conversation_state import _SUMMARY_REFRESH_PREFIX, get_or_summarize_history
     from app.database.redis_client import get_redis_client
-    from app.llm.client import get_cheap_llm
+    from app.llm.client import get_stm_llm
 
     redis = get_redis_client()
     try:
-        from app.llm.client import get_stm_llm
         await get_or_summarize_history(
             redis,
             conversation_id,
@@ -203,13 +202,14 @@ async def summarize_refresh_task(conversation_id: str) -> dict[str, Any]:
 
 @worker.task(max_tries=2, timeout=90)
 async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
+    if not settings.ltm_enabled:
+        return {"status": "skipped", "reason": "ltm_disabled"}
+
     from langchain_core.messages import HumanMessage
     from app.agents.conversation_state import get_history_and_summary
     from app.database.models import UserLTMMemory
     from app.database.postgres import AsyncSessionLocal
     from app.database.redis_client import get_redis_client
-    from app.knowledge.kb_pack import extract_h2_headings
-    from app.llm.client import get_cheap_llm
 
     redis = get_redis_client()
     history, stm_summary = await get_history_and_summary(redis, conversation_id)
@@ -221,7 +221,6 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
         f"{'User' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')}"
         for m in history
     )
-    h2_headings = extract_h2_headings(dialogue_str)
 
     session_parts = []
     if stm_summary:
@@ -247,7 +246,7 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
         from app.llm.client import get_ltm_llm
         llm = get_ltm_llm()
         resp = await llm.ainvoke([HumanMessage(content=prompt)])
-        raw_output = resp.content.strip()
+        raw_output = str(resp.content).strip()
 
         new_learning_summary = raw_output
         import json as _json
@@ -272,10 +271,6 @@ async def sync_ltm_task(conversation_id: str, user_id: str) -> dict[str, Any]:
     }
 
 
-async def prune_ltm_cron_task() -> dict[str, Any]:
-    return {"status": "skipped", "reason": "ltm_disabled_in_cag"}
-
-
 async def prune_agent_logs_cron_task() -> dict[str, Any]:
     from sqlalchemy import text
 
@@ -297,11 +292,6 @@ async def startup(ctx: dict):
 
 async def shutdown(ctx: dict):
     logger.info("CAG worker shutting down")
-
-
-@worker.cron("0 2 * * *", timeout=60)
-async def _run_ltm_prune():
-    await prune_ltm_cron_task()
 
 
 @worker.cron("0 4 * * *", timeout=300)
@@ -438,8 +428,9 @@ async def _run_scheduled_history_sync():
         logger.error(f"Error in scheduled historical KPI sync check: {exc}")
 
 
-
 async def _eval_turn_task_fn(**kwargs) -> dict[str, Any]:
+    if not settings.eval_enabled:
+        return {"status": "skipped", "reason": "eval_disabled"}
     from app.eval.tasks import eval_turn_task as _run_eval_turn_task
 
     return await _run_eval_turn_task(**kwargs)

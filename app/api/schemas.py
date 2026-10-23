@@ -4,8 +4,6 @@ Pydantic v2 request and response models for the API layer.
 from pydantic import BaseModel, Field
 
 
-# ─── Chat ─────────────────────────────────────────────────────────────────────
-
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000, description="User question")
     conversation_id: str | None = Field(
@@ -49,48 +47,3 @@ class ChatResponse(BaseModel):
     cached: bool = False
     latency_ms: float | None = None
     ban_remaining_seconds: int | None = None
-
-
-# ─── Ingestion ────────────────────────────────────────────────────────────────
-
-class IngestRequest(BaseModel):
-    # 200,000 chars (~200 KB) hard cap. Defense-in-depth on top of the
-    # content-length middleware in main.py. A 50 MB request would OOM the
-    # API process during JSON parsing long before Pydantic validation.
-    text: str = Field(..., min_length=10, max_length=200_000, description="Raw document text to ingest")
-    title: str = Field(default="", description="Document title")
-    source: str = Field(default="", description="Source URL or file path")
-    metadata: dict = Field(default_factory=dict, description="Arbitrary key-value metadata")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "text": "LangGraph is a library for building stateful, multi-actor LLM applications.",
-                "title": "LangGraph Overview",
-                "source": "https://langchain.com/langgraph",
-                "metadata": {"category": "tech", "language": "en"},
-            }
-        }
-    }
-
-
-class IngestEnqueuedResponse(BaseModel):
-    job_id: str
-    status: str = "queued"
-
-
-class IngestStatusResponse(BaseModel):
-    job_id: str
-    status: str  # "queued" | "in_progress" | "complete" | "failed"
-    document_id: str | None = None
-    chunks_count: int | None = None
-    total_tokens: int | None = None
-    error: str | None = None
-
-
-class IngestResponse(BaseModel):
-    document_id: str
-    chunks_count: int
-    total_tokens: int
-    message: str = "Document ingested successfully"
-

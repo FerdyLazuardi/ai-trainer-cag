@@ -18,24 +18,12 @@ class Settings(BaseSettings):
     )
 
     # ─── Application ───────────────────────────────────────────────────────
-    # Required, no default. The previous 'development' default meant a prod
-    # deploy that forgot to set APP_ENV would boot with dev bypass active
-    # (auth.py:36 — no JWT required) and rate limiting disabled (auth.py:79).
-    # Pydantic raises ValidationError at startup if this is missing.
-    # No `env="APP_ENV"` — pydantic-settings 2.x reads `app_env` ↔ `APP_ENV`
-    # via default case-insensitive matching, and Pydantic v2 deprecated the
-    # extra `env=` kwarg with PydanticDeprecatedSince20 (removal in v3).
     app_env: Literal["development", "staging", "production"]
     app_debug: bool = False
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
     # ─── CORS ──────────────────────────────────────────────────────────────
-    # Previously main.py used allow_origins=["*"] + allow_credentials=True,
-    # which is a forbidden combination — browsers will refuse to send cookies
-    # or Authorization headers, but the misconfiguration still leaks
-    # preflight responses to any origin and signals 'this API trusts every
-    # caller'. Default to the dev compose ports; override in prod via env.
     cors_allow_origins: list[str] = Field(
         default_factory=lambda: [
             "https://ai-trainer.lifeatamartha.com",
@@ -53,29 +41,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5455
     postgres_db: str = "lms_ai"
     postgres_user: str = "admin"
-    # No default. 'admin'/'postgres' defaults that ship in tutorials let a
-    # fresh deploy come up with an open database; pydantic-settings will
-    # raise on a missing POSTGRES_PASSWORD env var instead.
     postgres_password: str = Field(...)
-    # Pool sizing is per-PROCESS. With both the API container and the
-    # worker container reading the same values, the total connection
-    # ceiling is `2 * (pool_size + max_overflow)`. The default of 10 +
-    # 20 = 30 per process was correct for `max_connections=100` but
-    # docker-compose.yml:89 overrides Postgres to `max_connections=50`,
-    # so 30 + 30 = 60 > 50 → intermittent "too many clients" / "remaining
-    # connection slots are reserved" at peak.
-    #
-    # docker-compose.yml sets per-service overrides so:
-    #   api:    pool_size=8,  max_overflow=12  → max 20 connections
-    #   worker: pool_size=4,  max_overflow=6   → max 10 connections
-    # Total app ceiling: 30. Postgres max_connections: 50.
-    # Leaves 20 connections for admin sessions, psql, migration scripts,
-    # and Postgres's own reserved slots (3 superuser reservations on
-    # stock Postgres 16 by default).
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
-    # Fail fast instead of SQLAlchemy's 30s default: a request that can't get a
-    # connection within this window raises immediately rather than hanging.
     postgres_pool_timeout: int = 10
 
     @computed_field  # type: ignore[misc]
@@ -92,16 +60,6 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_password: str = ""
     redis_max_connections: int = 100
-    # Logical DB for the streaq task queue, kept SEPARATE from the app's data
-    # DB (`redis_db`=0). Rationale (C6): the conversation HASHes carry a 24h
-    # key-level TTL and are deliberately evictable under `volatile-lru`; the
-    # streaq queue keys are durable (no TTL) and must never be co-mingled with
-    # evictable app keys. A separate logical DB also lets ops FLUSHDB the app
-    # data at cutover (e.g. clearing legacy `rag:conv:*`) without nuking
-    # in-flight jobs. NOTE: maxmemory is per-INSTANCE, not per-DB — the
-    # eviction *safety* comes from volatile-lru only evicting TTL-bearing keys
-    # (queue keys have none); the DB split is operational isolation, not a
-    # memory partition.
     redis_queue_db: int = 1
 
     @computed_field  # type: ignore[misc]
@@ -115,79 +73,21 @@ class Settings(BaseSettings):
     @property
     def streaq_redis_url(self) -> str:
         """Redis URL for the streaq worker/enqueue side — points at the
-        isolated queue DB (`redis_queue_db`). Both the API (enqueue) and the
-        worker (consume) import the same `worker` object, so pointing the
-        Worker here moves BOTH sides onto the queue DB automatically."""
+        isolated queue DB (`redis_queue_db`)."""
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_queue_db}"
 
     # ─── LLM (OpenRouter) ───────────────────────────────────────────────────
-    # ⚠️  RUNTIME VALUES COME FROM `.env`, NOT THESE DEFAULTS.
-    # The defaults below (Gemini Flash Lite, empty provider order) are the
-    # settings.py fallback path — actual production / dev usage is in `.env`.
-    # Last verified live (2026-06-17) the `.env` overrides pin:
-    #   - LLM_MODEL=deepseek/deepseek-v4-flash (DeepSeek, NOT Gemini)
-    #   - CHEAP_LLM_MODEL=deepseek/deepseek-v4-flash (same)
-    #   - LLM_PROVIDER_ORDER=alibaba,baidu,novita (NOT empty → NOT deepseek native)
-    # Verified empirically on Alibaba Cloud Int. via OpenRouter:
-    #   Data policy = "No data training" (privacy-safe for internal docs),
-    #   cache discount ~54%, latency 306ms, throughput 75.9 tok/s.
-    # Do NOT change `.env` without re-checking this comment and the empirical
-    # evidence in `docs/audit/E2E_AUDIT_600DAU_2026-06-17.md`.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    # OpenRouter is the SOLE LLM provider (no 9Router, no localhost, no Ollama).
-    # Default is the real OpenRouter cloud; override in .env only when routing
-    # through a different OpenRouter-compatible gateway.
     openrouter_base_url: str = "https://openrouter.ai/api/v1/"
-    # Main model: DeepSeek V4 Flash — defaults aligned with `.env` so reading
-    # either file shows the SAME model (no Gemini/DeepSeek ambiguity). Run via
-    # the alibaba/baidu/novita provider pin (see llm_provider_order) for the
-    # "No data training" privacy posture; deepseek native trains on prompts.
     llm_model: str = Field(default="deepseek/deepseek-v4-flash", alias="LLM_MODEL")
     llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
-    # Cheap slot for background tasks (memory summarization, pre-processor,
-    # generate node). Same model as the main slot.
     cheap_llm_model: str = Field(
         default="inclusionai/ling-2.6-flash", alias="CHEAP_LLM_MODEL"
     )
-
-    # ─── LLM provider pin (OpenRouter `provider.order`) ───────────────────────
-    # Comma-separated OpenRouter provider SLUGS to pin the generator to, in
-    # priority order (e.g. "baidu,deepinfra"). Empty = use the built-in default
-    # per model family (deepseek/* -> deepseek native; google/* -> google-vertex).
-    #
-    # ONLY applies to deepseek/* models (the only family with a meaningful
-    # multi-provider market here). Gemini stays pinned to google-vertex
-    # regardless, since vertex is the only upstream with implicit-cache wins.
-    #
-    # Slugs are the `tag` prefix from OpenRouter's /endpoints API, NOT the
-    # display name: baidu, deepinfra, cloudflare, digitalocean, gmicloud,
-    # siliconflow, io-net, streamlake, alibaba, morph, deepseek, parasail,
-    # atlas-cloud, akashml, novita, venice. (Verified 2026-06 for
-    # deepseek-v4-flash.)
-    #
-    # ⚠️  DO NOT leave this empty in `.env` for deepseek models.
-    # Empty here = default per-family = `deepseek` native, which trains on
-    # prompts by default and is NOT safe for Amartha's internal docs.
-    # The verified privacy-safe + cache-on pin is `alibaba,baidu,novita`
-    # (see `.env` for the empirical evidence block; cache discount ~54%,
-    # data policy "No data training", latency 306ms). The settings.py
-    # default of "" is a fallback only — the production deploy overrides
-    # it via `.env`.
-    #
-    # CAUTION before pinning a cheaper provider:
-    #   - quantization differs (deepinfra=fp4 aggressive, baidu=fp8) → can shift
-    #     answer quality; RE-RUN the 71-Q groundedness suite after switching.
-    #   - cache behavior: alibaba caches implicitly via OpenRouter gateway
-    #     (verified live 2026-06-17); deepseek native also caches implicitly.
-    #     Other pinned providers (baidu, novita, deepinfra) are unverified.
-    #   - data-privacy/training posture varies per provider.
-    # allow_fallbacks stays True so a pinned provider's outage degrades to the
-    # rest of the market instead of failing the request.
     llm_provider_order: str = Field(default="", alias="LLM_PROVIDER_ORDER")
-
 
     # ─── CAG mode ───────────────────────────────────────────────────────────
     retrieval_mode: Literal["cag"] = Field(default="cag", alias="RETRIEVAL_MODE")
@@ -198,195 +98,29 @@ class Settings(BaseSettings):
     course_spreadsheet_url: str = Field(default="", alias="COURSE_SPREADSHEET_URL")
     course_spreadsheet_token: str = Field(default="", alias="COURSE_SPREADSHEET_TOKEN")
 
-
     @property
     def llm_provider_order_list(self) -> list[str]:
         """Parse LLM_PROVIDER_ORDER into a clean slug list (order preserved)."""
         return [s.strip() for s in self.llm_provider_order.split(",") if s.strip()]
 
-    # ─── LLM-as-judge (eval faithfulness) ────────────────────────────────────
-    # C3: the judge MUST be a different model family than the generator. When
-    # judge == generator they share fabrication patterns and the eval
-    # systematically undercounts the ungrounded/hallucination rate (the judge
-    # effectively grades its own output). Both the old judge slot (`get_llm` =
-    # llm_model) and the generator (`get_generate_llm` = cheap_llm_model) are
-    # Gemini 2.5 Flash Lite, so the judge was Flash-Lite grading Flash-Lite.
-    #
-    # DeepSeek V4 Pro is pinned to DeepSeek's NATIVE OpenRouter provider with
-    # allow_fallbacks=false (so a provider outage can't silently reroute and
-    # shift the judge baseline mid-week), reasoning DISABLED (effort:"none" —
-    # we only need a faithfulness score, not chain-of-thought, and reasoning
-    # tokens would land in reasoning_content which ChatOpenAI drops), and
-    # response_format=json_object (NOT tool_choice — structured-output via
-    # tool calling adds a function-call round-trip the gateway may not pin
-    # cleanly under provider routing). See app/llm/client.get_judge_llm.
-    #
-    # Fallback (manual swap via env) is Qwen 2.5 72B — also distinct from the
-    # Gemini generator family — if V4 Pro correlation vs gold-grade fails the
-    # 50-query calibration (D3).
+    # ─── LLM-as-judge (eval faithfulness — disabled by default) ──────────────
     judge_llm_model: str = Field(
         default="deepseek/deepseek-v4-pro", alias="JUDGE_LLM_MODEL"
     )
     judge_llm_fallback_model: str = Field(
         default="qwen/qwen-2.5-72b-instruct", alias="JUDGE_LLM_FALLBACK_MODEL"
     )
-
-    # ─── OpenRouter prompt caching ───────────────────────────────────────────
-    # MiMo/Xiaomi prompt caching is provider-side and automatic; OpenRouter does
-    # not expose a MiMo prompt-cache TTL knob. The app maximizes hits by keeping
-    # the stable system/KB prefix first and sending conversation_id as
-    # OpenRouter session_id in generate_node.
-
-    # ─── Evaluation (LLM-as-judge, async via streaq) ─────────────────────────
-    # Phase 1: faithfulness eval only. Sample to control cost — 100% eval
-    # at 13k user scale would 2x the LLM bill for diminishing signal.
-    # Always-eval gates (low dense relevance / high empathy) catch high-stakes
-    # turns regardless of sample rate so the riskiest outputs are never missed.
-    eval_enabled: bool = Field(default=True, alias="EVAL_ENABLED")
+    eval_enabled: bool = Field(default=False, alias="EVAL_ENABLED")
     eval_sample_rate: float = Field(default=0.10, alias="EVAL_SAMPLE_RATE")
     eval_always_if_dense_below: float = Field(default=0.30, alias="EVAL_ALWAYS_IF_DENSE_BELOW")
     eval_always_if_empathy_above: float = Field(default=0.90, alias="EVAL_ALWAYS_IF_EMPATHY_ABOVE")
-
-    # D3 LOCKED faithfulness threshold. An answer with judge.score < this is
-    # graded UNFAITHFUL (runner.py gates on `judge.score < min_faithfulness`).
-    #
-    # LOCKED at 0.75 (not the provisional 0.70) on calibration evidence from a
-    # balanced, discrimination-valid set (41 items: 15 faithful / 10 partial /
-    # 16 hallucinated; refusals excluded from the math, judged via the
-    # provided-answer harness mode). DeepSeek V4 Pro was VALIDATED against human
-    # gold: Spearman ρ=0.915 [0.82,0.98], quadratic-weighted κ=0.906, and all
-    # 16/16 realistic hallucinations scored 0.00 (perfect hard-negative
-    # detection) — so the judge is trustworthy and was NOT swapped to the Qwen
-    # fallback.
-    #
-    # Why 0.75 over 0.70: moving the gate 0.70→0.75 raised best-τ Cohen's
-    # κ 0.515→0.741 and precision 0.62→0.81 while recall stayed IDENTICAL at
-    # 0.87 — i.e. it rejects 5 additional partial answers (each mostly grounded
-    # but carrying one fabricated claim: an invented POJK number, a made-up
-    # limit, a daily-visit mandate, etc.) at ZERO cost to genuinely faithful
-    # answers. This matches the gate's purpose (a faithfulness gate should fail
-    # answers with unsupported claims) and the gold_floor=0.70 binarization. The
-    # κ-max τ (0.75) is itself a stable plateau (0.75/0.80=0.741). Re-calibrate
-    # with more natural partials if the judge model or generator changes.
-    # Calibration harness: app/eval/calibrate_judge.py;
-    # dataset builder: data/eval/build_balanced_calibration.py.
     faithfulness_min: float = Field(default=0.75, alias="FAITHFULNESS_MIN")
 
-    # ─── Intent Classification (Tier-0 semantic gate) ──────────────────────
-    # Legacy semantic-gate notes kept for calibration history. Embedding-based
-    # cosine similarity against pre-computed intent centroids. Catches novel
-    # greeting/ambiguous phrasings the regex Tier-1 misses (religious greetings,
-    # regional slang, novel fillers) so we SKIP retrieval for them — saves a
-    # vector-retrieval round-trip and a full CONVERSATIONAL_PROMPT pass per query.
-    #
-    # threshold: minimum best-centroid similarity to commit to an intent.
-    #   Calibrated 2026-06-17 against app/eval/calibrate_intent_gate.py on the
-    #   hallucination_probe + intent_seed corpora. Raise to 0.65+ if you see
-    #   false-positive commits (gates mis-routing KNOWLEDGE queries as chit-chat).
-    # margin: minimum gap between best and second-best centroid. Stops the
-    #   gate from committing on ambiguous queries that sit between two
-    #   centroids (e.g. "halo info" between GREETING and AMBIGUOUS).
-    # 2026-06-17: lowered from 0.10 -> 0.06 after the 70-query FO quality
-    # probe. At 0.10 the gate's margin floor was rejecting 4/20 chit-chat
-    # queries whose best_cosine was 0.7+ but whose margin to the runner-up
-    # was 0.02-0.07 (e.g. "tanya dong" margin=0.022, "bantuin" margin=0.008).
-    # At 0.06 all 4 are caught and FP stays 0 — knowledge queries had
-    # margins 0.04+ so they don't leak in. Tighten back if FP starts
-    # appearing in production.
-    # Auto-hook: cosine threshold for OFFERING coaching after a normal answer
-    # (legacy semantic affinity vs the COACHING centroid). This is
-    # NOT a routing gate — it only decides whether to show a one-line
-    # "mau ngulik bareng?" offer the user can click; a false positive just shows
-    # an ignorable offer, never hijacks the answer. CALIBRATED 2026-06-10 against
-    # the bge-m3 centroids: diagnostic/work questions scored 0.747-0.839,
-    # factual lookups 0.444-0.629 — clean gap, so 0.70 splits them with ~0.05
-    # margin each side. Re-check if the COACHING seeds in intent_seed.yaml change.
     # Topic-streak auto-hook: offer coaching once the user has asked about the
-    # SAME dominant topic this many turns in a row (counter lives in the
-    # conversation HASH, see conversation_state.bump_topic_streak). Moved from
-    # the frontend so the offer decision is server-side (Moodle plugin = dumb
-    # renderer). A topic shift decays the streak by 1 rather than hard-resetting,
-    # so drifting across 1-2 related sections doesn't kill an active streak.
+    # SAME dominant topic this many turns in a row.
     coaching_streak_threshold: int = 3
-    # Historical semantic-gate switch notes.
-    # classify_semantic), wired into _pre_processor between the regex Tier-1 and
-    # the no-retrieval bucket. Only short-circuits chit-chat intents
-    # (GREETING/AMBIGUOUS/OFF_SCOPE/TOPIC_LIST) — never KNOWLEDGE/COACHING
-    # (they need retrieval) and never MALICIOUS (injection detection stays on
-    # the deterministic regex path). Defaults ON; calibrated against
-    # app/eval/calibrate_intent_gate.py on 2026-06-17.
 
-    # ─── Context Engineering ────────────────────────────────────────────────
-    # Hard ceiling on the retrieved-context block sent to the generate LLM.
-    # 6000 covers compound queries (multi-sub-question retrieval returns
-    # 10-15 chunks that need room). Overridable via MAX_CONTEXT_TOKENS in .env.
-    # Candidate pool pulled per modality (dense + sparse BM25) before fusion.
-    # Wider pool = more candidates for fusion to rank, but NOT more LLM tokens
-    # (only final_top_k reaches the LLM). Overridable via RETRIEVAL_TOP_K in .env.
-    # Final number of fused chunks fed to the generate LLM. Overridable via
-    # FINAL_TOP_K in .env. Bounded by max_context_tokens (truncate_to_tokens).
-    # NOTE: tried 8 — pulled in distractor chunks that made the model
-    # MIS-classify a support service as a product. The real fix is prompt-side
-    # (anchor enumeration to the summary list). Lower to 3 if cost bites.
-
-    # Per-chunk char cap for the LMS generate path. 1600 covers p100 of
-    # current KB (largest chunk is 1513 chars). Overridable via
-    # LMS_CHUNK_TEXT_MAX_CHARS in .env.
-    # Relative-score fusion weights: fused = vector_weight * dense_norm +
-    # bm25_weight * sparse_norm. vector_weight is the `alpha` in hybrid_search.
-    # Both overridable via BM25_WEIGHT / VECTOR_WEIGHT in .env.
-    # Compound query: multiplier for final_top_k after merge+dedup.
-    # 2 sub-queries → final_top_k × 2. Set to 1 to disable scaling.
-    # MANDATORY DENSE FLOOR for the NOT-FOUND gate (app/graph/pipeline.py
-    # the old retrieval gate. Below this RAW DENSE COSINE pool-max, treat retrieval as
-    # a miss and skip generate_node (saves ~2700 input tokens + 1 LLM call).
-    # Absolute [0, 1] cosine. bge-m3 cleanly separates scope on this KB:
-    # off-scope tops out ≈ 0.36 (weather/recipe/trivia), in-scope floors ≈ 0.50.
-    # Set to 0.46 — calibrated 2026-06-18 via `python -m app.eval.calibrate_dense_floor`
-    # against the live KB: 34 in-scope probes (17 ingested courses) floored at
-    # pool dense 0.469, while off-scope/un-ingested topics (BMDP, Basic Leadership,
-    # out-of-domain) topped out at 0.491. 0.46 is the highest floor with ZERO
-    # in-scope false-rejects (0.47 starts rejecting a real in-scope query) and
-    # leaks only 1 of 12 off-scope probes (EWS at 0.491, BMDP material not yet
-    # ingested). Was 0.40, which let 8/12 off-scope leak → "apa itu BMDP"-style
-    # hallucination from near-miss chunks. Re-run the calibrator after KB growth
-    # or an embedding-model swap. Dense is the SOLE normal-op discriminator;
-    # sparse is NOT OR'd in (see kb_min_sparse_score).
-    # DEGRADED-WINDOW ONLY sparse floor. This is NO LONGER an OR-rescue in normal
-    # operation — raw BM25 does not separate scope on a small KB (off-scope
-    # filler tokens like siapa/hari/jakarta accumulate BM25: "berita hari ini di
-    # jakarta"=8.58 OUTSCORES legit "AmarthaLink"=3.46), so OR'ing sparse
-    # re-admitted off-scope. It is consulted ONLY when dense is UNAVAILABLE
-    # (embedding outage → sparse-only retrieval, C5): in that window the gate
-    # fails OPEN on sparse >= this floor so Ava stays usable during the blip,
-    # accepting some off-scope leak until embeddings recover. Kept at 1.0.
-
-    # ─── Embedding resilience (C5 — query-embedding SPOF) ────────────────────
-    # The query embedding is produced by a SINGLE process-global
-    # a process-global embedding client hitting a remote
-    # provider. With no retry/timeout, a transient provider blip turned every
-    # retrieval into a hard failure (the dense + sparse encodings are awaited in
-    # one gather, so a dense-embed exception aborted sparse too → HTTP 500).
-    # These knobs wrap the dense embed in a bounded tenacity retry; on final
-    # failure hybrid_search degrades to SPARSE-ONLY (BM25) instead of raising,
-    # so terse/lexical queries still return results during an embedding outage.
-    # Max concurrent sparse BM25 (fastembed/onnxruntime) query encodings. The
-    # encode runs CPU-bound in a thread (asyncio.to_thread). DEFAULT 1, and it
-    # MUST stay coupled to OMP_NUM_THREADS in docker-compose.yml: each encode
-    # already fans out onnxruntime across OMP_NUM_THREADS=2 (both vCPUs), so a
-    # single in-flight encode already saturates the box. Allowing 2 concurrent
-    # would put 2x2=4 threads on 2 cores → oversubscription + context-switch
-    # thrash that raises P95 and starves the asyncio loop — the exact failure
-    # the OMP cap was added to prevent. Only raise this above 1 if you ALSO drop
-    # OMP_NUM_THREADS to 1 (so total threads stay <= vCPUs) and load-test P95.
-
-    # ─── Conversational LLM ──────────────────────────────────────────────────
-    # The collapsed pipeline uses ONE conversational LLM (get_chat_llm →
-    # generate_node) for greetings, identity, meta-turns, vents, and grounded KB
-    # answers. Non-zero temperature so Ava feels like a real chat AI rather than
-    # a stiff form-filler; kept moderate (0.4) so it stays grounded when
-    # <retrieved_context> is present. Tunable without a code change — raise for
-    # more warmth/variation, lower if it drifts off the grounded facts.
+    # ─── Conversational LLM Temperatures ─────────────────────────────────────
     chat_llm_temperature: float = 0.2
     empathy_llm_temperature: float = 0.3
     cheap_llm_temperature: float = 0.0
@@ -395,131 +129,36 @@ class Settings(BaseSettings):
     generate_llm_temperature: float = 0.0
 
     # ─── Cache / Memory ─────────────────────────────────────────────────────
-    # Query→answer cache lifetime (Redis exact-match only). 7d: the KB is
-    # near-static (updates ~yearly) so a long TTL maximizes hit rate, but we cap
-    # at 7 days NOT a year on purpose: if any KB-update path ever skips
-    # flush_cache_by_course, a stale answer's blast radius is bounded to a week,
-    # not a year. Redis evicts via native TTL (no manual prune needed); revisit
-    # to 30d once post-launch traffic is understood.
     cache_query_ttl_seconds: int = 604800
-    # 12h: must outlive `ltm_afk_threshold_seconds` (10h) so STM history+summary
-    # survive long enough for the AFK LTM worker to consume them, with a 2h
-    # margin for the worker's Guard-2 defer/retry. Trimmed from 24h: in the
-    # happy path the AFK worker's `clear_conversation` DELs the HASH at ~10h
-    # anyway, so 24h only ever benefited the orphan-job failure case; 12h bounds
-    # worst-case RAM tighter while keeping the ordering invariant intact. Owner
-    # now rides this same HASH (B1), so it inherits this lifetime too.
     conversation_ttl_seconds: int = 43200
-    user_pref_max_age_days: int = 30  # ignore stored preferences older than this when injecting into prompts
-    # agent_logs retention window. agent_logs has no TTL (audit 5.6 P0) so
-    # it grows unbounded at ~65k rows/day @13k DAU. The daily cron in
-    # app/worker.py (prune_agent_logs_cron_task) DELETEs rows older than
-    # this. 90d matches the dashboard's useful horizon (Recent Logs query
-    # is bounded by LIMIT, but trends + retention queries scan the table).
-    # ponytail: bump to 180/365 only if the eval team needs longer history;
-    # Postgres table bloat is real (reclaim via VACUUM FULL after large DELETE).
+    user_pref_max_age_days: int = 30
     agent_log_retention_days: int = Field(
         default=90, ge=7, le=365, alias="AGENT_LOG_RETENTION_DAYS"
     )
-    # Max fresh (un-summarized) conversation turns fed to generate_node. 8
-    # (was 5, originally 2): the generate LLM IS the memory in the single-call
-    # design, so it must SEE enough raw turns to answer "udah bahas apa aja"
-    # and to support multi-turn COACHING (Socratic) loops, which build up
-    # over many turns and lose the most when early turns get compressed away.
-    # 8 widens the verbatim window for BOTH chat and coaching without the
-    # read/trim "gap" bug a per-intent split would introduce (the worker trim
-    # floor and the hot-path read MUST use the same value).
-    # THIS IS THE SINGLE SOURCE OF TRUTH: the hot-path read (chat.py), the
-    # overflow-schedule check (chat.py _schedule_summary_refresh), the worker
-    # refresh+trim (worker.py summarize_refresh_task), and generate's window
-    # (pipeline.py _window_generate_history) all read THIS knob. Do NOT hardcode
-    # the number anywhere — keep read == trim or turns fall into a limbo gap.
-    # (The LTM-sync worker reads 10 deliberately; that path is persist=False and
-    # never trims, so it does not participate in this invariant.) Older turns
-    # beyond 8 are covered by the rolling summary (<previous_context>). Costs a
-    # few hundred extra non-cached input tok/turn only on long sessions (rare).
     max_fresh_turns: int = 8
-    # Per-AI-reply char cap for STM history sent to generate_node. 600 (was 250):
-    # 250 truncated Ava's own list answers mid-way (an 8-principle reply is
-    # ~400-500 chars), so on a later "what were the principles?" the model saw a
-    # fragment and reconstructed the rest wrongly (said 5, not 8). 600 holds a
-    # full enumerated answer so the model recalls its OWN prior replies verbatim.
     max_history_ai_chars: int = 600
-    # AFK window before LTM sync fires. 10h matches "user closed laptop / went
-    # to sleep" rather than "stepped away for coffee" — short defers waste
-    # worker capacity re-summarizing the same session.
+    # Long-Term Memory (LTM) toggle — off by default until target LTM model is finalized.
+    ltm_enabled: bool = Field(default=False, alias="LTM_ENABLED")
     ltm_afk_threshold_seconds: int = 36000
+
     # ─── Moodle LMS ─────────────────────────────────────────────────────────
-    # Staging default — was ngrok free-tier tunnel (removed 2026-08, now
-    # https://amarthapedia-staging.lifeatamartha.com). Override
-    # MOODLE_API_URL in .env for local/prod as needed.
     moodle_api_url: str = "https://amarthapedia-staging.lifeatamartha.com/"
     moodle_api_token: str = Field(default="", alias="MOODLE_API_TOKEN")
 
     # ─── Security ───────────────────────────────────────────────────────────
-    # Required, no default. A dev fallback string ("your-super-secret...") was
-    # previously baked into the code, which meant a prod deploy that forgot
-    # to set JWT_SECRET booted with a publicly known signing key. Pydantic
-    # now refuses to construct Settings() if this is missing.
     jwt_secret: str = Field(..., min_length=32)
-    # Literal allowlist so Pydantic rejects `JWT_ALGORITHM=none` (or any
-    # other weak/unknown alg) at startup. Previously jwt_algorithm: str
-    # silently accepted any value, which let a mis-config set
-    # JWT_ALGORITHM=none — pyjwt then validates unsigned tokens.
     jwt_algorithm: Literal["HS256", "HS384", "HS512", "RS256", "RS384", "RS512"] = "HS256"
     rate_limit_per_minute: int = 10
     admin_api_key: str = Field(..., alias="ADMIN_API_KEY", min_length=16)
-    # Off by default. Must be explicitly enabled (DEV_BYPASS_ENABLED=true)
-    # for the local-dev token-less auth bypass in app/api/auth.py to fire.
-    # Closes the prod mis-config class where APP_ENV=development (or a
-    # copied-from-dev .env) silently disables auth across all 13k users.
-    # main.py:production-guard refuses to boot if this is True in prod.
     dev_bypass_enabled: bool = Field(default=False, alias="DEV_BYPASS_ENABLED")
 
     # ─── Concurrency / Backpressure ─────────────────────────────────────────
-    # Max simultaneous LLM-bound RAG pipeline executions on the single uvicorn
-    # worker. Beyond this, requests fast-fail with 503 instead of piling up on
-    # the event loop and overwhelming the upstream LLM gateway (any
-    # OpenRouter-compatible endpoint). Cache hits are NOT counted — they make
-    # no LLM call and return before the guard.
-    #
-    # 8: conservative cap for 2 vCPU / 8 GB with long CAG prompts. The old 12
-    # setting was too eager for a small single-worker box; cache hits skip this
-    # guard, so exact-response hits still return without spending a pipeline slot.
     max_concurrent_pipelines: int = 8
-    # Seconds a request waits for a free pipeline slot before returning 503.
-    # Small enough to fast-fail a sustained burst, large enough to absorb a
-    # sub-second spike without rejecting.
     pipeline_acquire_timeout_s: float = 5.0
-    # End-to-end ceiling on a NON-STREAM /chat graph run (cag_graph.ainvoke).
-    # Without this, a turn makes 2-3 sequential LLM calls and each cheap call
-    # is bounded only by request_timeout=30 × stop_after_attempt(3) + backoff
-    # ≈ 93s, so a single upstream black-hole could pin a pipeline slot for
-    # 3-9 minutes (llm/client.py:136-148). At max_concurrent_pipelines=12 that
-    # converts a slow-upstream blip into a full-surface 503 outage. 120s bounds
-    # the worst case to ~2 min — generous enough that a normal ~3s turn (or one
-    # legitimate retry sequence) never trips it, tight enough to free the slot.
     pipeline_total_timeout_s: float = 120.0
-    # STREAM /chat/stream STALL ceiling: max seconds allowed between two
-    # astream_events emissions. Resets on EVERY event (including every output
-    # token), so a slow-but-actively-streaming answer never trips it — it only
-    # fires when the graph goes silent (upstream hang with no tokens). 75s
-    # covers a pre-processor call that times out once and retries (30s + 1s +
-    # 30s ≈ 61s of legitimate silence before the first generate token) while
-    # still bounding a true hang's slot-hold to one stall window instead of
-    # minutes. A total wall-clock cap is deliberately NOT used on the stream
-    # path so long legitimate answers stream uninterrupted.
     pipeline_stream_stall_timeout_s: float = 75.0
 
     # ─── Streaq worker hardening ────────────────────────────────────────────
-    # Optional HMAC secret for streaq's pickle payload signing. If set, the
-    # worker rejects tasks whose pickled payload doesn't match the signature
-    # (defense in depth against an attacker with Redis-access forging tasks).
-    # Recommended >=32 chars. Generated with:
-    #   python -c "import secrets; print(secrets.token_urlsafe(32))"
-    # Optional in dev; required-in-prod is enforced at startup (worker.py logs
-    # a warning if missing in production, but does not refuse to boot — the
-    # hardening is a defense-in-depth measure, not a security boundary).
     streaq_signing_secret: str = Field(default="", alias="STREAQ_SIGNING_SECRET")
 
     # ─── Off-Scope Violation & Banning ───────────────────────────────────────
